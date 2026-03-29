@@ -14,6 +14,20 @@ from common.models import AgentPermissions, MemoryRecord, TaskRecord, TaskStatus
 
 log = logging.getLogger(__name__)
 
+
+def _str(val) -> str:
+    """Convert UUID or other types to string."""
+    return str(val) if val is not None else ""
+
+
+def _json(val) -> dict:
+    """Parse JSONB — asyncpg may return str or dict."""
+    if val is None:
+        return {}
+    if isinstance(val, str):
+        return json.loads(val)
+    return dict(val)
+
 # ---------------------------------------------------------------------------
 # Embeddings — sentence-transformers, loaded lazily on first use
 # ---------------------------------------------------------------------------
@@ -156,11 +170,11 @@ class KBClient:
         )
 
         return MemoryRecord(
-            id=row["id"],
+            id=_str(row["id"]),
             content=row["content"],
             scope=row["scope"],
             categories=row["categories"],
-            metadata=json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"],
+            metadata=_json(row["metadata"]),
             importance=row["importance"],
             source=row["source"],
             needs_embedding=row["needs_embedding"],
@@ -218,11 +232,11 @@ class KBClient:
         results = []
         for row in rows:
             results.append(MemoryRecord(
-                id=row["id"],
+                id=_str(row["id"]),
                 content=row["content"],
                 scope=row["scope"],
                 categories=row["categories"],
-                metadata=json.loads(row["metadata"]) if isinstance(row["metadata"], str) else row["metadata"],
+                metadata=_json(row["metadata"]),
                 importance=row["importance"],
                 source=row["source"],
                 needs_embedding=row["needs_embedding"],
@@ -295,16 +309,16 @@ class KBClient:
         if not row:
             return None
         return TaskRecord(
-            id=row["id"],
+            id=_str(row["id"]),
             agent_type=row["agent_type"],
             status=TaskStatus(row["status"]),
             trigger=row["trigger"],
             trigger_ref=row["trigger_ref"] or "",
-            config=json.loads(row["config"]) if isinstance(row["config"], str) else (row["config"] or {}),
+            config=_json(row["config"]),
             created_at=row["created_at"],
             started_at=row["started_at"],
             completed_at=row["completed_at"],
-            result=json.loads(row["result"]) if isinstance(row["result"], str) else row["result"],
+            result=_json(row["result"]) if row["result"] else None,
         )
 
     async def list_tasks(
