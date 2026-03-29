@@ -1,0 +1,199 @@
+name: Build and Deploy
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ['release/v*']
+  pull_request:
+    branches: [main]
+
+env:
+  IMAGE: amerenda/mycroft
+  GITOPS_REPO: amerenda/k3s-dean-gitops
+
+jobs:
+  test:
+    runs-on: [self-hosted, mac-mini]
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt -r requirements-test.txt
+      - run: python -m pytest tests/ -v
+
+  set-tag:
+    if: github.event_name != 'pull_request'
+    runs-on: arc-runner-set
+    outputs:
+      tag: ${{ steps.tag.outputs.tag }}
+      pr_prefix: ${{ steps.tag.outputs.pr_prefix }}
+    steps:
+      - id: tag
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/release/* ]]; then
+            VERSION="${GITHUB_REF#refs/tags/release/}"
+            echo "tag=${VERSION}" >> "$GITHUB_OUTPUT"
+            echo "pr_prefix=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=sha-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+            echo "pr_prefix=deploy" >> "$GITHUB_OUTPUT"
+          fi
+
+  build-amd64:
+    needs: [test, set-tag]
+    if: github.event_name != 'pull_request'
+    runs-on: arc-runner-set
+    steps:
+      - uses: actions/checkout@v6
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+      - name: Build coordinator
+        run: |
+          TAG=${{ needs.set-tag.outputs.tag }}
+          docker build -f Dockerfile.coordinator -t "${IMAGE}:coordinator-${TAG}-amd64" .
+          docker push "${IMAGE}:coordinator-${TAG}-amd64"
+      - name: Build agent-coder
+        run: |
+          TAG=${{ needs.set-tag.outputs.tag }}
+          docker build -f Dockerfile.agent --target agent-coder -t "${IMAGE}:agent-coder-${TAG}-amd64" .
+          docker push "${IMAGE}:agent-coder-${TAG}-amd64"
+
+  build-arm64:
+    needs: [test, set-tag]
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, mac-mini]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+      - name: Build coordinator
+        run: |
+          TAG=${{ needs.set-tag.outputs.tag }}
+          docker build -f Dockerfile.coordinator -t "${IMAGE}:coordinator-${TAG}-arm64" .
+          docker push "${IMAGE}:coordinator-${TAG}-arm64"
+      - name: Build agent-coder
+        run: |
+          TAG=${{ needs.set-tag.outputs.tag }}
+          docker build -f Dockerfile.agent --target agent-coder -t "${IMAGE}:agent-coder-${TAG}-arm64" .
+          docker push "${IMAGE}:agent-coder-${TAG}-arm64"
+
+  manifest:
+    needs: [set-tag, build-amd64, build-arm64]
+    runs-on: arc-runner-set
+    steps:
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+      - name: Create multi-arch manifests
+        env:
+          TAG: ${{ needs.set-tag.outputs.tag }}
+        run: |
+          for COMPONENT in coordinator agent-coder; do
+            docker buildx imagetools create -t "${IMAGE}:${COMPONENT}-${TAG}" \
+              "${IMAGE}:${COMPONENT}-${TAG}-amd64" \
+              "${IMAGE}:${COMPONENT}-${TAG}-arm64"
+            docker buildx imagetools create -t "${IMAGE}:${COMPONENT}-latest" \
+              "${IMAGE}:${COMPONENT}-${TAG}-amd64" \
+              "${IMAGE}:${COMPONENT}-${TAG}-arm64"
+          done
+
+  deploy:
+    needs: [set-tag, manifest]
+    if: github.event_name != 'pull_request'
+    runs-on: arc-runner-set
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Create deploy PR (UAT + prod)
+        env:
+          TAG: ${{ needs.set-tag.outputs.tag }}
+          PREFIX: ${{ needs.set-tag.outputs.pr_prefix }}
+        run: |
+          rm -rf /tmp/gitops
+          git clone https://x-access-token:${GITOPS_PAT}@github.com/${GITOPS_REPO}.git /tmp/gitops
+          cd /tmp/gitops
+
+          # Close any existing mycroft deploy PRs to avoid ApplicationSet conflicts
+          EXISTING_PRS=$(curl -s \
+            -H "Authorization: token ${GITOPS_PAT}" \
+            "https://api.github.com/repos/${GITOPS_REPO}/pulls?state=open&per_page=100" \
+            | python3 -c "
+          import json,sys
+          for pr in json.load(sys.stdin):
+              ref = pr.get('head',{}).get('ref','')
+              if ref.startswith('deploy/mycroft-') or ref.startswith('release/mycroft-'):
+                  print(pr['number'])
+          " 2>/dev/null || true)
+          for PR_NUM in $EXISTING_PRS; do
+            echo "Closing superseded PR #${PR_NUM}"
+            curl -s -X PATCH \
+              -H "Authorization: token ${GITOPS_PAT}" \
+              "https://api.github.com/repos/${GITOPS_REPO}/pulls/${PR_NUM}" \
+              -d '{"state":"closed"}' > /dev/null
+          done
+
+          BRANCH="${PREFIX}/mycroft-${TAG}"
+          git checkout -b "${BRANCH}"
+
+          # Update coordinator image + AGENT_IMAGE_TAG in both UAT and prod
+          sed -i "s|image: amerenda/mycroft:coordinator-[^ ]*|image: amerenda/mycroft:coordinator-${TAG}|g" \
+            apps/mycroft/coordinator-uat/deployment.yaml \
+            apps/mycroft/coordinator/deployment.yaml
+          sed -i "s|value: \"sha-[^\"]*\"|value: \"${TAG}\"|g" \
+            apps/mycroft/coordinator-uat/deployment.yaml \
+            apps/mycroft/coordinator/deployment.yaml
+
+          git config user.name "amerenda-deploy-bot[bot]"
+          git config user.email "3192609+amerenda-deploy-bot[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --quiet && exit 0
+          git commit -m "${PREFIX}: mycroft ${TAG}"
+          git push origin "${BRANCH}"
+
+          # Get source commit message for the PR body
+          COMMIT_MSG=$(git -C "${GITHUB_WORKSPACE}" log -1 --format='%s' 2>/dev/null || echo "")
+          COMMIT_BODY=$(git -C "${GITHUB_WORKSPACE}" log -1 --format='%b' 2>/dev/null | head -5 || echo "")
+          NL=$'\n'
+          PR_BODY="**mycroft ${TAG}**${NL}${NL}${COMMIT_MSG}"
+          if [ -n "${COMMIT_BODY}" ]; then
+            PR_BODY="${PR_BODY}${NL}${NL}${COMMIT_BODY}"
+          fi
+          PR_BODY="${PR_BODY}${NL}${NL}Images: \`amerenda/mycroft:coordinator-${TAG}\`, \`amerenda/mycroft:agent-coder-${TAG}\` (multi-arch: amd64+arm64)${NL}Source: https://github.com/amerenda/mycroft/commit/${GITHUB_SHA}"
+
+          PR_RESPONSE=$(curl -s -X POST \
+            -H "Authorization: token ${GITOPS_PAT}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${GITOPS_REPO}/pulls" \
+            -d "$(jq -n \
+              --arg title "${PREFIX}: mycroft ${TAG}" \
+              --arg body "${PR_BODY}" \
+              --arg head "${BRANCH}" \
+              --arg base "main" \
+              '{title: $title, body: $body, head: $head, base: $base}')")
+
+          PR_NUMBER=$(echo "$PR_RESPONSE" | python3 -c "import json,sys; print(json.load(sys.stdin)['number'])")
+          curl -s -X POST \
+            -H "Authorization: token ${GITOPS_PAT}" \
+            "https://api.github.com/repos/${GITOPS_REPO}/issues/${PR_NUMBER}/labels" \
+            -d '["deploy:mycroft"]'
+
+          curl -s -X POST \
+            -H "Authorization: token ${GITOPS_PAT}" \
+            "https://api.github.com/repos/${GITOPS_REPO}/issues/${PR_NUMBER}/assignees" \
+            -d '{"assignees":["amerenda"]}'
+
+  notify-failure:
+    if: failure()
+    needs: [test, build-amd64, build-arm64, manifest, deploy]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create GitHub Issue for build failure
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh issue create \
+            --repo "${{ github.repository }}" \
+            --title "CI failed: ${{ github.workflow }}" \
+            --body "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --label "ci-failure" || echo "Could not create issue"

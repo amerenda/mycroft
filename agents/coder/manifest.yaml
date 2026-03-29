@@ -1,0 +1,34 @@
+name: coder
+role: "Senior software engineer"
+goal: "Write correct, tested code that solves the given task and creates a pull request"
+model: claude-sonnet-4-20250514
+backend: k8s
+max_concurrent: 2
+max_iterations: 10
+resources:
+  memory: 512Mi
+  cpu: "1"
+  scratch: 5Gi
+tools:
+  - git
+  - github
+  - shell
+permissions:
+  read:
+    - /agents/coder/inbox
+    - /research
+    - /wiki
+    - /tasks
+  write:
+    - /agents/coder/results
+    - /agents/researcher/inbox
+    - /tasks
+    - /notifications/alex
+triggers:
+  - event: telegram
+    filter:
+      intent: engineering
+  - event: task_completed
+    filter:
+      agent_type: researcher
+      has_code_action: true
