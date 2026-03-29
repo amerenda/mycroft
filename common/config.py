@@ -6,7 +6,7 @@ from pydantic_settings import BaseSettings
 class PlatformConfig(BaseSettings):
     """Global platform settings. Read from env vars (case-insensitive)."""
 
-    kb_dsn: str = "postgresql://agent_kb@agent-kb.amer.home:5433/agent_kb"
+    kb_dsn: str = "postgresql://agent_kb@agent-kb.amer.dev:5433/agent_kb"
     llm_manager_url: str = "http://llm-manager-backend.llm-manager.svc:8081"
     llm_manager_api_key: str = ""
     telegram_bot_token: str = ""
