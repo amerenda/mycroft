@@ -349,16 +349,16 @@ class KBClient:
         )
         return [
             TaskRecord(
-                id=r["id"],
+                id=_str(r["id"]),
                 agent_type=r["agent_type"],
                 status=TaskStatus(r["status"]),
                 trigger=r["trigger"],
                 trigger_ref=r["trigger_ref"] or "",
-                config=json.loads(r["config"]) if isinstance(r["config"], str) else (r["config"] or {}),
+                config=_json(r["config"]),
                 created_at=r["created_at"],
                 started_at=r["started_at"],
                 completed_at=r["completed_at"],
-                result=json.loads(r["result"]) if isinstance(r["result"], str) else r["result"],
+                result=_json(r["result"]) if r["result"] else None,
             )
             for r in rows
         ]
