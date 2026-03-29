@@ -77,7 +77,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.error("Failed to discover LLM API key: %s", e)
 
-    llm = LLMClient(config.llm_manager_url, llm_api_key, "claude-haiku-4-5-20251001")
+    llm = LLMClient(config.llm_manager_url, llm_api_key, "qwen2.5:7b")
 
     # Trigger router
     trigger_router = TriggerRouter()
