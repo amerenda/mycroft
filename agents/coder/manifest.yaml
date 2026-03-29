@@ -1,7 +1,7 @@
 name: coder
 role: "Senior software engineer"
 goal: "Write correct, tested code that solves the given task and creates a pull request"
-model: claude-sonnet-4-20250514
+model: qwen2.5:7b
 backend: k8s
 max_concurrent: 2
 max_iterations: 10

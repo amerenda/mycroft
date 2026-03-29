@@ -79,6 +79,25 @@ async def _run(manifest: AgentManifest, task: TaskConfig, platform: PlatformConf
 
     log.info("Task instruction: %s", task.instruction[:200])
 
+    # Auto-discover LLM API key if registration secret is set
+    if platform.llm_registration_secret and not platform.llm_manager_api_key:
+        import httpx
+        try:
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    f"{platform.llm_manager_url}/api/apps/discover",
+                    json={
+                        "name": f"mycroft-{manifest.name}",
+                        "base_url": "",
+                        "registration_secret": platform.llm_registration_secret,
+                    },
+                )
+                resp.raise_for_status()
+                platform.llm_manager_api_key = resp.json().get("api_key", "")
+                log.info("Discovered LLM API key (key=%s...)", platform.llm_manager_api_key[:8])
+        except Exception as e:
+            log.error("Failed to discover LLM API key: %s", e)
+
     # Run the agent
     runner = AgentRunner(manifest, task, platform)
     result = await runner.run()
