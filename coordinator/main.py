@@ -325,9 +325,99 @@ async def dispatch_event(req: DispatchRequest):
     return {"launched": launched}
 
 
+@app.get("/api/tasks/{task_id}/conversation")
+async def get_task_conversation(task_id: str):
+    """View the full conversation log (prompt, LLM responses, tool calls) for a task."""
+    record = await db.kb.get(f"/tasks/{task_id}/conversation")
+    if not record:
+        raise HTTPException(404, "No conversation found for this task")
+    try:
+        messages = json.loads(record.content)
+    except (json.JSONDecodeError, TypeError):
+        messages = []
+    return {"task_id": task_id, "messages": messages}
+
+
+@app.get("/api/tasks/{task_id}/prompt")
+async def get_task_prompt(task_id: str):
+    """View the system prompt and user message for a task."""
+    record = await db.kb.get(f"/tasks/{task_id}/conversation")
+    if not record:
+        # Try inbox
+        task = await task_manager.get_task(task_id)
+        if not task:
+            raise HTTPException(404, "Task not found")
+        inbox = await db.kb.get(f"/agents/{task.agent_type}/inbox/{task_id}")
+        return {
+            "task_id": task_id,
+            "instruction": inbox.content if inbox else task.config.get("instruction", ""),
+            "system_prompt": None,
+            "note": "Agent hasn't started yet — no conversation persisted",
+        }
+
+    messages = json.loads(record.content)
+    system_prompt = next((m["content"] for m in messages if m.get("role") == "system"), None)
+    user_message = next((m["content"] for m in messages if m.get("role") == "user"), None)
+    return {
+        "task_id": task_id,
+        "system_prompt": system_prompt,
+        "user_message": user_message,
+        "total_messages": len(messages),
+    }
+
+
+class TestTaskRequest(BaseModel):
+    agent_type: str = "coder"
+    instruction: str
+    model: str | None = None
+
+
+@app.post("/api/tasks/test")
+async def test_task(req: TestTaskRequest):
+    """Run an agent in-process (no Argo) and return the conversation log. For debugging."""
+    from runtime.context import build_system_prompt, build_user_message
+    from runtime.tools.base import load_tools
+
+    manifest = trigger_router.get_manifest(req.agent_type)
+    if not manifest:
+        raise HTTPException(400, f"Unknown agent type: {req.agent_type}")
+
+    if req.model:
+        manifest = manifest.model_copy()
+        manifest.model = req.model
+
+    # Build prompt preview
+    tools = load_tools(manifest.tools)
+    system_prompt = build_system_prompt(manifest, tools.schemas())
+    user_message = build_user_message(req.instruction, [])
+
+    task = TaskConfig(
+        agent_type=req.agent_type,
+        instruction=req.instruction,
+        trigger="test",
+    )
+
+    # Create task in DB
+    task_id = await task_manager.create_task(
+        agent_type=req.agent_type,
+        instruction=req.instruction,
+        trigger="test",
+    )
+
+    return {
+        "task_id": task_id,
+        "agent_type": req.agent_type,
+        "model": manifest.model,
+        "system_prompt": system_prompt,
+        "user_message": user_message,
+        "tools": [t["function"]["name"] for t in tools.schemas()],
+        "note": "Task created. Use GET /api/tasks/{task_id}/conversation to view results after execution.",
+    }
+
+
 @app.post("/webhooks/telegram")
 async def telegram_webhook(request: Request):
-    """Telegram webhook endpoint."""
+    """Telegram webhook endpoint (for future use with Cloudflare Tunnel)."""
     if not telegram_bot.app:
         raise HTTPException(503, "Telegram bot not configured")
 
@@ -338,6 +428,230 @@ async def telegram_webhook(request: Request):
     return {"ok": True}
 
 
+# ---------------------------------------------------------------------------
+# Debug UI
+# ---------------------------------------------------------------------------
+
+from fastapi.responses import HTMLResponse
+
+@app.get("/debug", response_class=HTMLResponse)
+async def debug_page():
+    """Simple debug UI for testing agents."""
+    return DEBUG_HTML
+
+
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+DEBUG_HTML = """<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mycroft Debug</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, system-ui, sans-serif; background: #0d1117; color: #c9d1d9; padding: 20px; max-width: 1000px; margin: 0 auto; }
+  h1 { color: #58a6ff; margin-bottom: 20px; font-size: 1.4em; }
+  h2 { color: #8b949e; margin: 20px 0 10px; font-size: 1.1em; }
+  .panel { background: #161b22; border: 1px solid #30363d; border-radius: 6px; padding: 16px; margin-bottom: 16px; }
+  label { display: block; color: #8b949e; font-size: 0.85em; margin-bottom: 4px; }
+  input, select, textarea { width: 100%; padding: 8px 12px; background: #0d1117; border: 1px solid #30363d; border-radius: 4px; color: #c9d1d9; font-family: inherit; font-size: 0.9em; }
+  textarea { min-height: 80px; resize: vertical; }
+  .row { display: flex; gap: 12px; margin-bottom: 12px; }
+  .row > * { flex: 1; }
+  button { padding: 8px 20px; border-radius: 4px; border: none; cursor: pointer; font-size: 0.9em; font-weight: 600; }
+  .btn-primary { background: #238636; color: #fff; }
+  .btn-primary:hover { background: #2ea043; }
+  .btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+  .btn-secondary:hover { background: #30363d; }
+  .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+  pre { background: #0d1117; border: 1px solid #30363d; border-radius: 4px; padding: 12px; overflow-x: auto; font-size: 0.82em; line-height: 1.5; white-space: pre-wrap; word-wrap: break-word; }
+  .msg { padding: 8px 12px; margin: 4px 0; border-radius: 4px; font-size: 0.85em; }
+  .msg-system { background: #1c2128; border-left: 3px solid #8b949e; }
+  .msg-user { background: #0c2d6b; border-left: 3px solid #58a6ff; }
+  .msg-assistant { background: #1c2d1c; border-left: 3px solid #3fb950; }
+  .msg-tool { background: #2d1c1c; border-left: 3px solid #f0883e; }
+  .role { font-weight: 600; font-size: 0.75em; text-transform: uppercase; margin-bottom: 4px; }
+  .task-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #21262d; cursor: pointer; font-size: 0.85em; }
+  .task-row:hover { background: #161b22; }
+  .status { padding: 2px 8px; border-radius: 3px; font-size: 0.75em; font-weight: 600; }
+  .status-completed { background: #238636; }
+  .status-running { background: #1f6feb; }
+  .status-failed { background: #da3633; }
+  .status-pending { background: #6e7681; }
+  #spinner { display: none; margin-left: 8px; }
+  .actions { display: flex; gap: 8px; margin-top: 12px; }
+</style>
+</head>
+<body>
+<h1>Mycroft Debug Console</h1>
+
+<div class="panel">
+  <h2>Run Agent</h2>
+  <div class="row">
+    <div>
+      <label>Agent Type</label>
+      <select id="agentType"><option value="coder">coder</option></select>
+    </div>
+    <div>
+      <label>Model (optional override)</label>
+      <input id="model" placeholder="e.g. qwen2.5:7b, llama3.1:latest">
+    </div>
+  </div>
+  <label>Instruction</label>
+  <textarea id="instruction" placeholder="e.g. In the mycroft repo, add a README.md with a brief project description"></textarea>
+  <div class="actions">
+    <button class="btn-primary" onclick="runTask()" id="runBtn">Run Task (via Argo)</button>
+    <button class="btn-secondary" onclick="previewPrompt()">Preview Prompt</button>
+    <span id="spinner">Running...</span>
+  </div>
+</div>
+
+<div class="panel" id="promptPanel" style="display:none">
+  <h2>Prompt Preview</h2>
+  <div id="promptContent"></div>
+</div>
+
+<div class="panel" id="conversationPanel" style="display:none">
+  <h2>Conversation <span id="convTaskId" style="color:#8b949e; font-weight:normal"></span></h2>
+  <div id="conversationContent"></div>
+</div>
+
+<div class="panel">
+  <h2>Recent Tasks</h2>
+  <div id="taskList">Loading...</div>
+</div>
+
+<script>
+const API = '';
+
+async function api(path, opts) {
+  const r = await fetch(API + path, opts);
+  return r.json();
+}
+
+async function loadTasks() {
+  try {
+    const tasks = await api('/api/tasks?limit=10');
+    const el = document.getElementById('taskList');
+    if (!tasks.length) { el.innerHTML = '<em>No tasks yet</em>'; return; }
+    el.innerHTML = tasks.map(t => `
+      <div class="task-row" onclick="viewConversation('${t.id}')">
+        <span>${t.id.slice(0,8)} — ${t.agent_type} — ${(t.config?.instruction || '').slice(0,60)}</span>
+        <span class="status status-${t.status}">${t.status}</span>
+      </div>
+    `).join('');
+  } catch(e) { document.getElementById('taskList').innerHTML = '<em>Error loading tasks</em>'; }
+}
+
+async function runTask() {
+  const instruction = document.getElementById('instruction').value.trim();
+  if (!instruction) return;
+  const btn = document.getElementById('runBtn');
+  const spinner = document.getElementById('spinner');
+  btn.disabled = true; spinner.style.display = 'inline';
+
+  try {
+    const r = await api('/api/tasks', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        agent_type: document.getElementById('agentType').value,
+        instruction: instruction,
+      })
+    });
+    if (r.task_id) {
+      pollConversation(r.task_id);
+      loadTasks();
+    } else {
+      alert(JSON.stringify(r));
+    }
+  } catch(e) { alert('Error: ' + e); }
+  finally { btn.disabled = false; spinner.style.display = 'none'; }
+}
+
+async function previewPrompt() {
+  const instruction = document.getElementById('instruction').value.trim();
+  if (!instruction) return;
+  const model = document.getElementById('model').value.trim();
+  try {
+    const r = await api('/api/tasks/test', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        agent_type: document.getElementById('agentType').value,
+        instruction: instruction,
+        model: model || null,
+      })
+    });
+    const panel = document.getElementById('promptPanel');
+    panel.style.display = 'block';
+    panel.querySelector('#promptContent').innerHTML = `
+      <div class="msg msg-system"><div class="role">System Prompt</div><pre>${esc(r.system_prompt)}</pre></div>
+      <div class="msg msg-user"><div class="role">User Message</div><pre>${esc(r.user_message)}</pre></div>
+      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${r.tools.join(', ')} | Model: ${r.model} | Task: ${r.task_id.slice(0,8)}</p>
+    `;
+    loadTasks();
+  } catch(e) { alert('Error: ' + e); }
+}
+
+async function viewConversation(taskId) {
+  try {
+    const r = await api('/api/tasks/' + taskId + '/conversation');
+    renderConversation(taskId, r.messages || []);
+  } catch(e) {
+    const panel = document.getElementById('conversationPanel');
+    panel.style.display = 'block';
+    document.getElementById('convTaskId').textContent = '(' + taskId.slice(0,8) + ')';
+    document.getElementById('conversationContent').innerHTML = '<em>No conversation data yet</em>';
+  }
+}
+
+function renderConversation(taskId, messages) {
+  const panel = document.getElementById('conversationPanel');
+  panel.style.display = 'block';
+  document.getElementById('convTaskId').textContent = '(' + taskId.slice(0,8) + ')';
+
+  if (!messages.length) {
+    document.getElementById('conversationContent').innerHTML = '<em>No messages yet</em>';
+    return;
+  }
+
+  document.getElementById('conversationContent').innerHTML = messages.map(m => {
+    const role = m.role || 'unknown';
+    let content = m.content || '';
+    if (m.tool_calls) {
+      content += '\\n\\nTool calls:\\n' + m.tool_calls.map(tc =>
+        tc.function.name + '(' + tc.function.arguments.slice(0,200) + ')'
+      ).join('\\n');
+    }
+    return `<div class="msg msg-${role}"><div class="role">${role}</div><pre>${esc(content)}</pre></div>`;
+  }).join('');
+}
+
+let pollTimer = null;
+function pollConversation(taskId) {
+  if (pollTimer) clearInterval(pollTimer);
+  viewConversation(taskId);
+  pollTimer = setInterval(async () => {
+    const task = await api('/api/tasks/' + taskId);
+    await viewConversation(taskId);
+    if (task.status === 'completed' || task.status === 'failed') {
+      clearInterval(pollTimer);
+      pollTimer = null;
+      loadTasks();
+    }
+  }, 5000);
+}
+
+function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+loadTasks();
+setInterval(loadTasks, 30000);
+</script>
+</body>
+</html>
+"""
