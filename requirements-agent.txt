@@ -4,4 +4,7 @@ httpx>=0.28.0
 pydantic>=2.10.0
 pydantic-settings>=2.7.0
 pyyaml>=6.0
+# CPU-only torch first (200MB vs 2GB), then sentence-transformers
+--extra-index-url https://download.pytorch.org/whl/cpu
+torch --index-url https://download.pytorch.org/whl/cpu
 sentence-transformers>=3.3.0
