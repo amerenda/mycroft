@@ -151,15 +151,25 @@ jobs:
           git commit -m "${PREFIX}: mycroft ${TAG}"
           git push origin "${BRANCH}"
 
-          # Get source commit message for the PR body
+          # Build source link — prefer PR over raw commit
           COMMIT_MSG=$(git -C "${GITHUB_WORKSPACE}" log -1 --format='%s' 2>/dev/null || echo "")
           COMMIT_BODY=$(git -C "${GITHUB_WORKSPACE}" log -1 --format='%b' 2>/dev/null | head -5 || echo "")
+          SOURCE_PR=$(curl -s \
+            -H "Authorization: token ${GITOPS_PAT}" \
+            "https://api.github.com/repos/amerenda/mycroft/commits/${GITHUB_SHA}/pulls" \
+            | python3 -c "import json,sys; prs=json.load(sys.stdin); print(prs[0]['html_url'] if prs else '')" 2>/dev/null || true)
+          if [ -n "${SOURCE_PR}" ]; then
+            SOURCE_LINK="${SOURCE_PR}"
+          else
+            SOURCE_LINK="https://github.com/amerenda/mycroft/commit/${GITHUB_SHA}"
+          fi
+
           NL=$'\n'
-          PR_BODY="**mycroft ${TAG}**${NL}${NL}${COMMIT_MSG}"
+          PR_BODY="**[mycroft ${TAG}](${SOURCE_LINK})**${NL}${NL}${COMMIT_MSG}"
           if [ -n "${COMMIT_BODY}" ]; then
             PR_BODY="${PR_BODY}${NL}${NL}${COMMIT_BODY}"
           fi
-          PR_BODY="${PR_BODY}${NL}${NL}Images: \`amerenda/mycroft:coordinator-${TAG}\`, \`amerenda/mycroft:agent-coder-${TAG}\` (multi-arch: amd64+arm64)${NL}Source: https://github.com/amerenda/mycroft/commit/${GITHUB_SHA}"
+          PR_BODY="${PR_BODY}${NL}${NL}Images: \`amerenda/mycroft:coordinator-${TAG}\`, \`amerenda/mycroft:agent-coder-${TAG}\` (multi-arch: amd64+arm64)${NL}Source: ${SOURCE_LINK}"
 
           PR_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${GITOPS_PAT}" \
