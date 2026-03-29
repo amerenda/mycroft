@@ -169,21 +169,38 @@ async def _handle_engineering_task(instruction: str, agent_type: str, repo: str)
         repo=repo,
     )
 
-    # Submit Argo Workflow
+    # Submit Argo Workflow with progress monitoring
     try:
         wf_name = await argo.submit(
             agent_type=agent_type,
             task_id=task_id,
             params={"instruction": instruction, "repo": repo},
+            on_update=_on_workflow_update,
         )
         log.info("Workflow %s submitted for task %s", wf_name, task_id[:8])
     except Exception as e:
         log.error("Failed to submit Argo Workflow: %s", e)
-        # Task is created but workflow failed — update status
         await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": f"Workflow submission failed: {e}"})
         raise
 
     return task_id
+
+
+async def _on_workflow_update(task_id: str, status: str, message: str):
+    """Called by Argo watcher on workflow state changes."""
+    icons = {"succeeded": "OK", "failed": "XX", "error": "XX", "stale": "!!"}
+    icon = icons.get(status, "??")
+    text = f"[{icon}] Task {task_id[:8]}: {message}"
+
+    if status in ("failed", "error"):
+        await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": message})
+    elif status == "succeeded":
+        await db.kb.update_task(task_id, status=TaskStatus.completed)
+
+    try:
+        await telegram_bot.send(text)
+    except Exception:
+        log.warning("Failed to send Telegram update for task %s", task_id[:8])
 
 
 async def _handle_status_query(text: str) -> str:
