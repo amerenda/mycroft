@@ -9,6 +9,7 @@ class PlatformConfig(BaseSettings):
     kb_dsn: str = "postgresql://agent_kb@agent-kb.amer.dev:5433/agent_kb"
     llm_manager_url: str = "http://llm-manager-backend.llm-manager.svc:8081"
     llm_manager_api_key: str = ""
+    llm_registration_secret: str = ""
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
     global_max_iterations: int = 5

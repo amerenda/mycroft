@@ -56,8 +56,28 @@ async def lifespan(app: FastAPI):
     # Task manager
     task_manager = TaskManager(db.kb)
 
-    # LLM client (for intent classification)
-    llm = LLMClient(config.llm_manager_url, config.llm_manager_api_key, "claude-haiku-4-5-20251001")
+    # LLM: discover API key from llm-manager (same pattern as ecdysis)
+    llm_api_key = config.llm_manager_api_key
+    if config.llm_registration_secret:
+        try:
+            import httpx
+            async with httpx.AsyncClient(timeout=10) as client:
+                resp = await client.post(
+                    f"{config.llm_manager_url}/api/apps/discover",
+                    json={
+                        "name": "mycroft-coordinator",
+                        "base_url": "",
+                        "registration_secret": config.llm_registration_secret,
+                    },
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                llm_api_key = data.get("api_key", "")
+                log.info("Discovered LLM API key from llm-manager (key=%s...)", llm_api_key[:8])
+        except Exception as e:
+            log.error("Failed to discover LLM API key: %s", e)
+
+    llm = LLMClient(config.llm_manager_url, llm_api_key, "claude-haiku-4-5-20251001")
 
     # Trigger router
     trigger_router = TriggerRouter()
