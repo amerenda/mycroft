@@ -81,7 +81,8 @@ async def lifespan(app: FastAPI):
     )
     if config.telegram_bot_token:
         await telegram_bot.setup()
-        log.info("Telegram bot initialized")
+        await telegram_bot.start_polling()
+        log.info("Telegram bot initialized (polling mode)")
 
     # LISTEN/NOTIFY for agent completion events
     await db.start_listener(_on_agent_event)
@@ -90,6 +91,8 @@ async def lifespan(app: FastAPI):
     yield
 
     # Shutdown
+    if config.telegram_bot_token:
+        await telegram_bot.stop_polling()
     await db.close()
     await llm.close()
     log.info("Coordinator stopped")

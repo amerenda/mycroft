@@ -1,7 +1,8 @@
-"""Telegram bot integration — inbound message handling."""
+"""Telegram bot integration — long polling mode (no webhook needed)."""
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any
 
@@ -16,7 +17,11 @@ log = logging.getLogger(__name__)
 
 
 class TelegramBot:
-    """Handles inbound Telegram messages and dispatches to agents."""
+    """Handles inbound Telegram messages and dispatches to agents.
+
+    Uses long polling — no public endpoint needed. The bot polls
+    Telegram's servers for updates in a background task.
+    """
 
     def __init__(
         self,
@@ -32,6 +37,7 @@ class TelegramBot:
         self._on_engineering_task = on_engineering_task
         self._on_status_query = on_status_query
         self.app: Application | None = None
+        self._polling_task: asyncio.Task | None = None
 
     async def setup(self) -> Application:
         """Initialize the Telegram bot application."""
@@ -39,6 +45,29 @@ class TelegramBot:
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self._handle_message))
         await self.app.initialize()
         return self.app
+
+    async def start_polling(self) -> None:
+        """Start polling for updates in a background task."""
+        if not self.app:
+            return
+
+        # Delete any stale webhook so polling works
+        await self.app.bot.delete_webhook(drop_pending_updates=True)
+
+        await self.app.start()
+        await self.app.updater.start_polling(
+            drop_pending_updates=True,
+            allowed_updates=["message"],
+        )
+        log.info("Telegram bot polling started")
+
+    async def stop_polling(self) -> None:
+        """Stop polling."""
+        if self.app and self.app.updater and self.app.updater.running:
+            await self.app.updater.stop()
+            await self.app.stop()
+            await self.app.shutdown()
+            log.info("Telegram bot polling stopped")
 
     async def _handle_message(self, update: Update, context) -> None:
         if not update.message or not update.message.text:
@@ -52,26 +81,34 @@ class TelegramBot:
         text = update.message.text
         log.info("Telegram message: %s", text[:100])
 
-        intent = await classify(text, self.llm)
+        try:
+            intent = await classify(text, self.llm)
 
-        if intent.type == IntentType.engineering:
-            task_id = await self._on_engineering_task(
-                instruction=intent.instruction,
-                agent_type=intent.agent_type or "coder",
-                repo=intent.repo or "",
-            )
-            await update.message.reply_text(f"On it. Task {task_id[:8]} launched.")
+            if intent.type == IntentType.engineering:
+                try:
+                    task_id = await self._on_engineering_task(
+                        instruction=intent.instruction,
+                        agent_type=intent.agent_type or "coder",
+                        repo=intent.repo or "",
+                    )
+                    await update.message.reply_text(f"On it. Task {task_id[:8]} launched.")
+                except Exception as e:
+                    log.error("Failed to launch task: %s", e)
+                    await update.message.reply_text(f"Task created but launch failed: {e}")
 
-        elif intent.type == IntentType.system:
-            response = await self._on_status_query(text)
-            await update.message.reply_text(response)
+            elif intent.type == IntentType.system:
+                response = await self._on_status_query(text)
+                await update.message.reply_text(response)
 
-        else:
-            # general — Phase 1c (OpenClaw)
-            await update.message.reply_text(
-                "General assistant not available yet (Phase 1c). "
-                "I can handle engineering tasks and status queries."
-            )
+            else:
+                # general — Phase 1c (OpenClaw)
+                await update.message.reply_text(
+                    "General assistant not available yet (Phase 1c). "
+                    "I can handle engineering tasks and status queries."
+                )
+        except Exception as e:
+            log.exception("Error handling Telegram message")
+            await update.message.reply_text(f"Error: {e}")
 
     async def send(self, text: str) -> None:
         """Send a message to Alex."""
