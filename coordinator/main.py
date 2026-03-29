@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from contextlib import asynccontextmanager
@@ -42,6 +43,24 @@ llm: LLMClient
 # ---------------------------------------------------------------------------
 # Lifespan
 # ---------------------------------------------------------------------------
+
+async def _llm_heartbeat_loop(llm_url: str, api_key: str):
+    """Send periodic heartbeat to llm-manager to stay 'online'."""
+    import httpx
+    async with httpx.AsyncClient(timeout=10) as client:
+        while True:
+            try:
+                await asyncio.sleep(60)
+                await client.post(
+                    f"{llm_url}/api/apps/heartbeat",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                    json={"metadata": {"component": "coordinator"}},
+                )
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                log.warning("LLM heartbeat failed: %s", e)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -107,10 +126,17 @@ async def lifespan(app: FastAPI):
     # LISTEN/NOTIFY for agent completion events
     await db.start_listener(_on_agent_event)
 
+    # Periodic heartbeat to llm-manager (keeps app "online")
+    _heartbeat_task = None
+    if llm_api_key:
+        _heartbeat_task = asyncio.create_task(_llm_heartbeat_loop(config.llm_manager_url, llm_api_key))
+
     log.info("Coordinator started")
     yield
 
     # Shutdown
+    if _heartbeat_task:
+        _heartbeat_task.cancel()
     if config.telegram_bot_token:
         await telegram_bot.stop_polling()
     await db.close()
