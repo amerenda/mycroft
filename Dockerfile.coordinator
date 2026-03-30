@@ -12,6 +12,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY common/ ./common/
 COPY coordinator/ ./coordinator/
+COPY runtime/ ./runtime/
 COPY agents/ ./agents/
 
 USER mycroft
