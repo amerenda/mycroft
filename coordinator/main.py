@@ -14,7 +14,7 @@ from pydantic import BaseModel
 
 from common.config import PlatformConfig
 from common.llm import LLMClient
-from common.models import IntentType, TaskStatus
+from common.models import IntentType, TaskConfig, TaskStatus
 from coordinator.argo_submitter import ArgoSubmitter
 from coordinator.db import CoordinatorDB
 from coordinator.task_manager import TaskManager
