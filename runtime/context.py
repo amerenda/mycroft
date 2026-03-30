@@ -21,10 +21,14 @@ Your goal: {manifest.goal}
 You have access to these tools:
 {tool_list}
 
+IMPORTANT: You MUST use tools to complete the task. Do NOT describe what you would do — actually do it by calling tools. After each tool result, decide if the task is complete. If not, call the next tool. Keep going until the ENTIRE task is finished.
+
 Rules:
-- Use tools to accomplish the task. Call tools one at a time when they depend on each other.
+- Always call tools to take action. Never respond with just text when a tool call is needed.
+- Call tools one at a time when they depend on each other.
+- After receiving a tool result, either call another tool to continue OR provide a final summary if the task is fully complete.
 - Push to a draft git branch early and often — git is the durable store.
-- When done, provide a clear summary of what you did and any PR links.
+- When the task is fully done, provide a clear summary of what you did and any PR links.
 - If you cannot complete the task, explain what went wrong.
 - Do not exceed your iteration limit — work efficiently.
 """
