@@ -62,11 +62,14 @@ def main():
         sys.exit(1)
 
     manifest = AgentManifest.from_yaml(manifest_path)
-    if args.model:
-        manifest.model = args.model
+    # Model override: CLI flag > env var > manifest default
+    model_override = args.model or os.environ.get("MODEL_OVERRIDE")
+    if model_override:
+        log.info("Model override: %s (was %s)", model_override, manifest.model)
+        manifest.model = model_override
     platform = PlatformConfig()
 
-    task = TaskConfig(id=task_id, agent_type=agent_type)
+    task = TaskConfig(id=task_id, agent_type=agent_type, model_override=model_override)
 
     if args.instruction:
         task.instruction = args.instruction

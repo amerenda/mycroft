@@ -54,6 +54,7 @@ class ArgoSubmitter:
                     "parameters": [
                         {"name": "task-id", "value": task_id},
                         {"name": "config", "value": json.dumps(params or {})},
+                        {"name": "model-override", "value": (params or {}).get("model_override", "")},
                     ]
                 },
             },
