@@ -151,7 +151,9 @@ app = FastAPI(title="Mycroft Coordinator", lifespan=lifespan)
 # Event handlers
 # ---------------------------------------------------------------------------
 
-async def _handle_engineering_task(instruction: str, agent_type: str, repo: str) -> str:
+async def _handle_engineering_task(
+    instruction: str, agent_type: str, repo: str, model_override: str | None = None,
+) -> str:
     """Handle an engineering task from Telegram or API."""
     manifest = trigger_router.get_manifest(agent_type)
     if not manifest:
@@ -161,20 +163,29 @@ async def _handle_engineering_task(instruction: str, agent_type: str, repo: str)
     if not await task_manager.can_launch(agent_type, manifest.max_concurrent):
         raise ValueError(f"Max concurrent tasks reached for {agent_type}")
 
+    # Build task config
+    task_config: dict[str, Any] = {}
+    if model_override:
+        task_config["model_override"] = model_override
+
     # Create task
     task_id = await task_manager.create_task(
         agent_type=agent_type,
         instruction=instruction,
-        trigger="telegram",
+        trigger="manual",
         repo=repo,
+        config=task_config,
     )
 
     # Submit Argo Workflow with progress monitoring
+    params: dict[str, Any] = {"instruction": instruction, "repo": repo}
+    if model_override:
+        params["model_override"] = model_override
     try:
         wf_name = await argo.submit(
             agent_type=agent_type,
             task_id=task_id,
-            params={"instruction": instruction, "repo": repo},
+            params=params,
             on_update=_on_workflow_update,
         )
         log.info("Workflow %s submitted for task %s", wf_name, task_id[:8])
@@ -263,6 +274,7 @@ class CreateTaskRequest(BaseModel):
     instruction: str
     repo: str = ""
     trigger: str = "manual"
+    model: str | None = None
 
 
 @app.post("/api/tasks")
@@ -272,6 +284,7 @@ async def create_task(req: CreateTaskRequest):
             instruction=req.instruction,
             agent_type=req.agent_type,
             repo=req.repo,
+            model_override=req.model,
         )
         return {"task_id": task_id}
     except ValueError as e:
@@ -429,6 +442,26 @@ async def telegram_webhook(request: Request):
 
 
 # ---------------------------------------------------------------------------
+# LLM Manager proxy
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/models")
+async def list_models():
+    """Proxy available models from llm-manager."""
+    import httpx
+
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            resp = await client.get(f"{config.llm_manager_url}/api/models")
+            resp.raise_for_status()
+            return resp.json()
+    except Exception as e:
+        log.warning("Failed to fetch models from llm-manager: %s", e)
+        return []
+
+
+# ---------------------------------------------------------------------------
 # Debug UI
 # ---------------------------------------------------------------------------
 
@@ -498,7 +531,7 @@ DEBUG_HTML = """<!DOCTYPE html>
     </div>
     <div>
       <label>Model (optional override)</label>
-      <input id="model" placeholder="e.g. qwen2.5:7b, llama3.1:latest">
+      <select id="model"><option value="">Default (from manifest)</option></select>
     </div>
   </div>
   <label>Instruction</label>
@@ -555,12 +588,14 @@ async function runTask() {
   btn.disabled = true; spinner.style.display = 'inline';
 
   try {
+    const model = document.getElementById('model').value;
     const r = await api('/api/tasks', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
       body: JSON.stringify({
         agent_type: document.getElementById('agentType').value,
         instruction: instruction,
+        model: model || null,
       })
     });
     if (r.task_id) {
@@ -649,6 +684,27 @@ function pollConversation(taskId) {
 
 function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
+async function loadModels() {
+  try {
+    const models = await api('/api/models');
+    const el = document.getElementById('model');
+    models
+      .filter(m => m.downloaded)
+      .sort((a, b) => (b.loaded ? 1 : 0) - (a.loaded ? 1 : 0) || a.name.localeCompare(b.name))
+      .forEach(m => {
+        const opt = document.createElement('option');
+        opt.value = m.name;
+        const tags = [];
+        if (m.loaded) tags.push('loaded');
+        if (m.parameter_count) tags.push(m.parameter_count);
+        if (m.quantization) tags.push(m.quantization);
+        opt.textContent = m.name + (tags.length ? ' (' + tags.join(', ') + ')' : '');
+        el.appendChild(opt);
+      });
+  } catch(e) { console.warn('Failed to load models:', e); }
+}
+
+loadModels();
 loadTasks();
 setInterval(loadTasks, 30000);
 </script>

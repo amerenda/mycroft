@@ -157,11 +157,13 @@ async def _run_argo(manifest: AgentManifest, task: TaskConfig, platform: Platfor
         if inbox_record.metadata:
             task.config = inbox_record.metadata
             task.repo = inbox_record.metadata.get("repo", "")
+            task.model_override = inbox_record.metadata.get("model_override")
     else:
         task_record = await kb.get_task(task.id)
         if task_record and task_record.config:
             task.instruction = task_record.config.get("instruction", "")
             task.repo = task_record.config.get("repo", "")
+            task.model_override = task_record.config.get("model_override")
 
     await kb.close()
 
