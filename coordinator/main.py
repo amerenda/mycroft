@@ -152,7 +152,8 @@ app = FastAPI(title="Mycroft Coordinator", lifespan=lifespan)
 # ---------------------------------------------------------------------------
 
 async def _handle_engineering_task(
-    instruction: str, agent_type: str, repo: str, model_override: str | None = None,
+    instruction: str, agent_type: str, repo: str,
+    model_override: str | None = None, system_prompt_override: str | None = None,
 ) -> str:
     """Handle an engineering task from Telegram or API."""
     manifest = trigger_router.get_manifest(agent_type)
@@ -167,6 +168,8 @@ async def _handle_engineering_task(
     task_config: dict[str, Any] = {}
     if model_override:
         task_config["model_override"] = model_override
+    if system_prompt_override:
+        task_config["system_prompt_override"] = system_prompt_override
 
     # Create task
     task_id = await task_manager.create_task(
@@ -275,6 +278,7 @@ class CreateTaskRequest(BaseModel):
     repo: str = ""
     trigger: str = "manual"
     model: str | None = None
+    system_prompt: str | None = None
 
 
 @app.post("/api/tasks")
@@ -285,6 +289,7 @@ async def create_task(req: CreateTaskRequest):
             agent_type=req.agent_type,
             repo=req.repo,
             model_override=req.model,
+            system_prompt_override=req.system_prompt,
         )
         return {"task_id": task_id}
     except ValueError as e:
@@ -536,6 +541,10 @@ DEBUG_HTML = """<!DOCTYPE html>
   </div>
   <label>Instruction</label>
   <textarea id="instruction" placeholder="e.g. In the mycroft repo, add a README.md with a brief project description"></textarea>
+  <details style="margin-top:12px">
+    <summary style="cursor:pointer;color:#58a6ff;font-size:0.85em">System Prompt Override (optional)</summary>
+    <textarea id="systemPrompt" style="margin-top:8px;min-height:200px;font-size:0.8em" placeholder="Leave empty to use default. The default prompt will be shown when you click Preview Prompt."></textarea>
+  </details>
   <div class="actions">
     <button class="btn-primary" onclick="runTask()" id="runBtn">Run Task (via Argo)</button>
     <button class="btn-secondary" onclick="previewPrompt()">Preview Prompt</button>
@@ -589,6 +598,7 @@ async function runTask() {
 
   try {
     const model = document.getElementById('model').value;
+    const systemPrompt = document.getElementById('systemPrompt').value.trim();
     const r = await api('/api/tasks', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -596,6 +606,7 @@ async function runTask() {
         agent_type: document.getElementById('agentType').value,
         instruction: instruction,
         model: model || null,
+        system_prompt: systemPrompt || null,
       })
     });
     if (r.task_id) {
@@ -629,6 +640,9 @@ async function previewPrompt() {
       <div class="msg msg-user"><div class="role">User Message</div><pre>${esc(r.user_message)}</pre></div>
       <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${r.tools.join(', ')} | Model: ${r.model} | Task: ${r.task_id.slice(0,8)}</p>
     `;
+    // Pre-fill system prompt textarea with default if empty
+    const spEl = document.getElementById('systemPrompt');
+    if (!spEl.value.trim()) spEl.value = r.system_prompt;
     loadTasks();
   } catch(e) { alert('Error: ' + e); }
 }

@@ -112,9 +112,10 @@ class AgentRunner:
                 limit=5,
             )
 
+            system_prompt = self.task.system_prompt_override or build_system_prompt(self.manifest, self.tools.schemas())
             self.messages.append({
                 "role": "system",
-                "content": build_system_prompt(self.manifest, self.tools.schemas()),
+                "content": system_prompt,
             })
             self.messages.append({
                 "role": "user",

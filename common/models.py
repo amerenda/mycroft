@@ -83,6 +83,7 @@ class TaskConfig(BaseModel):
     repo: str = ""
     branch: str = ""
     model_override: str | None = None
+    system_prompt_override: str | None = None
     timeout_override: int | None = None
     max_iterations_override: int | None = None
     context_injection: list[str] = Field(default_factory=list)
