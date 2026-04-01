@@ -180,24 +180,33 @@ async def _handle_engineering_task(
         config=task_config,
     )
 
-    # Submit Argo Workflow with progress monitoring
+    # Submit Argo Workflow with retries
     params: dict[str, Any] = {"instruction": instruction, "repo": repo}
     if model_override:
         params["model_override"] = model_override
-    try:
-        wf_name = await argo.submit(
-            agent_type=agent_type,
-            task_id=task_id,
-            params=params,
-            on_update=_on_workflow_update,
-        )
-        log.info("Workflow %s submitted for task %s", wf_name, task_id[:8])
-    except Exception as e:
-        log.error("Failed to submit Argo Workflow: %s", e)
-        await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": f"Workflow submission failed: {e}"})
-        raise
 
-    return task_id
+    max_retries = 3
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        try:
+            wf_name = await argo.submit(
+                agent_type=agent_type,
+                task_id=task_id,
+                params=params,
+                on_update=_on_workflow_update,
+            )
+            log.info("Workflow %s submitted for task %s (attempt %d)", wf_name, task_id[:8], attempt)
+            return task_id
+        except Exception as e:
+            last_error = e
+            log.warning("Argo submission attempt %d/%d failed for task %s: %s", attempt, max_retries, task_id[:8], e)
+            if attempt < max_retries:
+                await asyncio.sleep(2 ** attempt)  # 2s, 4s backoff
+
+    # All retries exhausted
+    log.error("Failed to submit Argo Workflow after %d attempts: %s", max_retries, last_error)
+    await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": f"Workflow submission failed after {max_retries} attempts: {last_error}"})
+    raise last_error
 
 
 async def _on_workflow_update(task_id: str, status: str, message: str):
@@ -322,6 +331,21 @@ async def cancel_task(task_id: str):
     return {"status": "cancelled"}
 
 
+@app.delete("/api/tasks/{task_id}")
+async def delete_task(task_id: str):
+    task = await task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    await db.kb.delete_task(task_id)
+    return {"status": "deleted"}
+
+
+@app.delete("/api/tasks")
+async def delete_all_tasks():
+    count = await db.kb.delete_all_tasks()
+    return {"status": "deleted", "count": count}
+
+
 class DispatchRequest(BaseModel):
     event_type: str
     payload: dict[str, Any] = {}
@@ -392,7 +416,7 @@ class TestTaskRequest(BaseModel):
 
 @app.post("/api/tasks/test")
 async def test_task(req: TestTaskRequest):
-    """Run an agent in-process (no Argo) and return the conversation log. For debugging."""
+    """Preview the prompt that would be sent to an agent. Does not create a task."""
     from runtime.context import build_system_prompt, build_user_message
     from runtime.tools.base import load_tools
 
@@ -409,27 +433,12 @@ async def test_task(req: TestTaskRequest):
     system_prompt = build_system_prompt(manifest, tools.schemas())
     user_message = build_user_message(req.instruction, [])
 
-    task = TaskConfig(
-        agent_type=req.agent_type,
-        instruction=req.instruction,
-        trigger="test",
-    )
-
-    # Create task in DB
-    task_id = await task_manager.create_task(
-        agent_type=req.agent_type,
-        instruction=req.instruction,
-        trigger="test",
-    )
-
     return {
-        "task_id": task_id,
         "agent_type": req.agent_type,
         "model": manifest.model,
         "system_prompt": system_prompt,
         "user_message": user_message,
         "tools": [t["function"]["name"] for t in tools.schemas()],
-        "note": "Task created. Use GET /api/tasks/{task_id}/conversation to view results after execution.",
     }
 
 
@@ -513,8 +522,15 @@ DEBUG_HTML = """<!DOCTYPE html>
   .msg-assistant { background: #1c2d1c; border-left: 3px solid #3fb950; }
   .msg-tool { background: #2d1c1c; border-left: 3px solid #f0883e; }
   .role { font-weight: 600; font-size: 0.75em; text-transform: uppercase; margin-bottom: 4px; }
-  .task-row { display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid #21262d; cursor: pointer; font-size: 0.85em; }
+  .task-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #21262d; font-size: 0.85em; }
   .task-row:hover { background: #161b22; }
+  .task-info { cursor: pointer; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .task-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+  .btn-delete { background: none; border: none; color: #6e7681; cursor: pointer; padding: 2px 6px; font-size: 0.85em; border-radius: 3px; }
+  .btn-delete:hover { color: #da3633; background: #da363322; }
+  .btn-danger { background: #da3633; color: #fff; font-size: 0.8em; padding: 4px 12px; }
+  .btn-danger:hover { background: #f85149; }
+  .tasks-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px; }
   .status { padding: 2px 8px; border-radius: 3px; font-size: 0.75em; font-weight: 600; }
   .status-completed { background: #238636; }
   .status-running { background: #1f6feb; }
@@ -563,7 +579,10 @@ DEBUG_HTML = """<!DOCTYPE html>
 </div>
 
 <div class="panel">
-  <h2>Recent Tasks</h2>
+  <div class="tasks-header">
+    <h2>Recent Tasks</h2>
+    <button class="btn-danger" onclick="clearAllTasks()">Clear All</button>
+  </div>
   <div id="taskList">Loading...</div>
 </div>
 
@@ -581,9 +600,12 @@ async function loadTasks() {
     const el = document.getElementById('taskList');
     if (!tasks.length) { el.innerHTML = '<em>No tasks yet</em>'; return; }
     el.innerHTML = tasks.map(t => `
-      <div class="task-row" onclick="viewConversation('${t.id}')">
-        <span>${t.id.slice(0,8)} — ${t.agent_type} — ${(t.config?.instruction || '').slice(0,60)}</span>
-        <span class="status status-${t.status}">${t.status}</span>
+      <div class="task-row">
+        <span class="task-info" onclick="viewConversation('${t.id}')">${t.id.slice(0,8)} — ${t.agent_type} — ${esc((t.config?.instruction || '').slice(0,60))}</span>
+        <div class="task-actions">
+          <span class="status status-${t.status}">${t.status}</span>
+          <button class="btn-delete" onclick="deleteTask('${t.id}')" title="Delete task">✕</button>
+        </div>
       </div>
     `).join('');
   } catch(e) { document.getElementById('taskList').innerHTML = '<em>Error loading tasks</em>'; }
@@ -638,12 +660,11 @@ async function previewPrompt() {
     panel.querySelector('#promptContent').innerHTML = `
       <div class="msg msg-system"><div class="role">System Prompt</div><pre>${esc(r.system_prompt)}</pre></div>
       <div class="msg msg-user"><div class="role">User Message</div><pre>${esc(r.user_message)}</pre></div>
-      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${r.tools.join(', ')} | Model: ${r.model} | Task: ${r.task_id.slice(0,8)}</p>
+      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${r.tools.join(', ')} | Model: ${r.model}</p>
     `;
     // Pre-fill system prompt textarea with default if empty
     const spEl = document.getElementById('systemPrompt');
     if (!spEl.value.trim()) spEl.value = r.system_prompt;
-    loadTasks();
   } catch(e) { alert('Error: ' + e); }
 }
 
@@ -697,6 +718,21 @@ function pollConversation(taskId) {
 }
 
 function esc(s) { if (!s) return ''; return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function deleteTask(taskId) {
+  try {
+    await api('/api/tasks/' + taskId, { method: 'DELETE' });
+    loadTasks();
+  } catch(e) { alert('Error deleting task: ' + e); }
+}
+
+async function clearAllTasks() {
+  if (!confirm('Delete all tasks? This cannot be undone.')) return;
+  try {
+    await api('/api/tasks', { method: 'DELETE' });
+    loadTasks();
+  } catch(e) { alert('Error clearing tasks: ' + e); }
+}
 
 async function loadModels() {
   try {

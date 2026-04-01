@@ -363,6 +363,18 @@ class KBClient:
             for r in rows
         ]
 
+    async def delete_task(self, task_id: str) -> None:
+        """Delete a task by ID."""
+        await self.pool.execute("DELETE FROM agent_tasks WHERE id = $1", task_id)
+        log.info("Task deleted: id=%s", task_id[:8])
+
+    async def delete_all_tasks(self) -> int:
+        """Delete all tasks. Returns the number deleted."""
+        result = await self.pool.execute("DELETE FROM agent_tasks")
+        count = int(result.split()[-1])
+        log.info("Deleted %d tasks", count)
+        return count
+
     async def count_running_tasks(self, agent_type: str) -> int:
         row = await self.pool.fetchrow(
             "SELECT COUNT(*) as cnt FROM agent_tasks WHERE agent_type = $1 AND status = $2",
