@@ -1,27 +1,7 @@
-# Base — shared by all agents
-FROM python:3.12-slim AS agent-base
-
-RUN useradd -m -u 1000 agent
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl ca-certificates libpq-dev gcc \
-    && rm -rf /var/lib/apt/lists/*
-
-COPY requirements-agent.txt .
-RUN pip install --no-cache-dir -r requirements-agent.txt
-
-COPY common/ ./common/
-COPY runtime/ ./runtime/
-COPY agents/ ./agents/
-
-RUN mkdir -p /workspace && chown agent:agent /workspace
-
-USER agent
-ENTRYPOINT ["python", "-m", "runtime"]
+ARG BASE_TAG=latest
 
 # Coder — adds language runtimes and gh CLI
-FROM agent-base AS agent-coder
+FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-coder
 USER root
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
@@ -35,13 +15,13 @@ RUN pip install --no-cache-dir pytest
 USER agent
 
 # Researcher — minimal (Phase 1b)
-FROM agent-base AS agent-researcher
+FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-researcher
 
 # QA — httpx only (Phase 2)
-FROM agent-base AS agent-qa
+FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-qa
 
 # PR Reviewer (Phase 2)
-FROM agent-base AS agent-pr-reviewer
+FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-pr-reviewer
 USER root
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
@@ -51,4 +31,4 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 USER agent
 
 # Documenter — minimal (Phase 2)
-FROM agent-base AS agent-documenter
+FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-documenter

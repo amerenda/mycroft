@@ -41,8 +41,53 @@ jobs:
             echo "pr_prefix=deploy" >> "$GITHUB_OUTPUT"
           fi
 
-  build-amd64:
+  build-base-amd64:
     needs: [test, set-tag]
+    if: github.event_name != 'pull_request'
+    runs-on: arc-runner-set
+    steps:
+      - uses: actions/checkout@v6
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+      - name: Build agent-base
+        run: |
+          TAG=${{ needs.set-tag.outputs.tag }}
+          docker build -f Dockerfile.agent-base -t "${IMAGE}:agent-base-${TAG}-amd64" .
+          docker push "${IMAGE}:agent-base-${TAG}-amd64"
+
+  build-base-arm64:
+    needs: [test, set-tag]
+    if: github.event_name != 'pull_request'
+    runs-on: [self-hosted, mac-mini]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+      - name: Build agent-base
+        run: |
+          TAG=${{ needs.set-tag.outputs.tag }}
+          docker build -f Dockerfile.agent-base -t "${IMAGE}:agent-base-${TAG}-arm64" .
+          docker push "${IMAGE}:agent-base-${TAG}-arm64"
+
+  manifest-base:
+    needs: [set-tag, build-base-amd64, build-base-arm64]
+    runs-on: arc-runner-set
+    steps:
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+      - name: Create agent-base multi-arch manifest
+        env:
+          TAG: ${{ needs.set-tag.outputs.tag }}
+        run: |
+          docker buildx imagetools create -t "${IMAGE}:agent-base-${TAG}" \
+            "${IMAGE}:agent-base-${TAG}-amd64" \
+            "${IMAGE}:agent-base-${TAG}-arm64"
+          docker buildx imagetools create -t "${IMAGE}:agent-base-latest" \
+            "${IMAGE}:agent-base-${TAG}-amd64" \
+            "${IMAGE}:agent-base-${TAG}-arm64"
+
+  build-amd64:
+    needs: [set-tag, manifest-base]
     if: github.event_name != 'pull_request'
     runs-on: arc-runner-set
     steps:
@@ -57,11 +102,13 @@ jobs:
       - name: Build agent-coder
         run: |
           TAG=${{ needs.set-tag.outputs.tag }}
-          docker build -f Dockerfile.agent --target agent-coder -t "${IMAGE}:agent-coder-${TAG}-amd64" .
+          docker build -f Dockerfile.agent --target agent-coder \
+            --build-arg BASE_TAG=${TAG} \
+            -t "${IMAGE}:agent-coder-${TAG}-amd64" .
           docker push "${IMAGE}:agent-coder-${TAG}-amd64"
 
   build-arm64:
-    needs: [test, set-tag]
+    needs: [set-tag, manifest-base]
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, mac-mini]
     steps:
@@ -76,7 +123,9 @@ jobs:
       - name: Build agent-coder
         run: |
           TAG=${{ needs.set-tag.outputs.tag }}
-          docker build -f Dockerfile.agent --target agent-coder -t "${IMAGE}:agent-coder-${TAG}-arm64" .
+          docker build -f Dockerfile.agent --target agent-coder \
+            --build-arg BASE_TAG=${TAG} \
+            -t "${IMAGE}:agent-coder-${TAG}-arm64" .
           docker push "${IMAGE}:agent-coder-${TAG}-arm64"
 
   manifest:
@@ -169,7 +218,7 @@ jobs:
           if [ -n "${COMMIT_BODY}" ]; then
             PR_BODY="${PR_BODY}${NL}${NL}${COMMIT_BODY}"
           fi
-          PR_BODY="${PR_BODY}${NL}${NL}Images: \`amerenda/mycroft:coordinator-${TAG}\`, \`amerenda/mycroft:agent-coder-${TAG}\` (multi-arch: amd64+arm64)${NL}Source: ${SOURCE_LINK}"
+          PR_BODY="${PR_BODY}${NL}${NL}Images: \`amerenda/mycroft:coordinator-${TAG}\`, \`amerenda/mycroft:agent-base-${TAG}\`, \`amerenda/mycroft:agent-coder-${TAG}\` (multi-arch: amd64+arm64)${NL}Source: ${SOURCE_LINK}"
 
           PR_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${GITOPS_PAT}" \
@@ -195,7 +244,7 @@ jobs:
 
   notify-failure:
     if: failure()
-    needs: [test, build-amd64, build-arm64, manifest, deploy]
+    needs: [test, build-base-amd64, build-base-arm64, manifest-base, build-amd64, build-arm64, manifest, deploy]
     runs-on: ubuntu-latest
     steps:
       - name: Create GitHub Issue for build failure

@@ -73,6 +73,7 @@ def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegi
     from runtime.tools.git import GitClone, GitCheckoutBranch, GitAdd, GitCommit, GitPush, GitDiff
     from runtime.tools.github import GhCreatePr, GhComment
     from runtime.tools.shell import RunCommand
+    from runtime.tools.vikunja import TodoListProjects, TodoGetTasks, TodoCreateTask, TodoUpdateTask
 
     all_tools: dict[str, Tool] = {
         "git_clone": GitClone(workspace),
@@ -84,6 +85,10 @@ def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegi
         "gh_create_pr": GhCreatePr(workspace),
         "gh_comment": GhComment(workspace),
         "run_command": RunCommand(workspace),
+        "todo_list_projects": TodoListProjects(),
+        "todo_get_tasks": TodoGetTasks(),
+        "todo_create_task": TodoCreateTask(),
+        "todo_update_task": TodoUpdateTask(),
     }
 
     # Map manifest tool groups to individual tools
@@ -91,6 +96,7 @@ def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegi
         "git": ["git_clone", "git_checkout_branch", "git_add", "git_commit", "git_push", "git_diff"],
         "github": ["gh_create_pr", "gh_comment"],
         "shell": ["run_command"],
+        "todo": ["todo_list_projects", "todo_get_tasks", "todo_create_task", "todo_update_task"],
     }
 
     selected = set()

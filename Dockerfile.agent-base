@@ -1,0 +1,20 @@
+FROM python:3.12-slim
+
+RUN useradd -m -u 1000 agent
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    git curl ca-certificates libpq-dev gcc \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-agent.txt .
+RUN pip install --no-cache-dir -r requirements-agent.txt
+
+COPY common/ ./common/
+COPY runtime/ ./runtime/
+COPY agents/ ./agents/
+
+RUN mkdir -p /workspace && chown agent:agent /workspace
+
+USER agent
+ENTRYPOINT ["python", "-m", "runtime"]
