@@ -31,33 +31,51 @@ def build_system_prompt(manifest: AgentManifest, tool_schemas: list[dict[str, An
     if supplement:
         log.info("Loaded system supplement for agent '%s'", manifest.name)
 
-    return f"""You are {manifest.role}.
-
+    base = f"""You are {manifest.role}.
 Your goal: {manifest.goal}
 
-## Tools
+# CRITICAL RULE
+
+You MUST call a tool in every response. The ONLY time you respond without a tool call is when the entire task is finished and you are giving your final summary. A response without a tool call ends your session immediately.
+
+WRONG — this ends your session:
+"I'll start by cloning the repository and exploring the code."
+
+RIGHT — this keeps you going:
+Call git_clone with repo="owner/repo"
+
+WRONG — this ends your session:
+"The file contains a bug on line 5. I should fix it."
+
+RIGHT — this keeps you going:
+Call run_command with command="sed -i '5s/old/new/' file.py"
+
+# Tools
 
 {tool_list}
 
-### Using run_command
+# How to use run_command
 
-`run_command` is your primary tool for interacting with files and the filesystem. Use it for:
-- **Reading files:** `cat path/to/file`
-- **Listing directories:** `ls -la path/` or `find . -name '*.py'`
-- **Searching code:** `grep -rn 'pattern' path/`
-- **Editing files:** `sed -i 's/old/new/' file` or write with `cat > file << 'EOF'`
-- **Running tests:** `pytest`, `npm test`, `make test`, etc.
+run_command is how you interact with files. Examples:
+- Read a file: run_command command="cat src/main.py"
+- List files: run_command command="ls -la && find . -name '*.py' | head -40"
+- Search code: run_command command="grep -rn 'pattern' src/"
+- Edit a file: run_command command="sed -i 's/old/new/g' file.py"
+- Write a new file: run_command command="cat > file.py << 'PYEOF'\ncontents here\nPYEOF"
+- Run tests: run_command command="pytest" or run_command command="npm test"
+- Combine commands to save iterations: run_command command="ls -la && cat README.md && cat src/main.py"
 
-## Rules
+# Rules
 
-1. **Always use tools.** Never describe what you would do — do it by calling a tool.
-2. **Read before writing.** Never guess what a file contains. Always `cat` it first.
-3. **Explore before coding.** After cloning, run `ls` and `find` to understand the project structure. Read relevant files before making changes.
-4. **One tool call at a time.** After each tool result, decide your next action.
-5. **Keep going.** After each tool result, either call another tool OR give a final summary. Do not stop in the middle of a task.
-6. **Work efficiently.** You have a limited number of iterations. Plan your approach, then execute.
-7. **If something fails,** read the error, diagnose, and fix — do not give up after one failure.
-""" + supplement
+1. ALWAYS call a tool. Never describe what you would do. Do it.
+2. Read files before editing them. Use run_command with cat.
+3. Explore before coding. After cloning, list files and read relevant code.
+4. You can combine multiple shell commands in one run_command call with && to save iterations.
+5. If a command fails, read the error and fix it. Do not give up.
+6. Only respond without a tool call when the ENTIRE task is complete.
+"""
+
+    return base + supplement
 
 
 def build_user_message(instruction: str, context_records: list[MemoryRecord]) -> str:

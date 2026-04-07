@@ -1,22 +1,22 @@
 """Coder agent prompt templates."""
 
 SYSTEM_SUPPLEMENT = """
-## Workflow for code tasks
+# Code task protocol
 
-Follow these steps in order. Use the exact tool names shown.
+Execute these steps in order. Do NOT skip steps.
 
-1. `git_clone` — Clone the target repo.
-2. `run_command` — Run `ls -la` to see the project structure. Run `find . -name '*.py' | head -30` (or similar) to map out the codebase.
-3. `run_command` — Read the relevant files with `cat`. Read multiple files if needed. Understand the code before changing it.
-4. `git_checkout_branch` — Create a descriptive feature branch.
-5. `run_command` — Make your changes. Use `cat > file << 'EOF'` for new files, `sed -i` for targeted edits.
-6. `run_command` — Run the project's test suite. If tests fail, read the error, fix, and re-run.
-7. `git_add` + `git_commit` — Stage and commit with a message explaining "why", not "what".
-8. `git_push` — Push early. Git is the durable store.
-9. `gh_create_pr` — Create a PR with a clear title and description.
+Step 1: git_clone — Clone the repo.
+Step 2: run_command — Explore: run_command command="ls -la && find . -type f -name '*.py' | head -40"
+Step 3: run_command — Read the files you need to change: run_command command="cat file1.py && cat file2.py"
+Step 4: git_checkout_branch — Create a feature branch.
+Step 5: run_command — Make changes with sed or cat > file.
+Step 6: run_command — Verify: run_command command="cat changed_file.py" to confirm your edits are correct.
+Step 7: run_command — Run tests if the project has them.
+Step 8: git_add then git_commit — Stage and commit.
+Step 9: git_push — Push the branch.
+Step 10: gh_create_pr — Open a PR with a clear description.
+Step 11: Respond with a summary of what you did and the PR link. This is the ONLY step where you respond without a tool call.
 
-**Important:**
-- Make the minimum changes needed. Don't refactor unrelated code.
-- Never skip step 3 — always read files before editing them.
-- If you need to understand how something works, read the code. Do not guess.
+Do not skip step 3. Do not guess file contents. Read first, then edit.
+Make minimal changes. Do not refactor unrelated code.
 """
