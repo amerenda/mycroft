@@ -4,7 +4,7 @@ goal: "Write correct, tested code that solves the given task and creates a pull 
 model: qwen2.5:7b
 backend: k8s
 max_concurrent: 2
-max_iterations: 10
+max_iterations: 15
 resources:
   memory: 512Mi
   cpu: "1"

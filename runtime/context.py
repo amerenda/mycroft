@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import importlib
+import logging
 from typing import Any
 
 from common.models import AgentManifest, MemoryRecord
+
+log = logging.getLogger(__name__)
+
+
+def _load_supplement(agent_name: str) -> str:
+    """Load the SYSTEM_SUPPLEMENT from an agent's prompts module, if it exists."""
+    try:
+        mod = importlib.import_module(f"agents.{agent_name}.prompts")
+        return getattr(mod, "SYSTEM_SUPPLEMENT", "")
+    except (ModuleNotFoundError, ImportError):
+        return ""
 
 
 def build_system_prompt(manifest: AgentManifest, tool_schemas: list[dict[str, Any]]) -> str:
@@ -14,24 +27,37 @@ def build_system_prompt(manifest: AgentManifest, tool_schemas: list[dict[str, An
         for t in tool_schemas
     )
 
+    supplement = _load_supplement(manifest.name)
+    if supplement:
+        log.info("Loaded system supplement for agent '%s'", manifest.name)
+
     return f"""You are {manifest.role}.
 
 Your goal: {manifest.goal}
 
-You have access to these tools:
+## Tools
+
 {tool_list}
 
-IMPORTANT: You MUST use tools to complete the task. Do NOT describe what you would do — actually do it by calling tools. After each tool result, decide if the task is complete. If not, call the next tool. Keep going until the ENTIRE task is finished.
+### Using run_command
 
-Rules:
-- Always call tools to take action. Never respond with just text when a tool call is needed.
-- Call tools one at a time when they depend on each other.
-- After receiving a tool result, either call another tool to continue OR provide a final summary if the task is fully complete.
-- Push to a draft git branch early and often — git is the durable store.
-- When the task is fully done, provide a clear summary of what you did and any PR links.
-- If you cannot complete the task, explain what went wrong.
-- Do not exceed your iteration limit — work efficiently.
-"""
+`run_command` is your primary tool for interacting with files and the filesystem. Use it for:
+- **Reading files:** `cat path/to/file`
+- **Listing directories:** `ls -la path/` or `find . -name '*.py'`
+- **Searching code:** `grep -rn 'pattern' path/`
+- **Editing files:** `sed -i 's/old/new/' file` or write with `cat > file << 'EOF'`
+- **Running tests:** `pytest`, `npm test`, `make test`, etc.
+
+## Rules
+
+1. **Always use tools.** Never describe what you would do — do it by calling a tool.
+2. **Read before writing.** Never guess what a file contains. Always `cat` it first.
+3. **Explore before coding.** After cloning, run `ls` and `find` to understand the project structure. Read relevant files before making changes.
+4. **One tool call at a time.** After each tool result, decide your next action.
+5. **Keep going.** After each tool result, either call another tool OR give a final summary. Do not stop in the middle of a task.
+6. **Work efficiently.** You have a limited number of iterations. Plan your approach, then execute.
+7. **If something fails,** read the error, diagnose, and fix — do not give up after one failure.
+""" + supplement
 
 
 def build_user_message(instruction: str, context_records: list[MemoryRecord]) -> str:
