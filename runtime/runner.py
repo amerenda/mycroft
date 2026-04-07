@@ -128,6 +128,10 @@ class AgentRunner:
             # Call LLM
             response = await self.llm.chat(self.messages, tools=self.tools.schemas())
 
+            # Log raw response for debugging
+            log.info("LLM response: content=%r tool_calls=%d",
+                     (response.content or "")[:100], len(response.tool_calls))
+
             # Add assistant message
             assistant_msg: dict[str, Any] = {"role": "assistant"}
             if response.content:
@@ -164,7 +168,18 @@ class AgentRunner:
                 await self._persist_conversation()
                 continue
 
-            # LLM is done (no tool calls, just text response)
+            # No tool calls — either the agent is done or it got confused
+            if not response.content or not response.content.strip():
+                # Empty response with no tool calls — nudge the model to continue
+                log.warning("Empty response with no tool calls, nudging model to continue")
+                self.messages.append({
+                    "role": "user",
+                    "content": "You returned an empty response. You must call a tool to continue. What is the next step? Call the appropriate tool now.",
+                })
+                self.iteration += 1
+                continue
+
+            # Non-empty text with no tool calls — agent is done
             log.info("Agent finished: %s", response.content[:200])
             return response.content
 
