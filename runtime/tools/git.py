@@ -8,31 +8,37 @@ import os
 import subprocess
 from typing import Any
 
+from runtime.tools.github_auth import get_bot_identity, get_installation_token
+
 log = logging.getLogger(__name__)
 
 _git_configured = False
 
 
 def _configure_git_once() -> None:
-    """Set up git identity and credential helper from env vars (once)."""
+    """Set up git identity and credential helper (once).
+
+    Uses GitHub App installation token if available, falls back to GITHUB_TOKEN PAT.
+    """
     global _git_configured
     if _git_configured:
         return
     _git_configured = True
 
-    # Git identity
-    subprocess.run(["git", "config", "--global", "user.name", "mycroft-agent"], check=False)
-    subprocess.run(["git", "config", "--global", "user.email", "mycroft@amerenda.com"], check=False)
+    # Git identity — use App bot identity or fallback
+    name, email = get_bot_identity()
+    subprocess.run(["git", "config", "--global", "user.name", name], check=False)
+    subprocess.run(["git", "config", "--global", "user.email", email], check=False)
+    log.info("Git identity: %s <%s>", name, email)
 
-    # GitHub token auth via credential helper
-    token = os.environ.get("GITHUB_TOKEN", "")
+    # Auth — get token (App installation token or PAT fallback)
+    token = get_installation_token()
     if token:
         subprocess.run(
             ["git", "config", "--global", "credential.helper",
              f"!f() {{ echo username=x-access-token; echo password={token}; }}; f"],
             check=False,
         )
-        log.info("Configured git credential helper with GITHUB_TOKEN")
 
     # Shallow clone push support
     subprocess.run(["git", "config", "--global", "push.autoSetupRemote", "true"], check=False)

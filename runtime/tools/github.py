@@ -7,6 +7,8 @@ import logging
 import os
 from typing import Any
 
+from runtime.tools.github_auth import get_installation_token
+
 log = logging.getLogger(__name__)
 
 
@@ -19,11 +21,18 @@ def _find_repo_dir(workspace: str) -> str:
 
 
 async def _run_gh(args: list[str], cwd: str) -> str:
+    # gh CLI uses GH_TOKEN env var for auth
+    env = os.environ.copy()
+    token = get_installation_token()
+    if token:
+        env["GH_TOKEN"] = token
+
     proc = await asyncio.create_subprocess_exec(
         "gh", *args,
         cwd=cwd,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
+        env=env,
     )
     stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=60)
     output = stdout.decode(errors="replace")
