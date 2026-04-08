@@ -5,13 +5,42 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import subprocess
 from typing import Any
 
 log = logging.getLogger(__name__)
 
+_git_configured = False
+
+
+def _configure_git_once() -> None:
+    """Set up git identity and credential helper from env vars (once)."""
+    global _git_configured
+    if _git_configured:
+        return
+    _git_configured = True
+
+    # Git identity
+    subprocess.run(["git", "config", "--global", "user.name", "mycroft-agent"], check=False)
+    subprocess.run(["git", "config", "--global", "user.email", "mycroft@amerenda.com"], check=False)
+
+    # GitHub token auth via credential helper
+    token = os.environ.get("GITHUB_TOKEN", "")
+    if token:
+        subprocess.run(
+            ["git", "config", "--global", "credential.helper",
+             f"!f() {{ echo username=x-access-token; echo password={token}; }}; f"],
+            check=False,
+        )
+        log.info("Configured git credential helper with GITHUB_TOKEN")
+
+    # Shallow clone push support
+    subprocess.run(["git", "config", "--global", "push.autoSetupRemote", "true"], check=False)
+
 
 async def _run_git(args: list[str], cwd: str) -> str:
     """Run a git command and return output."""
+    _configure_git_once()
     proc = await asyncio.create_subprocess_exec(
         "git", *args,
         cwd=cwd,
