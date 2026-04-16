@@ -16,7 +16,7 @@ from typing import Any, Optional
 
 log = logging.getLogger(__name__)
 
-FORGE_TIMEOUT = 300  # 5 minutes
+FORGE_TIMEOUT = 600  # 10 minutes — covers model swap + inference
 FORGE_BINARY = "/usr/local/bin/forge"
 
 
