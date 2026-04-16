@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mycroft Agent Studio</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>Mycroft Agent Studio</h1>
+  <nav>
+    <button class="tab active" data-tab="runner">Test Runner</button>
+    <button class="tab" data-tab="agents">Agents</button>
+    <button class="tab" data-tab="tasks">Tasks</button>
+  </nav>
+</header>
+
+<main>
+  <!-- Test Runner Tab -->
+  <section id="tab-runner" class="tab-content active">
+    <div class="split">
+      <div class="panel left">
+        <h2>Configure Run</h2>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Agent Type</label>
+            <select id="agentType"><option value="coder">coder</option></select>
+          </div>
+          <div class="form-group">
+            <label>Model</label>
+            <select id="model"><option value="">Default</option></select>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Instruction</label>
+          <textarea id="instruction" rows="3" placeholder="e.g. Add a multiply function to calculator.py"></textarea>
+        </div>
+        <details>
+          <summary>System Prompt Override</summary>
+          <textarea id="systemPrompt" rows="12" placeholder="Leave empty for default. Click Preview to see the default."></textarea>
+        </details>
+        <div class="actions">
+          <button class="btn-primary" id="runBtn" onclick="runTask()">Run Task</button>
+          <button class="btn-secondary" onclick="previewPrompt()">Preview Prompt</button>
+        </div>
+      </div>
+
+      <div class="panel right">
+        <h2>Tool Call Trace <span id="traceStatus" class="status-badge"></span></h2>
+        <div id="traceContent" class="trace">
+          <p class="empty">Run a task to see the tool call trace here.</p>
+        </div>
+        <div id="queueStats" class="queue-stats" style="display:none"></div>
+      </div>
+    </div>
+
+    <!-- Prompt Preview -->
+    <div id="promptPanel" class="panel" style="display:none">
+      <h2>Prompt Preview</h2>
+      <div id="promptContent"></div>
+    </div>
+  </section>
+
+  <!-- Agents Tab -->
+  <section id="tab-agents" class="tab-content">
+    <div class="panel">
+      <h2>Forge Agent Definitions</h2>
+      <p class="empty">Agent editor coming soon. For now, agents are defined in <code>agents/</code> directory.</p>
+    </div>
+  </section>
+
+  <!-- Tasks Tab -->
+  <section id="tab-tasks" class="tab-content">
+    <div class="panel">
+      <div class="tasks-header">
+        <h2>Recent Tasks</h2>
+        <button class="btn-danger" onclick="clearAllTasks()">Clear All</button>
+      </div>
+      <div id="taskList">Loading...</div>
+    </div>
+
+    <div id="conversationPanel" class="panel" style="display:none">
+      <h2>Conversation <span id="convTaskId"></span></h2>
+      <div id="conversationContent"></div>
+    </div>
+  </section>
+</main>
+
+<script src="app.js"></script>
+</body>
+</html>

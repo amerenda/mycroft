@@ -1,0 +1,262 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: -apple-system, system-ui, 'Segoe UI', sans-serif;
+  background: #0d1117;
+  color: #c9d1d9;
+  line-height: 1.5;
+}
+
+header {
+  background: #161b22;
+  border-bottom: 1px solid #30363d;
+  padding: 12px 24px;
+  display: flex;
+  align-items: center;
+  gap: 24px;
+}
+
+header h1 {
+  color: #58a6ff;
+  font-size: 1.2em;
+  white-space: nowrap;
+}
+
+nav { display: flex; gap: 4px; }
+
+.tab {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid transparent;
+  background: none;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 0.9em;
+}
+
+.tab:hover { color: #c9d1d9; background: #21262d; }
+.tab.active { color: #c9d1d9; background: #21262d; border-color: #30363d; }
+
+main { padding: 16px 24px; max-width: 1400px; margin: 0 auto; }
+
+.tab-content { display: none; }
+.tab-content.active { display: block; }
+
+.split {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+}
+
+@media (max-width: 900px) {
+  .split { grid-template-columns: 1fr; }
+}
+
+.panel {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 16px;
+  margin-bottom: 16px;
+}
+
+.panel h2 {
+  color: #8b949e;
+  font-size: 1em;
+  margin-bottom: 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+label {
+  display: block;
+  color: #8b949e;
+  font-size: 0.82em;
+  margin-bottom: 4px;
+}
+
+input, select, textarea {
+  width: 100%;
+  padding: 8px 12px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  color: #c9d1d9;
+  font-family: inherit;
+  font-size: 0.9em;
+}
+
+textarea {
+  resize: vertical;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.82em;
+  line-height: 1.6;
+}
+
+.form-row { display: flex; gap: 12px; margin-bottom: 12px; }
+.form-row > * { flex: 1; }
+.form-group { margin-bottom: 12px; }
+
+details { margin: 12px 0; }
+details summary {
+  cursor: pointer;
+  color: #58a6ff;
+  font-size: 0.85em;
+  margin-bottom: 8px;
+}
+
+.actions { display: flex; gap: 8px; margin-top: 12px; }
+
+button {
+  padding: 8px 20px;
+  border-radius: 6px;
+  border: none;
+  cursor: pointer;
+  font-size: 0.9em;
+  font-weight: 600;
+}
+
+.btn-primary { background: #238636; color: #fff; }
+.btn-primary:hover { background: #2ea043; }
+.btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn-secondary { background: #21262d; color: #c9d1d9; border: 1px solid #30363d; }
+.btn-secondary:hover { background: #30363d; }
+.btn-danger { background: #da3633; color: #fff; font-size: 0.82em; padding: 6px 14px; }
+.btn-danger:hover { background: #f85149; }
+
+.empty { color: #484f58; font-style: italic; font-size: 0.9em; }
+
+/* Trace viewer */
+.trace { max-height: 600px; overflow-y: auto; }
+
+.trace-card {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.trace-card-header {
+  padding: 8px 12px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  font-size: 0.85em;
+}
+
+.trace-card-header:hover { background: #161b22; }
+
+.trace-card.tool-call .trace-card-header { border-left: 3px solid #f0883e; }
+.trace-card.llm-response .trace-card-header { border-left: 3px solid #3fb950; }
+.trace-card.planning .trace-card-header { border-left: 3px solid #8b949e; }
+
+.trace-card-body {
+  padding: 8px 12px;
+  border-top: 1px solid #21262d;
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.78em;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  display: none;
+}
+
+.trace-card.expanded .trace-card-body { display: block; }
+
+.trace-tool-name { color: #f0883e; font-weight: 600; }
+.trace-content { color: #3fb950; }
+.trace-meta { color: #484f58; font-size: 0.78em; }
+
+.status-badge {
+  font-size: 0.75em;
+  padding: 2px 8px;
+  border-radius: 12px;
+  font-weight: 600;
+}
+
+.status-running { background: #1f6feb; color: #fff; }
+.status-completed { background: #238636; color: #fff; }
+.status-failed { background: #da3633; color: #fff; }
+.status-pending { background: #6e7681; color: #fff; }
+
+.queue-stats {
+  padding: 8px 12px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  margin-top: 8px;
+  font-size: 0.82em;
+  color: #8b949e;
+  display: flex;
+  gap: 16px;
+}
+
+.queue-stats span { color: #c9d1d9; }
+
+/* Tasks list */
+.tasks-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.task-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 8px 0;
+  border-bottom: 1px solid #21262d;
+  font-size: 0.85em;
+}
+
+.task-row:hover { background: #161b22; }
+
+.task-info {
+  cursor: pointer;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+
+.btn-delete {
+  background: none;
+  border: none;
+  color: #6e7681;
+  cursor: pointer;
+  padding: 2px 6px;
+  font-size: 0.85em;
+  border-radius: 3px;
+}
+
+.btn-delete:hover { color: #da3633; background: #da363322; }
+
+/* Conversation messages */
+.msg { padding: 8px 12px; margin: 4px 0; border-radius: 6px; font-size: 0.85em; }
+.msg-system { background: #1c2128; border-left: 3px solid #8b949e; }
+.msg-user { background: #0c2d6b; border-left: 3px solid #58a6ff; }
+.msg-assistant { background: #1c2d1c; border-left: 3px solid #3fb950; }
+.msg-tool { background: #2d1c1c; border-left: 3px solid #f0883e; }
+.role { font-weight: 600; font-size: 0.75em; text-transform: uppercase; margin-bottom: 4px; color: #8b949e; }
+
+pre {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 0.82em;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-wrap: break-word;
+}
+
+code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }

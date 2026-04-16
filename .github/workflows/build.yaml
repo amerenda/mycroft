@@ -99,6 +99,11 @@ jobs:
           TAG=${{ needs.set-tag.outputs.tag }}
           docker build -f Dockerfile.coordinator -t "${IMAGE}:coordinator-${TAG}-amd64" .
           docker push "${IMAGE}:coordinator-${TAG}-amd64"
+      - name: Build frontend
+        run: |
+          TAG=${{ needs.set-tag.outputs.tag }}
+          docker build -f Dockerfile.frontend -t "${IMAGE}:frontend-${TAG}-amd64" .
+          docker push "${IMAGE}:frontend-${TAG}-amd64"
       - name: Build agent-coder
         run: |
           TAG=${{ needs.set-tag.outputs.tag }}
@@ -120,6 +125,11 @@ jobs:
           TAG=${{ needs.set-tag.outputs.tag }}
           docker build -f Dockerfile.coordinator -t "${IMAGE}:coordinator-${TAG}-arm64" .
           docker push "${IMAGE}:coordinator-${TAG}-arm64"
+      - name: Build frontend
+        run: |
+          TAG=${{ needs.set-tag.outputs.tag }}
+          docker build -f Dockerfile.frontend -t "${IMAGE}:frontend-${TAG}-arm64" .
+          docker push "${IMAGE}:frontend-${TAG}-arm64"
       - name: Build agent-coder
         run: |
           TAG=${{ needs.set-tag.outputs.tag }}
@@ -138,7 +148,7 @@ jobs:
         env:
           TAG: ${{ needs.set-tag.outputs.tag }}
         run: |
-          for COMPONENT in coordinator agent-coder; do
+          for COMPONENT in coordinator frontend agent-coder; do
             docker buildx imagetools create -t "${IMAGE}:${COMPONENT}-${TAG}" \
               "${IMAGE}:${COMPONENT}-${TAG}-amd64" \
               "${IMAGE}:${COMPONENT}-${TAG}-arm64"
@@ -185,13 +195,17 @@ jobs:
           BRANCH="${PREFIX}/mycroft-${TAG}"
           git checkout -b "${BRANCH}"
 
-          # Update coordinator image + AGENT_IMAGE_TAG in both UAT and prod
+          # Update backend (coordinator) image + AGENT_IMAGE_TAG in both UAT and prod
           sed -i "s|image: amerenda/mycroft:coordinator-[^ ]*|image: amerenda/mycroft:coordinator-${TAG}|g" \
-            apps/mycroft/coordinator-uat/deployment.yaml \
-            apps/mycroft/coordinator/deployment.yaml
+            apps/mycroft/backend-uat/deployment.yaml \
+            apps/mycroft/backend/deployment.yaml
           sed -i "s|value: \"sha-[^\"]*\"|value: \"${TAG}\"|g" \
-            apps/mycroft/coordinator-uat/deployment.yaml \
-            apps/mycroft/coordinator/deployment.yaml
+            apps/mycroft/backend-uat/deployment.yaml \
+            apps/mycroft/backend/deployment.yaml
+
+          # Update frontend image
+          sed -i "s|image: amerenda/mycroft:frontend-[^ ]*|image: amerenda/mycroft:frontend-${TAG}|g" \
+            apps/mycroft/frontend/deployment.yaml
 
           git config user.name "amerenda-deploy-bot[bot]"
           git config user.email "3192609+amerenda-deploy-bot[bot]@users.noreply.github.com"
@@ -218,7 +232,7 @@ jobs:
           if [ -n "${COMMIT_BODY}" ]; then
             PR_BODY="${PR_BODY}${NL}${NL}${COMMIT_BODY}"
           fi
-          PR_BODY="${PR_BODY}${NL}${NL}Images: \`amerenda/mycroft:coordinator-${TAG}\`, \`amerenda/mycroft:agent-base-${TAG}\`, \`amerenda/mycroft:agent-coder-${TAG}\` (multi-arch: amd64+arm64)${NL}Source: ${SOURCE_LINK}"
+          PR_BODY="${PR_BODY}${NL}${NL}Images: \`amerenda/mycroft:coordinator-${TAG}\`, \`amerenda/mycroft:frontend-${TAG}\`, \`amerenda/mycroft:agent-coder-${TAG}\` (multi-arch: amd64+arm64)${NL}Source: ${SOURCE_LINK}"
 
           PR_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${GITOPS_PAT}" \
