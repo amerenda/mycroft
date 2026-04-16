@@ -11,9 +11,16 @@ from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
 from pydantic import BaseModel
+from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from common.config import PlatformConfig
 from common.llm import LLMClient
+from common.metrics import (
+    coordinator_info, tasks_created_total, tasks_completed_total,
+    tasks_active, task_duration_seconds, argo_submissions_total,
+    telegram_messages_total, intent_classifications_total,
+    llm_metrics_callback,
+)
 from common.models import IntentType, TaskConfig, TaskStatus
 from coordinator.argo_submitter import ArgoSubmitter
 from coordinator.db import CoordinatorDB
@@ -97,6 +104,8 @@ async def lifespan(app: FastAPI):
             log.error("Failed to discover LLM API key: %s", e)
 
     llm = LLMClient(config.llm_manager_url, llm_api_key, config.intent_model)
+    llm.set_metrics_callback(llm_metrics_callback)
+    coordinator_info.info({"version": config.agent_image_tag})
 
     # Trigger router
     trigger_router = TriggerRouter()
@@ -179,6 +188,8 @@ async def _handle_engineering_task(
         repo=repo,
         config=task_config,
     )
+    tasks_created_total.labels(agent_type=agent_type, trigger="manual").inc()
+    tasks_active.labels(agent_type=agent_type).inc()
 
     # Submit Argo Workflow with retries
     params: dict[str, Any] = {"instruction": instruction, "repo": repo}
@@ -196,6 +207,7 @@ async def _handle_engineering_task(
                 on_update=_on_workflow_update,
             )
             log.info("Workflow %s submitted for task %s (attempt %d)", wf_name, task_id[:8], attempt)
+            argo_submissions_total.labels(agent_type=agent_type, result="success").inc()
             return task_id
         except Exception as e:
             last_error = e
@@ -205,6 +217,9 @@ async def _handle_engineering_task(
 
     # All retries exhausted
     log.error("Failed to submit Argo Workflow after %d attempts: %s", max_retries, last_error)
+    argo_submissions_total.labels(agent_type=agent_type, result="failure").inc()
+    tasks_active.labels(agent_type=agent_type).dec()
+    tasks_completed_total.labels(agent_type=agent_type, status="failed").inc()
     await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": f"Workflow submission failed after {max_retries} attempts: {last_error}"})
     raise last_error
 
@@ -217,8 +232,17 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
 
     if status in ("failed", "error"):
         await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": message})
+        # Decrement active gauge — need agent_type from the task
+        task = await task_manager.get_task(task_id)
+        if task:
+            tasks_active.labels(agent_type=task.agent_type).dec()
+            tasks_completed_total.labels(agent_type=task.agent_type, status="failed").inc()
     elif status == "succeeded":
         await db.kb.update_task(task_id, status=TaskStatus.completed)
+        task = await task_manager.get_task(task_id)
+        if task:
+            tasks_active.labels(agent_type=task.agent_type).dec()
+            tasks_completed_total.labels(agent_type=task.agent_type, status="completed").inc()
 
     try:
         await telegram_bot.send(text)
@@ -490,6 +514,12 @@ async def debug_page():
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+@app.get("/metrics")
+async def metrics():
+    from fastapi.responses import Response
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
 
 DEBUG_HTML = """<!DOCTYPE html>

@@ -4,15 +4,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Optional
 
 import httpx
 
 log = logging.getLogger(__name__)
 
-# Per-call timeout: how long to wait for a single LLM inference job
-JOB_TIMEOUT = 600  # 10 minutes — covers model swap + inference for large models
+JOB_TIMEOUT = 600  # 10 minutes
 JOB_POLL_INTERVAL = 2  # seconds between status polls
 
 
@@ -28,6 +28,10 @@ class ChatResponse:
     content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
+    queue_wait_seconds: float = 0.0
+    inference_seconds: float = 0.0
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
 
 
 class LLMClient:
@@ -42,6 +46,18 @@ class LLMClient:
             headers={"Authorization": f"Bearer {api_key}"},
             timeout=30.0,
         )
+        self._metrics_callback: Optional[callable] = None
+
+    def set_metrics_callback(self, callback: callable) -> None:
+        """Set a callback for metrics: callback(event_name, labels_dict, value)."""
+        self._metrics_callback = callback
+
+    def _emit(self, event: str, labels: dict, value: float = 1.0) -> None:
+        if self._metrics_callback:
+            try:
+                self._metrics_callback(event, labels, value)
+            except Exception:
+                pass
 
     async def chat(
         self,
@@ -49,15 +65,18 @@ class LLMClient:
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
     ) -> ChatResponse:
+        effective_model = model or self.model
         payload: dict[str, Any] = {
-            "model": model or self.model,
+            "model": effective_model,
             "messages": messages,
         }
         if tools:
             payload["tools"] = tools
 
         log.debug("LLM request: model=%s messages=%d tools=%d",
-                   payload["model"], len(messages), len(tools or []))
+                   effective_model, len(messages), len(tools or []))
+
+        t_submit = time.monotonic()
 
         # Submit to queue
         resp = await self._client.post("/api/queue/submit", json=payload)
@@ -70,16 +89,43 @@ class LLMClient:
 
         job = resp.json()
         job_id = job["job_id"]
-        log.info("Queue job %s submitted (model=%s)", job_id, payload["model"])
+        position = job.get("position", 0)
+        warning = job.get("warning")
+
+        log.info("Queue job %s submitted (model=%s, position=%d%s)",
+                 job_id, effective_model, position,
+                 f", warning: {warning}" if warning else "")
+
+        if position > 0:
+            self._emit("llm_queue_position", {"model": effective_model}, position)
 
         # Poll for completion
-        result = await self._wait_for_job(job_id)
-        return self._parse_result(result)
+        result, wait_secs, inference_secs = await self._wait_for_job(job_id, effective_model)
 
-    async def _wait_for_job(self, job_id: str) -> dict[str, Any]:
-        """Poll job status until terminal state or timeout."""
+        t_total = time.monotonic() - t_submit
+        self._emit("llm_call_total_seconds", {"model": effective_model}, t_total)
+        self._emit("llm_queue_wait_seconds", {"model": effective_model}, wait_secs)
+
+        response = self._parse_result(result)
+        response.queue_wait_seconds = wait_secs
+        response.inference_seconds = inference_secs
+
+        usage = result.get("usage", {})
+        response.prompt_tokens = usage.get("prompt_tokens", 0)
+        response.completion_tokens = usage.get("completion_tokens", 0)
+        self._emit("llm_tokens", {"model": effective_model, "type": "prompt"}, response.prompt_tokens)
+        self._emit("llm_tokens", {"model": effective_model, "type": "completion"}, response.completion_tokens)
+
+        return response
+
+    async def _wait_for_job(self, job_id: str, model: str) -> tuple[dict, float, float]:
+        """Poll job status until terminal state or timeout.
+        Returns (result_dict, queue_wait_seconds, inference_seconds).
+        """
         elapsed = 0
         last_status = None
+        t_start = time.monotonic()
+        t_running = None
 
         while elapsed < JOB_TIMEOUT:
             resp = await self._client.get(f"/api/queue/jobs/{job_id}")
@@ -88,11 +134,18 @@ class LLMClient:
             status = job["status"]
 
             if status != last_status:
-                log.info("Queue job %s: %s", job_id, status)
+                if status == "running" and t_running is None:
+                    t_running = time.monotonic()
+                log.info("Queue job %s: %s%s", job_id, status,
+                         self._status_detail(status, model))
+                self._emit("llm_job_status", {"model": model, "status": status})
                 last_status = status
 
             if status == "completed":
-                return job["result"]
+                t_done = time.monotonic()
+                queue_wait = (t_running or t_done) - t_start
+                inference = t_done - (t_running or t_start)
+                return job["result"], queue_wait, inference
             elif status == "failed":
                 raise RuntimeError(f"LLM job {job_id} failed: {job.get('error', 'unknown')}")
             elif status == "cancelled":
@@ -101,13 +154,22 @@ class LLMClient:
             await asyncio.sleep(JOB_POLL_INTERVAL)
             elapsed += JOB_POLL_INTERVAL
 
-        # Timeout — cancel the stuck job
         log.warning("Queue job %s timed out after %ds, cancelling", job_id, JOB_TIMEOUT)
         try:
             await self._client.delete(f"/api/queue/jobs/{job_id}")
         except Exception:
             pass
         raise RuntimeError(f"LLM job {job_id} timed out after {JOB_TIMEOUT}s")
+
+    @staticmethod
+    def _status_detail(status: str, model: str) -> str:
+        details = {
+            "queued": " (waiting for model time)",
+            "loading_model": f" (loading {model} into VRAM)",
+            "waiting_for_eviction": f" (evicting other model to make room for {model})",
+            "running": " (inference started)",
+        }
+        return details.get(status, "")
 
     def _parse_result(self, result: dict[str, Any]) -> ChatResponse:
         """Parse OpenAI-compatible result from queue job."""

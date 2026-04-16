@@ -4,12 +4,17 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 from datetime import datetime, timezone
 from typing import Any
 
 from common.config import PlatformConfig
 from common.kb import KBClient
 from common.llm import LLMClient
+from common.metrics import (
+    agent_iterations_total, agent_tool_calls_total,
+    agent_tool_call_seconds, llm_metrics_callback,
+)
 from common.models import AgentManifest, TaskConfig, TaskStatus
 from runtime.context import build_system_prompt, build_user_message, count_tool_rounds
 from runtime.tools.base import ToolRegistry, load_tools
@@ -32,6 +37,7 @@ class AgentRunner:
 
         model = task.model_override or manifest.model
         self.llm = LLMClient(platform.llm_manager_url, platform.llm_manager_api_key, model)
+        self.llm.set_metrics_callback(llm_metrics_callback)
         self.kb = KBClient(platform.kb_dsn, manifest.permissions, use_embeddings=True)
         self.tools = load_tools(manifest.tools)
 
@@ -124,13 +130,16 @@ class AgentRunner:
 
         while self.iteration < self.max_iterations:
             log.info("Iteration %d/%d", self.iteration + 1, self.max_iterations)
+            agent_iterations_total.labels(agent_type=self.manifest.name).inc()
 
             # Call LLM
             response = await self.llm.chat(self.messages, tools=self.tools.schemas())
 
             # Log raw response for debugging
-            log.info("LLM response: content=%r tool_calls=%d",
-                     (response.content or "")[:100], len(response.tool_calls))
+            log.info("LLM response: content=%r tool_calls=%d queue_wait=%.1fs inference=%.1fs tokens=%d+%d",
+                     (response.content or "")[:100], len(response.tool_calls),
+                     response.queue_wait_seconds, response.inference_seconds,
+                     response.prompt_tokens, response.completion_tokens)
 
             # Add assistant message
             assistant_msg: dict[str, Any] = {"role": "assistant"}
@@ -154,7 +163,12 @@ class AgentRunner:
             if response.tool_calls:
                 for tc in response.tool_calls:
                     log.info("Tool call: %s(%s)", tc.name, tc.arguments[:100])
+                    agent_tool_calls_total.labels(
+                        agent_type=self.manifest.name, tool=tc.name).inc()
+                    t_tool = time.monotonic()
                     result = await self.tools.execute(tc.name, tc.arguments)
+                    agent_tool_call_seconds.labels(tool=tc.name).observe(
+                        time.monotonic() - t_tool)
 
                     self.messages.append({
                         "role": "tool",
