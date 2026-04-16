@@ -125,7 +125,7 @@ max_turns: 20
 
 {agent_prompt}
 """
-    with open(os.path.join(forge_dir, "agents", "mycroft-coder.md"), "w") as f:
+    with open(os.path.join(project_forge, "agents", "mycroft-coder.md"), "w") as f:
         f.write(agent_md)
 
 
