@@ -68,12 +68,19 @@ def _get_github_token() -> str:
 
 def _write_forge_config(work_dir: str, llm_url: str, llm_api_key: str, model: str,
                         system_prompt: str | None = None) -> None:
-    """Write Forge configuration files into the working directory."""
-    forge_dir = os.path.join(work_dir, ".forge")
-    os.makedirs(forge_dir, exist_ok=True)
-    os.makedirs(os.path.join(forge_dir, "agents"), exist_ok=True)
+    """Write Forge configuration files.
 
-    # Credentials
+    Global config (credentials, session) goes to ~/.forge/ so Forge can find them.
+    Project-local config (custom agent) goes to <work_dir>/.forge/.
+    """
+    home_forge = os.path.expanduser("~/.forge")
+    os.makedirs(home_forge, exist_ok=True)
+
+    project_forge = os.path.join(work_dir, ".forge")
+    os.makedirs(project_forge, exist_ok=True)
+    os.makedirs(os.path.join(project_forge, "agents"), exist_ok=True)
+
+    # Global credentials (~/.forge/.credentials.json)
     creds = [
         {
             "id": "openai_compatible",
@@ -81,35 +88,26 @@ def _write_forge_config(work_dir: str, llm_url: str, llm_api_key: str, model: st
             "url_params": {"OPENAI_URL": llm_url.rstrip("/") + "/v1"},
         }
     ]
-    with open(os.path.join(forge_dir, ".credentials.json"), "w") as f:
+    with open(os.path.join(home_forge, ".credentials.json"), "w") as f:
         json.dump(creds, f)
 
-    # Config
-    config = {
-        "$schema": "https://forgecode.dev/schema.json",
-        "services_url": "",
-        "max_tokens": 20480,
-        "max_requests_per_turn": 50,
-        "tool_timeout_secs": 120,
-        "top_p": 0.8,
-        "top_k": 30,
-    }
-    # Write as TOML
-    with open(os.path.join(forge_dir, ".forge.toml"), "w") as f:
-        for k, v in config.items():
-            if isinstance(v, str):
-                f.write(f'{k} = "{v}"\n')
-            elif isinstance(v, bool):
-                f.write(f"{k} = {'true' if v else 'false'}\n")
-            else:
-                f.write(f"{k} = {v}\n")
+    # Global config (~/.forge/.forge.toml)
+    with open(os.path.join(home_forge, ".forge.toml"), "w") as f:
+        f.write('"$schema" = "https://forgecode.dev/schema.json"\n')
+        f.write('services_url = ""\n')
+        f.write("max_tokens = 20480\n")
+        f.write("max_requests_per_turn = 50\n")
+        f.write("tool_timeout_secs = 120\n")
+        f.write("top_p = 0.8\n")
+        f.write("top_k = 30\n")
         f.write("\n[session]\n")
         f.write(f'provider_id = "openai_compatible"\n')
         f.write(f'model_id = "{model}"\n')
         f.write("\n[updates]\nauto_update = false\n")
         f.write("\n[reasoning]\nenabled = true\neffort = \"high\"\n")
+        f.write("\n[http]\nread_timeout_secs = 600\n")
 
-    # Custom agent that skips todo tools and goes straight to file operations
+    # Project-local custom agent (<work_dir>/.forge/agents/mycroft-coder.md)
     agent_prompt = system_prompt or _default_coder_prompt()
     agent_md = f"""---
 id: mycroft-coder
