@@ -236,14 +236,25 @@ async def _run_forge_async(
         result.stdout = stdout.decode(errors="replace")[-5000:]
         result.stderr = stderr.decode(errors="replace")[-2000:]
 
-        # Capture git diff + changed files
+        # Capture git diff (staged + unstaged combined)
         diff_proc = await asyncio.create_subprocess_exec(
             "git", "diff", "HEAD",
             cwd=repo_dir,
             stdout=asyncio.subprocess.PIPE,
         )
         diff_out, _ = await diff_proc.communicate()
-        result.git_diff = diff_out.decode(errors="replace")[:10000]
+        staged_diff = diff_out.decode(errors="replace")
+
+        # Also capture unstaged changes (shell/sed modifications)
+        diff_proc2 = await asyncio.create_subprocess_exec(
+            "git", "diff",
+            cwd=repo_dir,
+            stdout=asyncio.subprocess.PIPE,
+        )
+        diff_out2, _ = await diff_proc2.communicate()
+        unstaged_diff = diff_out2.decode(errors="replace")
+
+        result.git_diff = (staged_diff or unstaged_diff)[:10000]
 
         status_proc = await asyncio.create_subprocess_exec(
             "git", "status", "--porcelain",
