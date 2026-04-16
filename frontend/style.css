@@ -69,6 +69,20 @@ main { padding: 16px 24px; max-width: 1400px; margin: 0 auto; }
   gap: 8px;
 }
 
+.toggle-group { display: flex; gap: 2px; }
+.toggle {
+  padding: 6px 16px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #0d1117;
+  color: #8b949e;
+  cursor: pointer;
+  font-size: 0.85em;
+  font-weight: 600;
+}
+.toggle:hover { color: #c9d1d9; }
+.toggle.active { background: #238636; color: #fff; border-color: #238636; }
+
 label {
   display: block;
   color: #8b949e;

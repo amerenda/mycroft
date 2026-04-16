@@ -24,25 +24,38 @@
         <h2>Configure Run</h2>
         <div class="form-row">
           <div class="form-group">
-            <label>Agent Type</label>
-            <select id="agentType"><option value="coder">coder</option></select>
+            <label>Runner</label>
+            <div class="toggle-group">
+              <button class="toggle active" data-runner="forge" onclick="setRunner('forge')">Forge</button>
+              <button class="toggle" data-runner="mycroft" onclick="setRunner('mycroft')">Mycroft</button>
+            </div>
           </div>
           <div class="form-group">
             <label>Model</label>
-            <select id="model"><option value="">Default</option></select>
+            <select id="model"><option value="">Default (qwen3:14b)</option></select>
+          </div>
+        </div>
+        <div class="form-row">
+          <div class="form-group">
+            <label>Repo</label>
+            <input id="repo" type="text" placeholder="amerenda/mycroft" value="amerenda/mycroft">
+          </div>
+          <div class="form-group" id="agentTypeGroup">
+            <label>Agent Type (Mycroft only)</label>
+            <select id="agentType" disabled><option value="coder">coder</option></select>
           </div>
         </div>
         <div class="form-group">
           <label>Instruction</label>
-          <textarea id="instruction" rows="3" placeholder="e.g. Add a multiply function to calculator.py"></textarea>
+          <textarea id="instruction" rows="3" placeholder="e.g. In calculator.py, add a multiply function and write tests for it"></textarea>
         </div>
         <details>
           <summary>System Prompt Override</summary>
-          <textarea id="systemPrompt" rows="12" placeholder="Leave empty for default. Click Preview to see the default."></textarea>
+          <textarea id="systemPrompt" rows="12" placeholder="Leave empty for default. Forge default: direct file operations, no todo tools."></textarea>
         </details>
         <div class="actions">
-          <button class="btn-primary" id="runBtn" onclick="runTask()">Run Task</button>
-          <button class="btn-secondary" onclick="previewPrompt()">Preview Prompt</button>
+          <button class="btn-primary" id="runBtn" onclick="runTask()">Run with Forge</button>
+          <button class="btn-secondary" onclick="previewPrompt()" id="previewBtn">Preview Prompt</button>
         </div>
       </div>
 

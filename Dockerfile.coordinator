@@ -4,8 +4,12 @@ RUN useradd -m -u 1000 mycroft
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    libpq-dev gcc curl \
+    libpq-dev gcc curl git \
     && rm -rf /var/lib/apt/lists/*
+
+# Install Forge CLI (static binary)
+RUN curl -fsSL https://github.com/tailcallhq/forgecode/releases/latest/download/forge-x86_64-unknown-linux-gnu \
+    -o /usr/local/bin/forge && chmod +x /usr/local/bin/forge
 
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
@@ -15,6 +19,7 @@ COPY coordinator/ ./coordinator/
 COPY runtime/ ./runtime/
 COPY agents/ ./agents/
 
+RUN mkdir -p /home/mycroft/.forge && chown -R mycroft:mycroft /home/mycroft
 USER mycroft
 EXPOSE 8080
 CMD ["uvicorn", "coordinator.main:app", "--host", "0.0.0.0", "--port", "8080"]

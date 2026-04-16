@@ -302,6 +302,55 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Forge Runner API
+# ---------------------------------------------------------------------------
+
+from coordinator.forge_runner import run_forge, get_run, ForgeResult
+
+
+class ForgeRunRequest(BaseModel):
+    instruction: str
+    repo: str = ""
+    model: str = "qwen3:14b"
+    system_prompt: str | None = None
+
+
+@app.post("/api/forge/run")
+async def forge_run(req: ForgeRunRequest):
+    if not req.repo:
+        raise HTTPException(400, "repo is required (e.g. 'amerenda/mycroft')")
+
+    llm_api_key = config.llm_manager_api_key
+    run_id = await run_forge(
+        instruction=req.instruction,
+        repo=req.repo,
+        model=req.model,
+        system_prompt=req.system_prompt,
+        llm_url=config.llm_manager_url,
+        llm_api_key=llm_api_key,
+    )
+    return {"run_id": run_id}
+
+
+@app.get("/api/forge/runs/{run_id}")
+async def forge_run_status(run_id: str):
+    result = get_run(run_id)
+    if not result:
+        raise HTTPException(404, "Run not found")
+    return {
+        "run_id": result.run_id,
+        "status": result.status,
+        "exit_code": result.exit_code,
+        "git_diff": result.git_diff,
+        "files_changed": result.files_changed,
+        "stdout": result.stdout,
+        "stderr": result.stderr,
+        "duration_seconds": result.duration_seconds,
+        "error": result.error,
+    }
+
+
+# ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
 
