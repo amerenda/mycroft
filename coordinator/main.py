@@ -132,6 +132,11 @@ async def lifespan(app: FastAPI):
         await telegram_bot.start_polling()
         log.info("Telegram bot initialized (polling mode)")
 
+    # Tool schema versioning
+    from common.tool_schemas import ensure_schema_table, seed_default_schemas
+    await ensure_schema_table(db.kb.pool)
+    await seed_default_schemas(db.kb.pool)
+
     # LISTEN/NOTIFY for agent completion events
     await db.start_listener(_on_agent_event)
 
@@ -526,6 +531,56 @@ async def telegram_webhook(request: Request):
     update = Update.de_json(data, telegram_bot.app.bot)
     await telegram_bot.app.process_update(update)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Tool Schema API
+# ---------------------------------------------------------------------------
+
+from common.tool_schemas import (
+    get_schema, list_schemas, get_schema_history, upsert_schema, delete_schema,
+)
+
+
+@app.get("/api/tools/schemas")
+async def api_list_schemas():
+    return await list_schemas(db.kb.pool)
+
+
+@app.get("/api/tools/schemas/{name}")
+async def api_get_schema(name: str, version: int | None = None):
+    result = await get_schema(db.kb.pool, name, version)
+    if not result:
+        raise HTTPException(404, f"Tool schema '{name}' not found")
+    return result
+
+
+@app.get("/api/tools/schemas/{name}/history")
+async def api_schema_history(name: str):
+    return await get_schema_history(db.kb.pool, name)
+
+
+class UpsertSchemaRequest(BaseModel):
+    schema: dict[str, Any]
+    schema_version: str = "1.0.0"
+    changelog: str = ""
+    updated_by: str = "ui"
+
+
+@app.put("/api/tools/schemas/{name}")
+async def api_upsert_schema(name: str, req: UpsertSchemaRequest):
+    new_version = await upsert_schema(
+        db.kb.pool, name, req.schema, req.schema_version, req.changelog, req.updated_by,
+    )
+    return {"name": name, "version": new_version}
+
+
+@app.delete("/api/tools/schemas/{name}")
+async def api_delete_schema(name: str):
+    deleted = await delete_schema(db.kb.pool, name)
+    if not deleted:
+        raise HTTPException(404, f"Tool schema '{name}' not found")
+    return {"status": "deleted", "name": name}
 
 
 # ---------------------------------------------------------------------------

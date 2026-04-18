@@ -70,12 +70,18 @@ class ToolRegistry:
 
 def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegistry:
     """Load tools by name and return a registry."""
+    from runtime.tools.files import ReadFile, WriteFile, PatchFile, SearchFiles, ListFiles
     from runtime.tools.git import GitClone, GitCheckoutBranch, GitAdd, GitCommit, GitPush, GitDiff
     from runtime.tools.github import GhCreatePr, GhComment
     from runtime.tools.shell import RunCommand
     from runtime.tools.vikunja import TodoListProjects, TodoGetTasks, TodoCreateTask, TodoUpdateTask
 
     all_tools: dict[str, Tool] = {
+        "read_file": ReadFile(workspace),
+        "write_file": WriteFile(workspace),
+        "patch_file": PatchFile(workspace),
+        "search_files": SearchFiles(workspace),
+        "list_files": ListFiles(workspace),
         "git_clone": GitClone(workspace),
         "git_checkout_branch": GitCheckoutBranch(workspace),
         "git_add": GitAdd(workspace),
@@ -93,6 +99,7 @@ def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegi
 
     # Map manifest tool groups to individual tools
     tool_groups = {
+        "files": ["read_file", "write_file", "patch_file", "search_files", "list_files"],
         "git": ["git_clone", "git_checkout_branch", "git_add", "git_commit", "git_push", "git_diff"],
         "github": ["gh_create_pr", "gh_comment"],
         "shell": ["run_command"],
