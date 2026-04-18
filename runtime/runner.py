@@ -43,6 +43,7 @@ class AgentRunner:
 
         self.messages: list[dict[str, Any]] = []
         self.iteration = 0
+        self._consecutive_empty = 0
         self.max_iterations = min(
             task.max_iterations_override or manifest.max_iterations,
             platform.global_max_iterations,
@@ -143,6 +144,8 @@ class AgentRunner:
 
             # If LLM wants to use tools
             if response.tool_calls:
+                self._consecutive_empty = 0  # reset empty counter
+
                 # Add assistant message with tool calls
                 assistant_msg: dict[str, Any] = {"role": "assistant"}
                 if response.content:
@@ -183,15 +186,21 @@ class AgentRunner:
 
             # No tool calls — either the agent is done or it got confused
             if not response.content or not response.content.strip():
-                # Empty response with no tool calls — nudge without appending
-                # the empty assistant message (Ollama rejects empty assistant
-                # messages when tools are present)
-                log.warning("Empty response with no tool calls, nudging model to continue")
+                self._consecutive_empty += 1
+                if self._consecutive_empty >= 3:
+                    # Model is stuck — stop wasting iterations
+                    log.warning("Model returned %d consecutive empty responses, giving up",
+                                self._consecutive_empty)
+                    break
+
+                # Nudge but do NOT increment iteration — empty responses are
+                # not progress (often caused by thinking tokens consuming output)
+                log.warning("Empty response %d/3, nudging model to continue",
+                            self._consecutive_empty)
                 self.messages.append({
                     "role": "user",
                     "content": "You returned an empty response. You must call a tool to continue. What is the next step? Call the appropriate tool now.",
                 })
-                self.iteration += 1
                 continue
 
             # Non-empty text with no tool calls — agent is done
