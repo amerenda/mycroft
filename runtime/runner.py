@@ -141,11 +141,12 @@ class AgentRunner:
                      response.queue_wait_seconds, response.inference_seconds,
                      response.prompt_tokens, response.completion_tokens)
 
-            # Add assistant message
-            assistant_msg: dict[str, Any] = {"role": "assistant"}
-            if response.content:
-                assistant_msg["content"] = response.content
+            # If LLM wants to use tools
             if response.tool_calls:
+                # Add assistant message with tool calls
+                assistant_msg: dict[str, Any] = {"role": "assistant"}
+                if response.content:
+                    assistant_msg["content"] = response.content
                 assistant_msg["tool_calls"] = [
                     {
                         "id": tc.id,
@@ -157,10 +158,8 @@ class AgentRunner:
                     }
                     for tc in response.tool_calls
                 ]
-            self.messages.append(assistant_msg)
+                self.messages.append(assistant_msg)
 
-            # If LLM wants to use tools
-            if response.tool_calls:
                 for tc in response.tool_calls:
                     log.info("Tool call: %s(%s)", tc.name, tc.arguments[:100])
                     agent_tool_calls_total.labels(
@@ -184,7 +183,9 @@ class AgentRunner:
 
             # No tool calls — either the agent is done or it got confused
             if not response.content or not response.content.strip():
-                # Empty response with no tool calls — nudge the model to continue
+                # Empty response with no tool calls — nudge without appending
+                # the empty assistant message (Ollama rejects empty assistant
+                # messages when tools are present)
                 log.warning("Empty response with no tool calls, nudging model to continue")
                 self.messages.append({
                     "role": "user",
@@ -194,6 +195,7 @@ class AgentRunner:
                 continue
 
             # Non-empty text with no tool calls — agent is done
+            self.messages.append({"role": "assistant", "content": response.content})
             log.info("Agent finished: %s", response.content[:200])
             return response.content
 
