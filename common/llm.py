@@ -64,15 +64,19 @@ class LLMClient:
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None = None,
         model: str | None = None,
+        max_tokens: int = 4096,
+        temperature: float | None = None,
     ) -> ChatResponse:
         effective_model = model or self.model
         payload: dict[str, Any] = {
             "model": effective_model,
             "messages": messages,
-            "max_tokens": 4096,  # thinking models need headroom beyond reasoning tokens
+            "max_tokens": max_tokens,
         }
         if tools:
             payload["tools"] = tools
+        if temperature is not None:
+            payload["temperature"] = temperature
 
         log.debug("LLM request: model=%s messages=%d tools=%d",
                    effective_model, len(messages), len(tools or []))

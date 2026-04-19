@@ -41,6 +41,10 @@ class AgentRunner:
         self.kb = KBClient(platform.kb_dsn, manifest.permissions, use_embeddings=True)
         self.tools = load_tools(manifest.tools)
 
+        # LLM call params from task config (overridable via API/UI)
+        self._max_tokens = task.config.get("max_tokens", 4096)
+        self._temperature = task.config.get("temperature")
+
         self.messages: list[dict[str, Any]] = []
         self.iteration = 0
         self._consecutive_empty = 0
@@ -134,7 +138,10 @@ class AgentRunner:
             agent_iterations_total.labels(agent_type=self.manifest.name).inc()
 
             # Call LLM
-            response = await self.llm.chat(self.messages, tools=self.tools.schemas())
+            response = await self.llm.chat(
+                self.messages, tools=self.tools.schemas(),
+                max_tokens=self._max_tokens, temperature=self._temperature,
+            )
 
             # Log raw response for debugging
             log.info("LLM response: content=%r tool_calls=%d queue_wait=%.1fs inference=%.1fs tokens=%d+%d",

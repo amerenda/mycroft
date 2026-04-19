@@ -168,6 +168,8 @@ app = FastAPI(title="Mycroft Coordinator", lifespan=lifespan)
 async def _handle_engineering_task(
     instruction: str, agent_type: str, repo: str,
     model_override: str | None = None, system_prompt_override: str | None = None,
+    max_tokens: int | None = None, temperature: float | None = None,
+    max_iterations: int | None = None,
 ) -> str:
     """Handle an engineering task from Telegram or API."""
     manifest = trigger_router.get_manifest(agent_type)
@@ -184,6 +186,12 @@ async def _handle_engineering_task(
         task_config["model_override"] = model_override
     if system_prompt_override:
         task_config["system_prompt_override"] = system_prompt_override
+    if max_tokens is not None:
+        task_config["max_tokens"] = max_tokens
+    if temperature is not None:
+        task_config["temperature"] = temperature
+    if max_iterations is not None:
+        task_config["max_iterations_override"] = max_iterations
 
     # Create task
     task_id = await task_manager.create_task(
@@ -366,6 +374,9 @@ class CreateTaskRequest(BaseModel):
     trigger: str = "manual"
     model: str | None = None
     system_prompt: str | None = None
+    max_tokens: int | None = None
+    temperature: float | None = None
+    max_iterations: int | None = None
 
 
 @app.post("/api/tasks")
@@ -377,6 +388,9 @@ async def create_task(req: CreateTaskRequest):
             repo=req.repo,
             model_override=req.model,
             system_prompt_override=req.system_prompt,
+            max_tokens=req.max_tokens,
+            temperature=req.temperature,
+            max_iterations=req.max_iterations,
         )
         return {"task_id": task_id}
     except ValueError as e:

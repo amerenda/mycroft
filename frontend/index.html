@@ -53,8 +53,25 @@
           <textarea id="instruction" rows="3" placeholder="e.g. In calculator.py, add a multiply function and write tests for it"></textarea>
         </div>
         <details>
-          <summary>System Prompt Override</summary>
-          <textarea id="systemPrompt" rows="12" placeholder="Leave empty for default. Forge default: direct file operations, no todo tools."></textarea>
+          <summary>Advanced Options</summary>
+          <div class="form-row" style="margin-top:8px">
+            <div class="form-group">
+              <label>Max Tokens</label>
+              <input id="maxTokens" type="number" value="4096" min="256" max="32768">
+            </div>
+            <div class="form-group">
+              <label>Temperature</label>
+              <input id="temperature" type="number" value="" step="0.1" min="0" max="2" placeholder="Default">
+            </div>
+            <div class="form-group">
+              <label>Max Iterations</label>
+              <input id="maxIterations" type="number" value="" min="1" max="50" placeholder="Default">
+            </div>
+          </div>
+          <div class="form-group">
+            <label>System Prompt Override</label>
+            <textarea id="systemPrompt" rows="8" placeholder="Leave empty for default from agent manifest."></textarea>
+          </div>
         </details>
         <div class="actions">
           <button class="btn-primary" id="runBtn" onclick="runTask()">Run Task</button>

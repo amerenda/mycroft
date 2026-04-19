@@ -219,17 +219,25 @@ function renderForgeResult(r) {
 async function runMycroft(instruction) {
   const model = document.getElementById('model').value;
   const systemPrompt = document.getElementById('systemPrompt').value.trim();
+  const maxTokens = document.getElementById('maxTokens').value;
+  const temperature = document.getElementById('temperature').value;
+  const maxIterations = document.getElementById('maxIterations').value;
+
+  const body = {
+    agent_type: document.getElementById('agentType').value,
+    instruction,
+    repo: document.getElementById('repo').value.trim(),
+    model: model || null,
+    system_prompt: systemPrompt || null,
+  };
+  if (maxTokens) body.max_tokens = parseInt(maxTokens);
+  if (temperature) body.temperature = parseFloat(temperature);
+  if (maxIterations) body.max_iterations = parseInt(maxIterations);
 
   const r = await api('/api/tasks', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      agent_type: document.getElementById('agentType').value,
-      instruction,
-      repo: document.getElementById('repo').value.trim(),
-      model: model || null,
-      system_prompt: systemPrompt || null,
-    }),
+    body: JSON.stringify(body),
   });
 
   if (r.task_id) {
