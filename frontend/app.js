@@ -223,13 +223,17 @@ async function runMycroft(instruction) {
   const temperature = document.getElementById('temperature').value;
   const maxIterations = document.getElementById('maxIterations').value;
 
+  const agentType = document.getElementById('agentType').value;
+  const effort = document.getElementById('effort').value;
+
   const body = {
-    agent_type: document.getElementById('agentType').value,
+    agent_type: agentType,
     instruction,
     repo: document.getElementById('repo').value.trim(),
     model: model || null,
     system_prompt: systemPrompt || null,
   };
+  if (agentType === 'researcher') body.effort = effort;
   if (maxTokens) body.max_tokens = parseInt(maxTokens);
   if (temperature) body.temperature = parseFloat(temperature);
   if (maxIterations) body.max_iterations = parseInt(maxIterations);
@@ -475,6 +479,91 @@ async function loadModels() {
   }
 }
 
+// ── Agent type change handler ───────────────────────────────────────────────
+
+function onAgentTypeChange() {
+  const agent = document.getElementById('agentType').value;
+  const effortGroup = document.getElementById('effortGroup');
+  effortGroup.style.display = agent === 'researcher' ? '' : 'none';
+}
+
+// ── Reports ─────────────────────────────────────────────────────────────────
+
+const md = window.markdownit ? window.markdownit() : null;
+let currentReportId = null;
+
+async function loadReports() {
+  try {
+    const reports = await api('/api/reports');
+    const el = document.getElementById('reportList');
+    if (!reports.length) {
+      el.innerHTML = '<p class="empty">No reports yet. Run a researcher task to generate one.</p>';
+      return;
+    }
+    el.innerHTML = reports.map(r => `
+      <div class="report-row" onclick="viewReport('${r.id}')">
+        <div class="report-title">
+          ${esc(r.title)}
+          <span class="effort-badge effort-${r.effort || 'regular'}">${r.effort || 'regular'}</span>
+        </div>
+        <div class="report-summary">${esc(r.summary || '').slice(0, 150)}</div>
+        <div class="report-meta">${r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</div>
+      </div>
+    `).join('');
+  } catch (e) {
+    document.getElementById('reportList').innerHTML = '<p class="empty">Error loading reports</p>';
+  }
+}
+
+async function viewReport(reportId) {
+  try {
+    const r = await api('/api/reports/' + reportId);
+    currentReportId = reportId;
+    const panel = document.getElementById('reportPanel');
+    panel.style.display = 'block';
+    document.getElementById('reportTitle').textContent = r.title;
+    document.getElementById('reportMeta').innerHTML =
+      `${r.effort || 'regular'} effort &middot; ${new Date(r.created_at).toLocaleString()}` +
+      (r.tags && r.tags.length ? ` &middot; ${r.tags.join(', ')}` : '');
+
+    const contentEl = document.getElementById('reportContent');
+    if (md) {
+      contentEl.innerHTML = md.render(r.content);
+    } else {
+      contentEl.innerHTML = '<pre>' + esc(r.content) + '</pre>';
+    }
+  } catch (e) {
+    alert('Error loading report: ' + e.message);
+  }
+}
+
+async function deleteCurrentReport() {
+  if (!currentReportId || !confirm('Delete this report?')) return;
+  try {
+    await api('/api/reports/' + currentReportId, { method: 'DELETE' });
+    currentReportId = null;
+    document.getElementById('reportPanel').style.display = 'none';
+    loadReports();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function clearAllReports() {
+  if (!confirm('Delete ALL reports? This cannot be undone.')) return;
+  try {
+    await api('/api/reports', { method: 'DELETE' });
+    document.getElementById('reportPanel').style.display = 'none';
+    loadReports();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// ── Init ────────────────────────────────────────────────────────────────────
+
 loadModels();
 loadTasks();
+loadReports();
 setInterval(loadTasks, 30000);
+setInterval(loadReports, 60000);

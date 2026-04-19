@@ -86,11 +86,15 @@ class TelegramBot:
 
             if intent.type in (IntentType.engineering, IntentType.research):
                 agent = intent.agent_type or ("researcher" if intent.type == IntentType.research else "coder")
+                # Map effort to max_iterations for research tasks
+                effort_map = {"light": 3, "regular": 8, "deep": 15}
+                max_iter = effort_map.get(intent.effort or "regular") if agent == "researcher" else None
                 try:
                     task_id = await self._on_engineering_task(
                         instruction=intent.instruction,
                         agent_type=agent,
                         repo=intent.repo or "",
+                        max_iterations=max_iter,
                     )
                     await update.message.reply_text(f"On it. {agent} task {task_id[:8]} launched.")
                 except Exception as e:

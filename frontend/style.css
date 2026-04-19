@@ -260,3 +260,24 @@ pre {
 }
 
 code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
+
+/* Reports */
+.report-meta { color: #484f58; font-size: 0.8em; margin-bottom: 12px; }
+.report-body { line-height: 1.7; font-size: 0.9em; }
+.report-body h1 { font-size: 1.3em; color: #58a6ff; margin: 16px 0 8px; }
+.report-body h2 { font-size: 1.1em; color: #c9d1d9; margin: 14px 0 6px; }
+.report-body h3 { font-size: 1em; color: #8b949e; margin: 12px 0 4px; }
+.report-body ul, .report-body ol { padding-left: 20px; margin: 8px 0; }
+.report-body li { margin: 4px 0; }
+.report-body a { color: #58a6ff; }
+.report-body table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+.report-body th, .report-body td { border: 1px solid #30363d; padding: 6px 10px; text-align: left; font-size: 0.85em; }
+.report-body th { background: #161b22; }
+.report-row { padding: 10px 0; border-bottom: 1px solid #21262d; cursor: pointer; }
+.report-row:hover { background: #161b22; }
+.report-row .report-title { font-weight: 600; }
+.report-row .report-summary { color: #8b949e; font-size: 0.85em; margin-top: 4px; }
+.effort-badge { font-size: 0.7em; padding: 1px 6px; border-radius: 3px; margin-left: 6px; }
+.effort-light { background: #21262d; color: #8b949e; }
+.effort-regular { background: #1f6feb33; color: #58a6ff; }
+.effort-deep { background: #23863633; color: #3fb950; }

@@ -23,9 +23,11 @@ For engineering tasks, also identify:
 
 For research tasks:
 - agent_type: "researcher"
+- effort: "light" for quick questions, "regular" for normal research (default), "deep" for thorough investigation
+  Hints: "quick research" / "briefly" = light. "research" / "look into" = regular. "deep research" / "thorough" / "comprehensive" = deep.
 
 Respond with a JSON object:
-{"type": "engineering"|"research"|"system"|"general", "agent_type": "coder"|"researcher"|null, "repo": "repo-name"|null, "instruction": "the full task description"}
+{"type": "engineering"|"research"|"system"|"general", "agent_type": "coder"|"researcher"|null, "repo": "repo-name"|null, "effort": "light"|"regular"|"deep"|null, "instruction": "the full task description"}
 
 Only respond with the JSON object, nothing else."""
 
@@ -44,6 +46,7 @@ async def classify(text: str, llm: LLMClient) -> Intent:
             type=IntentType(data.get("type", "engineering")),
             agent_type=data.get("agent_type"),
             repo=data.get("repo"),
+            effort=data.get("effort"),
             instruction=data.get("instruction", text),
         )
     except (json.JSONDecodeError, ValueError) as e:

@@ -5,13 +5,14 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Mycroft Agent Studio</title>
 <link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/markdown-it@14/dist/markdown-it.min.js"></script>
 </head>
 <body>
 <header>
   <h1>Mycroft Agent Studio</h1>
   <nav>
     <button class="tab active" data-tab="runner">Test Runner</button>
-    <button class="tab" data-tab="agents">Agents</button>
+    <button class="tab" data-tab="reports">Reports</button>
     <button class="tab" data-tab="tasks">Tasks</button>
   </nav>
 </header>
@@ -42,9 +43,17 @@
           </div>
           <div class="form-group" id="agentTypeGroup">
             <label>Agent Type</label>
-            <select id="agentType">
+            <select id="agentType" onchange="onAgentTypeChange()">
               <option value="coder">coder</option>
               <option value="researcher">researcher</option>
+            </select>
+          </div>
+          <div class="form-group" id="effortGroup" style="display:none">
+            <label>Effort</label>
+            <select id="effort">
+              <option value="light">Light (quick, 1-2 sources)</option>
+              <option value="regular" selected>Regular (3-5 sources)</option>
+              <option value="deep">Deep (thorough, 8-15 sources)</option>
             </select>
           </div>
         </div>
@@ -95,11 +104,23 @@
     </div>
   </section>
 
-  <!-- Agents Tab -->
-  <section id="tab-agents" class="tab-content">
+  <!-- Reports Tab -->
+  <section id="tab-reports" class="tab-content">
     <div class="panel">
-      <h2>Forge Agent Definitions</h2>
-      <p class="empty">Agent editor coming soon. For now, agents are defined in <code>agents/</code> directory.</p>
+      <div class="tasks-header">
+        <h2>Research Reports</h2>
+        <button class="btn-danger" onclick="clearAllReports()">Delete All</button>
+      </div>
+      <div id="reportList">Loading...</div>
+    </div>
+
+    <div id="reportPanel" class="panel" style="display:none">
+      <div class="tasks-header">
+        <h2 id="reportTitle"></h2>
+        <button class="btn-delete" onclick="deleteCurrentReport()" title="Delete">Delete</button>
+      </div>
+      <div class="report-meta" id="reportMeta"></div>
+      <div id="reportContent" class="report-body"></div>
     </div>
   </section>
 

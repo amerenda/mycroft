@@ -138,4 +138,5 @@ class Intent(BaseModel):
     type: IntentType = IntentType.engineering
     agent_type: str | None = None
     repo: str | None = None
+    effort: str | None = None  # light, regular, deep — for research tasks
     instruction: str = ""

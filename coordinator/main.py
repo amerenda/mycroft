@@ -137,6 +137,10 @@ async def lifespan(app: FastAPI):
     await ensure_schema_table(db.kb.pool)
     await seed_default_schemas(db.kb.pool)
 
+    # Reports table
+    from common.reports import ensure_reports_table
+    await ensure_reports_table(db.kb.pool)
+
     # LISTEN/NOTIFY for agent completion events
     await db.start_listener(_on_agent_event)
 
@@ -377,11 +381,18 @@ class CreateTaskRequest(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     max_iterations: int | None = None
+    effort: str | None = None  # light, regular, deep — for researcher
 
 
 @app.post("/api/tasks")
 async def create_task(req: CreateTaskRequest):
     try:
+        # Map effort to max_iterations for researcher if not explicitly set
+        max_iter = req.max_iterations
+        if max_iter is None and req.effort and req.agent_type == "researcher":
+            effort_map = {"light": 3, "regular": 8, "deep": 15}
+            max_iter = effort_map.get(req.effort, 8)
+
         task_id = await _handle_engineering_task(
             instruction=req.instruction,
             agent_type=req.agent_type,
@@ -390,7 +401,7 @@ async def create_task(req: CreateTaskRequest):
             system_prompt_override=req.system_prompt,
             max_tokens=req.max_tokens,
             temperature=req.temperature,
-            max_iterations=req.max_iterations,
+            max_iterations=max_iter,
         )
         return {"task_id": task_id}
     except ValueError as e:
@@ -545,6 +556,61 @@ async def telegram_webhook(request: Request):
     update = Update.de_json(data, telegram_bot.app.bot)
     await telegram_bot.app.process_update(update)
     return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Reports API
+# ---------------------------------------------------------------------------
+
+from common.reports import (
+    create_report, get_report, list_reports, update_report,
+    delete_report, delete_all_reports,
+)
+
+
+class CreateReportRequest(BaseModel):
+    title: str
+    content: str
+    summary: str = ""
+    tags: list[str] = []
+    source_task_id: str = ""
+    effort: str = "regular"
+
+
+@app.get("/api/reports")
+async def api_list_reports(limit: int = 50):
+    return await list_reports(db.kb.pool, limit)
+
+
+@app.get("/api/reports/{report_id}")
+async def api_get_report(report_id: str):
+    report = await get_report(db.kb.pool, report_id)
+    if not report:
+        raise HTTPException(404, "Report not found")
+    return report
+
+
+@app.post("/api/reports")
+async def api_create_report(req: CreateReportRequest):
+    report_id = await create_report(
+        db.kb.pool, req.title, req.content, req.summary,
+        req.tags, req.source_task_id, req.effort,
+    )
+    return {"id": report_id}
+
+
+@app.delete("/api/reports/{report_id}")
+async def api_delete_report(report_id: str):
+    deleted = await delete_report(db.kb.pool, report_id)
+    if not deleted:
+        raise HTTPException(404, "Report not found")
+    return {"status": "deleted"}
+
+
+@app.delete("/api/reports")
+async def api_delete_all_reports():
+    count = await delete_all_reports(db.kb.pool)
+    return {"status": "deleted", "count": count}
 
 
 # ---------------------------------------------------------------------------
