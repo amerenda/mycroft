@@ -69,6 +69,7 @@ class LLMClient:
         payload: dict[str, Any] = {
             "model": effective_model,
             "messages": messages,
+            "max_tokens": 4096,  # thinking models need headroom beyond reasoning tokens
         }
         if tools:
             payload["tools"] = tools
