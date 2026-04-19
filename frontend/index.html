@@ -25,10 +25,10 @@
         <div class="form-row">
           <div class="form-group">
             <label>Runner</label>
-            <div class="toggle-group">
-              <button class="toggle active" data-runner="forge" onclick="setRunner('forge')">Forge</button>
-              <button class="toggle" data-runner="mycroft" onclick="setRunner('mycroft')">Mycroft</button>
-            </div>
+            <select id="runner" onchange="setRunner(this.value)">
+              <option value="mycroft" selected>Mycroft</option>
+              <option value="forge">Forge</option>
+            </select>
           </div>
           <div class="form-group">
             <label>Model</label>
@@ -57,7 +57,7 @@
           <textarea id="systemPrompt" rows="12" placeholder="Leave empty for default. Forge default: direct file operations, no todo tools."></textarea>
         </details>
         <div class="actions">
-          <button class="btn-primary" id="runBtn" onclick="runTask()">Run with Forge</button>
+          <button class="btn-primary" id="runBtn" onclick="runTask()">Run Task</button>
           <button class="btn-secondary" onclick="previewPrompt()" id="previewBtn">Preview Prompt</button>
         </div>
       </div>

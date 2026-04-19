@@ -1,6 +1,6 @@
 const API = '';
 
-let activeRunner = 'forge'; // 'forge' or 'mycroft'
+let activeRunner = 'mycroft'; // 'mycroft' or 'forge'
 
 // ── Tab navigation ──────────────────────────────────────────────────────────
 
@@ -17,19 +17,14 @@ document.querySelectorAll('.tab').forEach(btn => {
 
 function setRunner(runner) {
   activeRunner = runner;
-  document.querySelectorAll('.toggle').forEach(b => {
-    b.classList.toggle('active', b.dataset.runner === runner);
-  });
   const btn = document.getElementById('runBtn');
-  const agentGroup = document.getElementById('agentTypeGroup');
-  const agentSelect = document.getElementById('agentType');
   const previewBtn = document.getElementById('previewBtn');
 
   if (runner === 'forge') {
     btn.textContent = 'Run with Forge';
     previewBtn.style.display = 'none';
   } else {
-    btn.textContent = 'Run with Mycroft';
+    btn.textContent = 'Run Task';
     previewBtn.style.display = '';
   }
 }
@@ -84,7 +79,7 @@ async function runTask() {
     statusEl.className = 'status-badge status-failed';
   } finally {
     btn.disabled = false;
-    btn.textContent = activeRunner === 'forge' ? 'Run with Forge' : 'Run with Mycroft';
+    btn.textContent = activeRunner === 'forge' ? 'Run with Forge' : 'Run Task';
   }
 }
 
