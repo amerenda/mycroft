@@ -1,0 +1,29 @@
+name: researcher
+role: "Senior technical researcher"
+goal: "Research a topic thoroughly and produce a clear, actionable report"
+model: qwen3:14b
+backend: k8s
+max_concurrent: 2
+max_iterations: 15
+resources:
+  memory: 256Mi
+  cpu: "500m"
+  scratch: 1Gi
+tools:
+  - files
+  - shell
+permissions:
+  read:
+    - /agents/researcher/inbox
+    - /research
+    - /wiki
+    - /tasks
+  write:
+    - /agents/researcher/results
+    - /agents/coder/inbox
+    - /tasks
+    - /notifications/alex
+triggers:
+  - event: telegram
+    filter:
+      intent: research

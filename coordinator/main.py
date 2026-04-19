@@ -231,28 +231,27 @@ async def _handle_engineering_task(
 
 async def _on_workflow_update(task_id: str, status: str, message: str):
     """Called by Argo watcher on workflow state changes."""
-    icons = {"succeeded": "OK", "failed": "XX", "error": "XX", "stale": "!!"}
-    icon = icons.get(status, "??")
-    text = f"[{icon}] Task {task_id[:8]}: {message}"
 
     if status in ("failed", "error"):
         await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": message})
-        # Decrement active gauge — need agent_type from the task
         task = await task_manager.get_task(task_id)
         if task:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="failed").inc()
+        # Failures go to logs + metrics only, not Telegram
+        log.warning("Task %s failed: %s", task_id[:8], message)
+
     elif status == "succeeded":
         await db.kb.update_task(task_id, status=TaskStatus.completed)
         task = await task_manager.get_task(task_id)
         if task:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="completed").inc()
-
-    try:
-        await telegram_bot.send(text)
-    except Exception:
-        log.warning("Failed to send Telegram update for task %s", task_id[:8])
+        # Success goes to Telegram
+        try:
+            await telegram_bot.send(f"Task {task_id[:8]} completed: {message}")
+        except Exception:
+            log.warning("Failed to send Telegram update for task %s", task_id[:8])
 
 
 async def _handle_status_query(text: str) -> str:
@@ -274,15 +273,18 @@ async def _handle_status_query(text: str) -> str:
 
 
 async def _on_agent_event(event: dict[str, Any]) -> None:
-    """Handle PG NOTIFY from agent completion."""
+    """Handle PG NOTIFY from agent completion.
+
+    Only sends Telegram messages for successful completions with results.
+    Failures, iteration limits, and other noise go to logs + metrics only.
+    """
     scope = event.get("scope", "")
     source = event.get("source", "")
 
-    # Check if this is an agent result
+    # Agent result — send to Telegram with PR link if present
     if "/results/" in scope:
         record = await db.kb.get(scope)
         if record and telegram_bot:
-            # Extract PR URL if present
             pr_url = ""
             if record.metadata:
                 pr_url = record.metadata.get("pr_url", "")
@@ -296,14 +298,12 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
             except Exception:
                 log.warning("Failed to send Telegram notification", exc_info=True)
 
-    # Check if this is a notification
+    # Notifications — log only, don't send to Telegram
+    # (iteration limits, warnings, etc. are noise)
     elif scope.startswith("/notifications/alex/"):
         record = await db.kb.get(scope)
-        if record and telegram_bot:
-            try:
-                await telegram_bot.send(record.content)
-            except Exception:
-                log.warning("Failed to send Telegram notification", exc_info=True)
+        if record:
+            log.info("Agent notification: %s", record.content[:200])
 
 
 # ---------------------------------------------------------------------------

@@ -12,16 +12,20 @@ log = logging.getLogger(__name__)
 
 CLASSIFY_PROMPT = """You are an intent classifier for an AI agent platform. Classify the user's message into one of these categories:
 
-1. "engineering" — A software engineering task: fix a bug, add a feature, refactor code, write tests, update docs. These go to engineering agents.
-2. "system" — A question about agent status, task progress, or system state. The coordinator answers directly.
-3. "general" — Everything else: calendar, reminders, email, general knowledge questions. These go to the personal assistant.
+1. "engineering" — A software engineering task: fix a bug, add a feature, refactor code, write tests, update docs. These go to the coder agent.
+2. "research" — A research request: investigate a topic, compare options, find best practices, evaluate tools, answer a technical question. These go to the researcher agent.
+3. "system" — A question about agent status, task progress, or system state. The coordinator answers directly.
+4. "general" — Everything else: calendar, reminders, email, general knowledge questions. These go to the personal assistant.
 
 For engineering tasks, also identify:
-- agent_type: always "coder" for now
+- agent_type: "coder"
 - repo: the repository name if mentioned (e.g., "ecdysis", "llm-manager", "mycroft")
 
+For research tasks:
+- agent_type: "researcher"
+
 Respond with a JSON object:
-{"type": "engineering"|"system"|"general", "agent_type": "coder"|null, "repo": "repo-name"|null, "instruction": "the full task description"}
+{"type": "engineering"|"research"|"system"|"general", "agent_type": "coder"|"researcher"|null, "repo": "repo-name"|null, "instruction": "the full task description"}
 
 Only respond with the JSON object, nothing else."""
 

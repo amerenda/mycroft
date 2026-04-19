@@ -26,6 +26,7 @@ class TaskStatus(str, enum.Enum):
 
 class IntentType(str, enum.Enum):
     engineering = "engineering"
+    research = "research"
     general = "general"
     system = "system"
 

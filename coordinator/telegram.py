@@ -84,14 +84,15 @@ class TelegramBot:
         try:
             intent = await classify(text, self.llm)
 
-            if intent.type == IntentType.engineering:
+            if intent.type in (IntentType.engineering, IntentType.research):
+                agent = intent.agent_type or ("researcher" if intent.type == IntentType.research else "coder")
                 try:
                     task_id = await self._on_engineering_task(
                         instruction=intent.instruction,
-                        agent_type=intent.agent_type or "coder",
+                        agent_type=agent,
                         repo=intent.repo or "",
                     )
-                    await update.message.reply_text(f"On it. Task {task_id[:8]} launched.")
+                    await update.message.reply_text(f"On it. {agent} task {task_id[:8]} launched.")
                 except Exception as e:
                     log.error("Failed to launch task: %s", e)
                     await update.message.reply_text(f"Task created but launch failed: {e}")
