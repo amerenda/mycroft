@@ -27,11 +27,9 @@ function setRunner(runner) {
 
   if (runner === 'forge') {
     btn.textContent = 'Run with Forge';
-    agentSelect.disabled = true;
     previewBtn.style.display = 'none';
   } else {
     btn.textContent = 'Run with Mycroft';
-    agentSelect.disabled = false;
     previewBtn.style.display = '';
   }
 }
