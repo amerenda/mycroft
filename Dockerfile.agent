@@ -14,8 +14,11 @@ RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
 RUN pip install --no-cache-dir pytest
 USER agent
 
-# Researcher — minimal (Phase 1b)
+# Researcher — web scraping + markdown conversion
 FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-researcher
+USER root
+RUN pip install --no-cache-dir crawl4ai && crawl4ai-setup
+USER agent
 
 # QA — httpx only (Phase 2)
 FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-qa

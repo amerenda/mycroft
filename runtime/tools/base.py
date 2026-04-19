@@ -75,6 +75,7 @@ def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegi
     from runtime.tools.github import GhCreatePr, GhComment
     from runtime.tools.shell import RunCommand
     from runtime.tools.vikunja import TodoListProjects, TodoGetTasks, TodoCreateTask, TodoUpdateTask
+    from runtime.tools.web import WebRead, WebSearch
 
     all_tools: dict[str, Tool] = {
         "read_file": ReadFile(workspace),
@@ -91,6 +92,8 @@ def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegi
         "gh_create_pr": GhCreatePr(workspace),
         "gh_comment": GhComment(workspace),
         "run_command": RunCommand(workspace),
+        "web_read": WebRead(),
+        "web_search": WebSearch(),
         "todo_list_projects": TodoListProjects(),
         "todo_get_tasks": TodoGetTasks(),
         "todo_create_task": TodoCreateTask(),
@@ -100,6 +103,7 @@ def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegi
     # Map manifest tool groups to individual tools
     tool_groups = {
         "files": ["read_file", "write_file", "patch_file", "search_files", "list_files"],
+        "web": ["web_read", "web_search"],
         "git": ["git_clone", "git_checkout_branch", "git_add", "git_commit", "git_push", "git_diff"],
         "github": ["gh_create_pr", "gh_comment"],
         "shell": ["run_command"],
