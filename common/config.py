@@ -18,5 +18,6 @@ class PlatformConfig(BaseSettings):
     agent_image_repo: str = "amerenda/mycroft"
     argo_namespace: str = "mycroft"
     github_token: str = ""
+    sazed_url: str = ""  # e.g. http://sazed.sazed.svc:8000 — empty = reports disabled
 
     model_config = {"env_prefix": "", "case_sensitive": False}
