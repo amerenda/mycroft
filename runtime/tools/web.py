@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -100,7 +101,10 @@ class WebRead:
 
 
 class WebSearch:
-    """Search the web using DuckDuckGo and return results."""
+    """Search the web using SearXNG (self-hosted) and return results."""
+
+    # SearXNG runs in the same namespace as the agent
+    SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://searxng.mycroft.svc:8080")
 
     @property
     def name(self) -> str:
@@ -136,32 +140,36 @@ class WebSearch:
         max_results = args.get("max_results", 5)
         log.info("WebSearch: %s (max=%d)", query, max_results)
 
-        # Use DuckDuckGo HTML search — no API key needed
+        import json as _json
+
+        # Query SearXNG JSON API
+        params = f"q={query.replace(' ', '+')}&format=json&pageno=1"
         proc = await asyncio.create_subprocess_exec(
-            "curl", "-sL", "--max-time", "10",
-            f"https://html.duckduckgo.com/html/?q={query.replace(' ', '+')}",
+            "curl", "-sf", "--max-time", "15",
+            f"{self.SEARXNG_URL}/search?{params}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
-        html = stdout.decode(errors="replace")
+        try:
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
+        except asyncio.TimeoutError:
+            return f"Search timed out for: {query}"
 
-        # Parse DuckDuckGo results
-        import re
+        if proc.returncode != 0:
+            return f"Search failed for: {query} (SearXNG unavailable)"
+
+        try:
+            data = _json.loads(stdout.decode())
+        except _json.JSONDecodeError:
+            return f"Search returned invalid response for: {query}"
+
         results = []
-        # Extract result blocks
-        for match in re.finditer(
-            r'class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>.*?'
-            r'class="result__snippet"[^>]*>(.*?)</(?:td|div)',
-            html, re.DOTALL,
-        ):
-            url = match.group(1)
-            title = re.sub(r'<[^>]+>', '', match.group(2)).strip()
-            snippet = re.sub(r'<[^>]+>', '', match.group(3)).strip()
+        for r in data.get("results", [])[:max_results]:
+            title = r.get("title", "")
+            url = r.get("url", "")
+            snippet = r.get("content", "")[:200]
             if title and url:
                 results.append(f"- [{title}]({url})\n  {snippet}")
-            if len(results) >= max_results:
-                break
 
         if not results:
             return f"No results found for: {query}"
