@@ -173,7 +173,7 @@ async def _handle_engineering_task(
     instruction: str, agent_type: str, repo: str,
     model_override: str | None = None, system_prompt_override: str | None = None,
     max_tokens: int | None = None, temperature: float | None = None,
-    max_iterations: int | None = None,
+    max_iterations: int | None = None, effort: str | None = None,
 ) -> str:
     """Handle an engineering task from Telegram or API."""
     manifest = trigger_router.get_manifest(agent_type)
@@ -196,6 +196,8 @@ async def _handle_engineering_task(
         task_config["temperature"] = temperature
     if max_iterations is not None:
         task_config["max_iterations_override"] = max_iterations
+    if effort:
+        task_config["effort"] = effort
 
     # Create task
     task_id = await task_manager.create_task(
@@ -481,6 +483,7 @@ async def create_task(req: CreateTaskRequest):
             max_tokens=req.max_tokens,
             temperature=req.temperature,
             max_iterations=max_iter,
+            effort=req.effort,
         )
         return {"task_id": task_id}
     except ValueError as e:

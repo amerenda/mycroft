@@ -11,25 +11,40 @@ from common.models import AgentManifest, MemoryRecord
 log = logging.getLogger(__name__)
 
 
-def _load_supplement(agent_name: str) -> str:
-    """Load the SYSTEM_SUPPLEMENT from an agent's prompts module, if it exists."""
+def _load_supplement(agent_name: str, effort: str | None = None) -> str:
+    """Load the system supplement from an agent's prompts module.
+
+    If the module exports EFFORT_SUPPLEMENTS dict and effort is specified,
+    uses the effort-specific supplement. Otherwise falls back to SYSTEM_SUPPLEMENT.
+    """
     try:
         mod = importlib.import_module(f"agents.{agent_name}.prompts")
-        return getattr(mod, "SYSTEM_SUPPLEMENT", "")
     except (ModuleNotFoundError, ImportError):
         return ""
 
+    # Try effort-specific supplement first
+    if effort:
+        effort_map = getattr(mod, "EFFORT_SUPPLEMENTS", {})
+        if effort in effort_map:
+            return effort_map[effort]
 
-def build_system_prompt(manifest: AgentManifest, tool_schemas: list[dict[str, Any]]) -> str:
+    return getattr(mod, "SYSTEM_SUPPLEMENT", "")
+
+
+def build_system_prompt(
+    manifest: AgentManifest,
+    tool_schemas: list[dict[str, Any]],
+    effort: str | None = None,
+) -> str:
     """Build the system prompt from manifest and available tools."""
     tool_list = "\n".join(
         f"- {t['function']['name']}: {t['function']['description']}"
         for t in tool_schemas
     )
 
-    supplement = _load_supplement(manifest.name)
+    supplement = _load_supplement(manifest.name, effort)
     if supplement:
-        log.info("Loaded system supplement for agent '%s'", manifest.name)
+        log.info("Loaded system supplement for agent '%s' (effort=%s)", manifest.name, effort or "default")
 
     base = f"""You are {manifest.role}.
 Your goal: {manifest.goal}
