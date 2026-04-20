@@ -46,6 +46,12 @@ class AgentRunner:
         self._temperature = task.config.get("temperature")
         self._effort = task.config.get("effort")  # light, regular, heavy
 
+        # Report enforcement: researcher at regular/heavy MUST write report.md
+        self._requires_report = (
+            manifest.name == "researcher" and self._effort in ("regular", "heavy", None)
+        )
+        self._has_written_report = False
+
         self.messages: list[dict[str, Any]] = []
         self.iteration = 0
         self._consecutive_empty = 0
@@ -174,6 +180,10 @@ class AgentRunner:
 
                 for tc in response.tool_calls:
                     log.info("Tool call: %s(%s)", tc.name, tc.arguments[:100])
+
+                    # Track report writes
+                    if tc.name == "write_file" and "report" in tc.arguments.lower():
+                        self._has_written_report = True
                     agent_tool_calls_total.labels(
                         agent_type=self.manifest.name, tool=tc.name).inc()
                     t_tool = time.monotonic()
@@ -212,7 +222,17 @@ class AgentRunner:
                 })
                 continue
 
-            # Non-empty text with no tool calls — agent is done
+            # Non-empty text with no tool calls — agent wants to finish.
+            # But some agents MUST complete certain actions before they can finish.
+            if self._requires_report and not self._has_written_report:
+                log.warning("Agent tried to finish without writing report, forcing continuation")
+                self.messages.append({
+                    "role": "user",
+                    "content": "You MUST write the report to /workspace/report.md using write_file before you can finish. Do that now.",
+                })
+                self.iteration += 1
+                continue
+
             self.messages.append({"role": "assistant", "content": response.content})
             log.info("Agent finished: %s", response.content[:200])
             return response.content

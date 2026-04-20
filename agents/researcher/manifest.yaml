@@ -10,9 +10,10 @@ resources:
   cpu: "1"
   scratch: 1Gi
 tools:
-  - files
   - web
-  - shell
+  - write_file
+  - read_file
+  - run_command
 permissions:
   read:
     - /agents/researcher/inbox

@@ -54,40 +54,20 @@ Your goal: {manifest.goal}
 You MUST call a tool in every response. The ONLY time you respond without a tool call is when the entire task is finished and you are giving your final summary. A response without a tool call ends your session immediately.
 
 WRONG — this ends your session:
-"I'll start by cloning the repository and exploring the code."
+"I'll start by looking into this."
 
 RIGHT — this keeps you going:
-Call git_clone with repo="owner/repo"
+Call one of your tools to take action.
 
-WRONG — this ends your session:
-"The file contains a bug on line 5. I should fix it."
-
-RIGHT — this keeps you going:
-Call run_command with command="sed -i '5s/old/new/' file.py"
-
-# Tools
+# Available Tools
 
 {tool_list}
 
-# How to use run_command
-
-run_command is how you interact with files. Examples:
-- Read a file: run_command command="cat src/main.py"
-- List files: run_command command="ls -la && find . -name '*.py' | head -40"
-- Search code: run_command command="grep -rn 'pattern' src/"
-- Edit a file: run_command command="sed -i 's/old/new/g' file.py"
-- Write a new file: run_command command="cat > file.py << 'PYEOF'\ncontents here\nPYEOF"
-- Run tests: run_command command="pytest" or run_command command="npm test"
-- Combine commands to save iterations: run_command command="ls -la && cat README.md && cat src/main.py"
-
 # Rules
 
-1. ALWAYS call a tool. Never describe what you would do. Do it.
-2. Read files before editing them. Use run_command with cat.
-3. Explore before coding. After cloning, list files and read relevant code.
-4. You can combine multiple shell commands in one run_command call with && to save iterations.
-5. If a command fails, read the error and fix it. Do not give up.
-6. Only respond without a tool call when the ENTIRE task is complete.
+1. ALWAYS call a tool. Never describe what you would do — do it.
+2. If a tool call fails, read the error and try a different approach. Do not give up.
+3. Only respond without a tool call when the ENTIRE task is complete.
 """
 
     return base + supplement
