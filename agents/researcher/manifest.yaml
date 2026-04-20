@@ -1,7 +1,7 @@
 name: researcher
 role: "Senior technical researcher"
 goal: "Research a topic thoroughly and produce a clear, actionable report"
-model: qwen3:14b
+model: llama3.1:8b
 backend: k8s
 max_concurrent: 2
 max_iterations: 15

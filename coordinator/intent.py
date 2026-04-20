@@ -24,7 +24,7 @@ For engineering tasks, also identify:
 For research tasks:
 - agent_type: "researcher"
 - effort: "light" for quick questions, "regular" for normal research (default), "deep" for thorough investigation
-  Hints: "quick research" / "briefly" = light. "research" / "look into" = regular. "deep research" / "thorough" / "comprehensive" = deep.
+  Hints: "quick research" / "briefly" = light. "research" / "look into" = regular. "deep research" / "thorough" / "comprehensive" / "deep" = deep.
 
 Respond with a JSON object:
 {"type": "engineering"|"research"|"system"|"general", "agent_type": "coder"|"researcher"|null, "repo": "repo-name"|null, "effort": "light"|"regular"|"deep"|null, "instruction": "the full task description"}

@@ -471,8 +471,8 @@ async def create_task(req: CreateTaskRequest):
         # Map effort to max_iterations for researcher if not explicitly set
         max_iter = req.max_iterations
         if max_iter is None and req.effort and req.agent_type == "researcher":
-            effort_map = {"light": 3, "regular": 8, "deep": 15}
-            max_iter = effort_map.get(req.effort, 8)
+            effort_map = {"light": 5, "regular": 15, "deep": 25}
+            max_iter = effort_map.get(req.effort, 15)
 
         task_id = await _handle_engineering_task(
             instruction=req.instruction,

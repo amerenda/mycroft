@@ -13,7 +13,7 @@ class PlatformConfig(BaseSettings):
     intent_model: str = "qwen2.5:7b"
     telegram_bot_token: str = ""
     telegram_chat_id: str = ""
-    global_max_iterations: int = 20
+    global_max_iterations: int = 30
     agent_image_tag: str = "latest"
     agent_image_repo: str = "amerenda/mycroft"
     argo_namespace: str = "mycroft"

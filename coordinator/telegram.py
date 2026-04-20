@@ -87,7 +87,7 @@ class TelegramBot:
             if intent.type in (IntentType.engineering, IntentType.research):
                 agent = intent.agent_type or ("researcher" if intent.type == IntentType.research else "coder")
                 # Map effort to max_iterations for research tasks
-                effort_map = {"light": 3, "regular": 8, "deep": 15}
+                effort_map = {"light": 5, "regular": 15, "deep": 25}
                 max_iter = effort_map.get(intent.effort or "regular") if agent == "researcher" else None
                 try:
                     task_id = await self._on_engineering_task(
