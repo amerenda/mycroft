@@ -28,6 +28,11 @@ def _resolve(workspace: str, path: str) -> str:
     return resolved
 
 
+def _get_path(args: dict) -> str:
+    """Extract path from args — models sometimes use 'file_name' or 'file_path' instead of 'path'."""
+    return args.get("path") or args.get("file_path") or args.get("file_name") or ""
+
+
 class ReadFile:
     """Read a file from the workspace."""
 
@@ -67,7 +72,7 @@ class ReadFile:
         }
 
     async def execute(self, args: dict[str, Any]) -> str:
-        path = _resolve(self.workspace, args["path"])
+        path = _resolve(self.workspace, _get_path(args))
         start = args.get("start_line")
         end = args.get("end_line")
 
@@ -136,7 +141,7 @@ class WriteFile:
         }
 
     async def execute(self, args: dict[str, Any]) -> str:
-        path = _resolve(self.workspace, args["path"])
+        path = _resolve(self.workspace, _get_path(args))
         content = args["content"]
 
         try:
@@ -193,7 +198,7 @@ class PatchFile:
         }
 
     async def execute(self, args: dict[str, Any]) -> str:
-        path = _resolve(self.workspace, args["path"])
+        path = _resolve(self.workspace, _get_path(args))
         old = args["old_string"]
         new = args["new_string"]
         replace_all = args.get("replace_all", False)
