@@ -104,7 +104,7 @@ class WebSearch:
     """Search the web using SearXNG (self-hosted) and return results."""
 
     # SearXNG runs in the same namespace as the agent
-    SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://searxng.mycroft.svc:8080")
+    SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://mycroft-search.mycroft.svc:8080")
 
     @property
     def name(self) -> str:
