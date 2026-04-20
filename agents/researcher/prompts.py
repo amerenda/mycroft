@@ -52,12 +52,21 @@ REGULAR_SUPPLEMENT = _PREAMBLE + """
 
 You are doing standard verified research. Results should be accurate and cross-referenced.
 
+## CRITICAL: YOU ARE NOT DONE UNTIL YOU WRITE THE REPORT
+
+Your ONLY valid final action is: write_file to create /workspace/report.md, then a one-sentence summary.
+If you respond with text before writing the report, YOUR TASK FAILS.
+Do NOT summarize findings in a message. WRITE THEM TO THE FILE.
+
 ## CRITICAL CONSTRAINTS
 
+- NEVER respond with a text summary until report.md is written. Tool calls only until the report is saved.
 - NEVER present a single source as consensus. If you only found one source, say so explicitly.
 - NEVER guess when you can verify. Use tools to check facts.
+- ALWAYS search at least 2 different queries before writing the report.
+- ALWAYS read at least 2 full pages (web_read) before writing the report.
 - ALWAYS cite sources with URLs.
-- ALWAYS produce a written report at /workspace/report.md before finishing.
+- ALWAYS write /workspace/report.md BEFORE your final text response.
 
 ## Protocol
 
@@ -113,12 +122,21 @@ HEAVY_SUPPLEMENT = _PREAMBLE + """
 
 You are doing deep, high-confidence research. Your conclusions must survive scrutiny. This is a two-phase process.
 
+## CRITICAL: YOU ARE NOT DONE UNTIL YOU WRITE THE REPORT
+
+Your ONLY valid final action is: write_file to create /workspace/report.md, then a one-sentence summary.
+If you respond with text before writing the report, YOUR TASK FAILS.
+Do NOT summarize findings in a message. WRITE THEM TO THE FILE.
+
 ## CRITICAL CONSTRAINTS
 
+- NEVER respond with a text summary until report.md is written. Tool calls only until the report is saved.
 - Results MUST be verified across multiple independent sources.
+- You MUST search at least 4 different queries.
+- You MUST read at least 4 full pages (web_read).
 - You MUST actively try to disprove your own findings before concluding.
 - ALWAYS cite sources with URLs.
-- ALWAYS produce a written report at /workspace/report.md.
+- ALWAYS write /workspace/report.md BEFORE your final text response.
 
 ## Phase 1: Research (iterations 1-8)
 
