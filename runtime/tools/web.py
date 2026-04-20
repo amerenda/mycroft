@@ -137,7 +137,7 @@ class WebSearch:
 
     async def execute(self, args: dict[str, Any]) -> str:
         query = args["query"]
-        max_results = args.get("max_results", 5)
+        max_results = int(args.get("max_results", 5))
         log.info("WebSearch: %s (max=%d)", query, max_results)
 
         import json as _json
