@@ -1,10 +1,12 @@
-"""Web tools — fetch URLs as clean markdown for research agents."""
+"""Web tools — fetch URLs as clean markdown, search via SearXNG."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 import os
+import re
+import time
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -15,8 +17,10 @@ MAX_OUTPUT_CHARS = 30000
 class WebRead:
     """Fetch a URL and return its content as clean markdown.
 
-    Uses crawl4ai for HTML-to-markdown conversion. Falls back to
-    raw HTTP + basic stripping if crawl4ai is not installed.
+    Extraction priority:
+    1. crawl4ai (headless browser + markdown conversion)
+    2. trafilatura (content extraction from raw HTML, no browser)
+    3. basic regex stripping (last resort)
     """
 
     @property
@@ -27,8 +31,8 @@ class WebRead:
     def description(self) -> str:
         return (
             "Fetch a URL and return its content as clean, readable markdown. "
-            "Handles JavaScript-rendered pages. Use this instead of curl for "
-            "reading web pages — it strips navigation, ads, and HTML noise."
+            "Strips navigation, ads, and HTML noise. Use this instead of curl "
+            "for reading web pages."
         )
 
     @property
@@ -45,27 +49,51 @@ class WebRead:
         }
 
     async def execute(self, args: dict[str, Any]) -> str:
-        url = args["url"]
-        log.info("WebRead: %s", url)
+        url = args.get("url", "")
+        if not url:
+            return "Error: url is required"
+
+        t0 = time.monotonic()
+        method = "unknown"
 
         try:
-            return await self._crawl4ai_fetch(url)
+            result = await self._crawl4ai_fetch(url)
+            method = "crawl4ai"
         except ImportError:
-            log.info("crawl4ai not installed, falling back to basic fetch")
-            return await self._basic_fetch(url)
+            try:
+                result = await self._trafilatura_fetch(url)
+                method = "trafilatura"
+            except ImportError:
+                result = await self._basic_fetch(url)
+                method = "basic"
         except Exception as e:
-            log.warning("crawl4ai failed, falling back to basic: %s", e)
-            return await self._basic_fetch(url)
+            log.warning("crawl4ai failed for %s: %s", url, e)
+            try:
+                result = await self._trafilatura_fetch(url)
+                method = "trafilatura"
+            except ImportError:
+                result = await self._basic_fetch(url)
+                method = "basic"
+            except Exception as e2:
+                log.warning("trafilatura also failed for %s: %s", url, e2)
+                result = await self._basic_fetch(url)
+                method = "basic"
+
+        elapsed = time.monotonic() - t0
+        content_len = len(result)
+        log.info("WebRead: %s via %s → %d chars in %.1fs", url, method, content_len, elapsed)
+
+        return result
 
     async def _crawl4ai_fetch(self, url: str) -> str:
-        """Fetch using crawl4ai for clean markdown output."""
+        """Fetch using crawl4ai (headless browser + markdown)."""
         from crawl4ai import AsyncWebCrawler
 
         async with AsyncWebCrawler() as crawler:
             result = await crawler.arun(url=url)
 
         if not result.success:
-            return f"Error fetching {url}: {result.error_message}"
+            raise RuntimeError(f"crawl4ai error: {result.error_message}")
 
         md = result.markdown or ""
         if len(md) > MAX_OUTPUT_CHARS:
@@ -73,10 +101,39 @@ class WebRead:
 
         return md or f"(page fetched but no content extracted from {url})"
 
+    async def _trafilatura_fetch(self, url: str) -> str:
+        """Fetch using trafilatura (content extraction, no browser)."""
+        import trafilatura
+
+        # Fetch the page
+        downloaded = await asyncio.to_thread(trafilatura.fetch_url, url)
+        if not downloaded:
+            raise RuntimeError(f"trafilatura could not fetch {url}")
+
+        # Extract main content as markdown-like text
+        text = await asyncio.to_thread(
+            trafilatura.extract,
+            downloaded,
+            include_links=True,
+            include_formatting=True,
+            include_tables=True,
+            output_format="txt",
+        )
+
+        if not text:
+            raise RuntimeError(f"trafilatura extracted no content from {url}")
+
+        if len(text) > MAX_OUTPUT_CHARS:
+            text = text[:MAX_OUTPUT_CHARS] + "\n\n... (truncated)"
+
+        return text
+
     async def _basic_fetch(self, url: str) -> str:
-        """Fallback: fetch with curl and do basic HTML stripping."""
+        """Last resort: curl + regex HTML stripping."""
         proc = await asyncio.create_subprocess_exec(
-            "curl", "-sL", "--max-time", "30", url,
+            "curl", "-sL", "--max-time", "30",
+            "-H", "User-Agent: Mozilla/5.0 (compatible; Mycroft/1.0)",
+            url,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -87,23 +144,25 @@ class WebRead:
 
         html = stdout.decode(errors="replace")
 
-        # Basic HTML stripping — remove tags, decode entities
-        import re
-        text = re.sub(r'<script[^>]*>.*?</script>', '', html, flags=re.DOTALL)
-        text = re.sub(r'<style[^>]*>.*?</style>', '', text, flags=re.DOTALL)
+        # Strip scripts, styles, nav, footer, header
+        text = re.sub(r'<(script|style|nav|footer|header|aside)[^>]*>.*?</\1>', '', html, flags=re.DOTALL | re.IGNORECASE)
+        # Strip remaining tags
         text = re.sub(r'<[^>]+>', ' ', text)
+        # Clean whitespace
         text = re.sub(r'\s+', ' ', text).strip()
+        # Remove very short "pages" that are likely error pages
+        if len(text) < 50:
+            return f"(no useful content extracted from {url})"
 
         if len(text) > MAX_OUTPUT_CHARS:
             text = text[:MAX_OUTPUT_CHARS] + "\n... (truncated)"
 
-        return text or f"(no content extracted from {url})"
+        return text
 
 
 class WebSearch:
     """Search the web using SearXNG (self-hosted) and return results."""
 
-    # SearXNG runs in the same namespace as the agent
     SEARXNG_URL = os.environ.get("SEARXNG_URL", "http://mycroft-search.mycroft.svc:8080")
 
     @property
@@ -136,9 +195,12 @@ class WebSearch:
         }
 
     async def execute(self, args: dict[str, Any]) -> str:
-        query = args["query"]
+        query = args.get("query", "")
+        if not query:
+            return "Error: query is required"
+
         max_results = int(args.get("max_results", 5))
-        log.info("WebSearch: %s (max=%d)", query, max_results)
+        t0 = time.monotonic()
 
         import json as _json
 
@@ -153,14 +215,17 @@ class WebSearch:
         try:
             stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=20)
         except asyncio.TimeoutError:
+            log.warning("WebSearch timed out for: %s", query)
             return f"Search timed out for: {query}"
 
         if proc.returncode != 0:
+            log.warning("WebSearch SearXNG unavailable for: %s (exit %d)", query, proc.returncode)
             return f"Search failed for: {query} (SearXNG unavailable)"
 
         try:
             data = _json.loads(stdout.decode())
         except _json.JSONDecodeError:
+            log.warning("WebSearch invalid response for: %s", query)
             return f"Search returned invalid response for: {query}"
 
         results = []
@@ -170,6 +235,9 @@ class WebSearch:
             snippet = r.get("content", "")[:200]
             if title and url:
                 results.append(f"- [{title}]({url})\n  {snippet}")
+
+        elapsed = time.monotonic() - t0
+        log.info("WebSearch: '%s' → %d results in %.1fs", query, len(results), elapsed)
 
         if not results:
             return f"No results found for: {query}"

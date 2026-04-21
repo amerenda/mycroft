@@ -148,7 +148,10 @@ class AgentRunner:
             })
 
         while self.iteration < self.max_iterations:
-            log.info("Iteration %d/%d", self.iteration + 1, self.max_iterations)
+            model_name = self.llm.model
+            phase = "writer" if self._switched_to_writer else "research"
+            log.info("Iteration %d/%d [%s] model=%s report_written=%s",
+                     self.iteration + 1, self.max_iterations, phase, model_name, self._has_written_report)
             agent_iterations_total.labels(agent_type=self.manifest.name).inc()
 
             # Call LLM

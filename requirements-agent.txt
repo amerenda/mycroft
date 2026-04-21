@@ -6,6 +6,7 @@ pydantic>=2.10.0
 pydantic-settings>=2.7.0
 prometheus-client>=0.21.0
 pyyaml>=6.0
+trafilatura>=2.0.0
 # CPU-only torch first (200MB vs 2GB), then sentence-transformers
 --extra-index-url https://download.pytorch.org/whl/cpu
 torch --index-url https://download.pytorch.org/whl/cpu
