@@ -151,6 +151,22 @@ async def _run_cli(manifest: AgentManifest, task: TaskConfig, platform: Platform
     print(result)
 
 
+def _apply_config(task: TaskConfig, cfg: dict):
+    """Apply config dict fields to the TaskConfig object."""
+    if cfg.get("instruction"):
+        task.instruction = cfg["instruction"]
+    if cfg.get("repo"):
+        task.repo = cfg["repo"]
+    if cfg.get("model_override"):
+        task.model_override = cfg["model_override"]
+    if cfg.get("system_prompt_override"):
+        task.system_prompt_override = cfg["system_prompt_override"]
+    if cfg.get("max_iterations_override"):
+        task.max_iterations_override = cfg["max_iterations_override"]
+    # tools_override and other pipeline config stay in task.config
+    # and are read by the runner directly
+
+
 async def _run_argo(manifest: AgentManifest, task: TaskConfig, platform: PlatformConfig):
     """Run agent in Argo mode — reads task from KB."""
     from common.kb import KBClient
@@ -165,16 +181,12 @@ async def _run_argo(manifest: AgentManifest, task: TaskConfig, platform: Platfor
         task.instruction = inbox_record.content
         if inbox_record.metadata:
             task.config = inbox_record.metadata
-            task.repo = inbox_record.metadata.get("repo", "")
-            task.model_override = inbox_record.metadata.get("model_override")
-            task.system_prompt_override = inbox_record.metadata.get("system_prompt_override")
+            _apply_config(task, inbox_record.metadata)
     else:
         task_record = await kb.get_task(task.id)
         if task_record and task_record.config:
-            task.instruction = task_record.config.get("instruction", "")
-            task.repo = task_record.config.get("repo", "")
-            task.model_override = task_record.config.get("model_override")
-            task.system_prompt_override = task_record.config.get("system_prompt_override")
+            task.config = task_record.config
+            _apply_config(task, task_record.config)
 
     await kb.close()
 
