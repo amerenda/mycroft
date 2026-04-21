@@ -468,7 +468,20 @@ class CreateTaskRequest(BaseModel):
 @app.post("/api/tasks")
 async def create_task(req: CreateTaskRequest):
     try:
-        # Map effort to max_iterations for researcher if not explicitly set
+        # Research pipeline: regular/deep tiers use two-phase gather→write
+        if req.agent_type == "researcher" and req.effort in ("regular", "deep"):
+            from coordinator.research_pipeline import run_research_pipeline
+            write_task_id, _ = await run_research_pipeline(
+                instruction=req.instruction,
+                effort=req.effort,
+                task_manager=task_manager,
+                argo=argo,
+                db=db,
+                on_update=_on_workflow_update,
+            )
+            return {"task_id": write_task_id}
+
+        # Map effort to max_iterations for light researcher or other agents
         max_iter = req.max_iterations
         if max_iter is None and req.effort and req.agent_type == "researcher":
             effort_map = {"light": 5, "regular": 15, "deep": 25}

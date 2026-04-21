@@ -39,7 +39,10 @@ class AgentRunner:
         self.llm = LLMClient(platform.llm_manager_url, platform.llm_manager_api_key, model)
         self.llm.set_metrics_callback(llm_metrics_callback)
         self.kb = KBClient(platform.kb_dsn, manifest.permissions, use_embeddings=True)
-        self.tools = load_tools(manifest.tools)
+
+        # Tools: task config can override the manifest tool list (for pipeline phases)
+        tools_override = task.config.get("tools_override")
+        self.tools = load_tools(tools_override or manifest.tools)
 
         # LLM call params from task config (overridable via API/UI)
         self._max_tokens = task.config.get("max_tokens", 4096)
@@ -47,8 +50,12 @@ class AgentRunner:
         self._effort = task.config.get("effort")  # light, regular, heavy
 
         # Report enforcement: researcher at regular/deep MUST write report.md
+        # BUT: pipeline phases handle their own enforcement (gather has no write_file)
+        is_pipeline_phase = task.config.get("phase") in ("gather", "write")
         self._requires_report = (
-            manifest.name == "researcher" and self._effort in ("regular", "deep", None)
+            manifest.name == "researcher"
+            and self._effort in ("regular", "deep", None)
+            and not is_pipeline_phase
         )
         self._has_written_report = False
 
