@@ -90,34 +90,37 @@ jobs:
     needs: [set-tag, manifest-base]
     if: github.event_name != 'pull_request'
     runs-on: arc-runner-set
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: coordinator
+            dockerfile: Dockerfile.coordinator
+            target: ""
+          - component: frontend
+            dockerfile: Dockerfile.frontend
+            target: ""
+          - component: agent-coder
+            dockerfile: Dockerfile.agent
+            target: agent-coder
+          - component: agent-researcher
+            dockerfile: Dockerfile.agent
+            target: agent-researcher
+    env:
+      TAG: ${{ needs.set-tag.outputs.tag }}
     steps:
       - uses: actions/checkout@v6
       - name: Login to Docker Hub
         run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
-      - name: Build coordinator
+      - name: Build and push ${{ matrix.component }} (amd64)
         run: |
-          TAG=${{ needs.set-tag.outputs.tag }}
-          docker build -f Dockerfile.coordinator -t "${IMAGE}:coordinator-${TAG}-amd64" .
-          docker push "${IMAGE}:coordinator-${TAG}-amd64"
-      - name: Build frontend
-        run: |
-          TAG=${{ needs.set-tag.outputs.tag }}
-          docker build -f Dockerfile.frontend -t "${IMAGE}:frontend-${TAG}-amd64" .
-          docker push "${IMAGE}:frontend-${TAG}-amd64"
-      - name: Build agent-coder
-        run: |
-          TAG=${{ needs.set-tag.outputs.tag }}
-          docker build -f Dockerfile.agent --target agent-coder \
-            --build-arg BASE_TAG=${TAG} \
-            -t "${IMAGE}:agent-coder-${TAG}-amd64" .
-          docker push "${IMAGE}:agent-coder-${TAG}-amd64"
-      - name: Build agent-researcher
-        run: |
-          TAG=${{ needs.set-tag.outputs.tag }}
-          docker build -f Dockerfile.agent --target agent-researcher \
-            --build-arg BASE_TAG=${TAG} \
-            -t "${IMAGE}:agent-researcher-${TAG}-amd64" .
-          docker push "${IMAGE}:agent-researcher-${TAG}-amd64"
+          ARGS=""
+          if [ -n "${{ matrix.target }}" ]; then
+            ARGS="--target ${{ matrix.target }} --build-arg BASE_TAG=${TAG}"
+          fi
+          docker build -f ${{ matrix.dockerfile }} $ARGS \
+            -t "${IMAGE}:${{ matrix.component }}-${TAG}-amd64" .
+          docker push "${IMAGE}:${{ matrix.component }}-${TAG}-amd64"
 
   build-arm64:
     needs: [set-tag, manifest-base]
