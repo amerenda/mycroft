@@ -57,6 +57,7 @@ class AgentManifest(BaseModel):
     role: str = ""
     goal: str = ""
     model: str = "claude-sonnet-4-20250514"
+    writer_model: str = ""  # optional second model for report writing
     backend: str = "k8s"
     max_concurrent: int = 2
     max_iterations: int = 10
