@@ -134,6 +134,12 @@ async def _run_cli(manifest: AgentManifest, task: TaskConfig, platform: Platform
 
     await _discover_llm_key(manifest, platform)
 
+    # Expose LLM credentials to tools (web_read summarization)
+    if platform.llm_manager_api_key:
+        os.environ["LLM_MANAGER_API_KEY"] = platform.llm_manager_api_key
+    if platform.llm_manager_url:
+        os.environ["LLM_MANAGER_URL"] = platform.llm_manager_url
+
     log.info("CLI mode: type=%s model=%s instruction='%s'",
              manifest.name, manifest.model, task.instruction[:100])
 
@@ -179,6 +185,12 @@ async def _run_argo(manifest: AgentManifest, task: TaskConfig, platform: Platfor
     log.info("Task instruction: %s", task.instruction[:200])
 
     await _discover_llm_key(manifest, platform)
+
+    # Expose LLM credentials to tools (web_read summarization)
+    if platform.llm_manager_api_key:
+        os.environ["LLM_MANAGER_API_KEY"] = platform.llm_manager_api_key
+    if platform.llm_manager_url:
+        os.environ["LLM_MANAGER_URL"] = platform.llm_manager_url
 
     runner = AgentRunner(manifest, task, platform)
     result = await runner.run()
