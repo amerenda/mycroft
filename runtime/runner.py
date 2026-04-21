@@ -154,6 +154,27 @@ class AgentRunner:
                      self.iteration + 1, self.max_iterations, phase, model_name, self._has_written_report)
             agent_iterations_total.labels(agent_type=self.manifest.name).inc()
 
+            # Budget warning: tell the model when it's running low on iterations
+            remaining = self.max_iterations - self.iteration
+            if self._requires_report and not self._has_written_report and not self._switched_to_writer:
+                if remaining == int(self.max_iterations * 0.4):
+                    self.messages.append({
+                        "role": "user",
+                        "content": (
+                            f"BUDGET WARNING: You have {remaining} iterations left. "
+                            f"Start writing the report NOW using write_file. "
+                            f"You can continue researching after the report is saved."
+                        ),
+                    })
+                elif remaining == 2:
+                    self.messages.append({
+                        "role": "user",
+                        "content": (
+                            f"FINAL WARNING: Only {remaining} iterations left. "
+                            f"Write the report to /workspace/report.md IMMEDIATELY or your work will be lost."
+                        ),
+                    })
+
             # Call LLM
             response = await self.llm.chat(
                 self.messages, tools=self.tools.schemas(),

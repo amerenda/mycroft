@@ -295,3 +295,104 @@ class WebSearch:
             return f"No results found for: {query}"
 
         return f"Search results for: {query}\n\n" + "\n\n".join(results)
+
+
+class WikiRead:
+    """Fetch a Wikipedia article summary or full sections via the REST API."""
+
+    @property
+    def name(self) -> str:
+        return "wiki_read"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Get clean text from Wikipedia. Returns the article summary by default. "
+            "Use this instead of web_read for Wikipedia — it returns structured text, "
+            "not HTML. Pass a topic name, not a URL."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "topic": {
+                    "type": "string",
+                    "description": "The Wikipedia article topic (e.g. 'Tom Hanks', 'Python (programming language)')",
+                },
+                "full": {
+                    "type": "boolean",
+                    "description": "If true, return the full article intro + sections. Default: summary only.",
+                },
+            },
+            "required": ["topic"],
+        }
+
+    async def execute(self, args: dict[str, Any]) -> str:
+        topic = args.get("topic", "")
+        if not topic:
+            return "Error: topic is required"
+
+        full = args.get("full", False)
+        t0 = time.monotonic()
+
+        # URL-encode the topic
+        encoded = topic.replace(" ", "_")
+
+        try:
+            if full:
+                # Get summary + search for related sections
+                summary_url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}"
+                proc = await asyncio.create_subprocess_exec(
+                    "curl", "-sf", "--max-time", "10", summary_url,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+                data = _json.loads(stdout.decode())
+                result = f"# {data.get('title', topic)}\n\n{data.get('extract', '')}"
+
+                # Also get the full article text via the TextExtracts API
+                extract_url = (
+                    f"https://en.wikipedia.org/w/api.php?action=query&titles={encoded}"
+                    f"&prop=extracts&explaintext=1&format=json"
+                )
+                proc2 = await asyncio.create_subprocess_exec(
+                    "curl", "-sf", "--max-time", "10", extract_url,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                stdout2, _ = await asyncio.wait_for(proc2.communicate(), timeout=15)
+                data2 = _json.loads(stdout2.decode())
+                pages = data2.get("query", {}).get("pages", {})
+                for page_id, page in pages.items():
+                    if page.get("extract"):
+                        result = f"# {page.get('title', topic)}\n\n{page['extract']}"
+                        break
+            else:
+                # Summary only — clean, fast
+                url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}"
+                proc = await asyncio.create_subprocess_exec(
+                    "curl", "-sf", "--max-time", "10", url,
+                    stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+                )
+                stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
+                data = _json.loads(stdout.decode())
+
+                if data.get("type") == "disambiguation":
+                    return f"'{topic}' is a disambiguation page. Try a more specific topic."
+
+                result = f"# {data.get('title', topic)}\n\n{data.get('extract', '')}"
+                if data.get("description"):
+                    result = f"# {data.get('title', topic)}\n_{data['description']}_\n\n{data.get('extract', '')}"
+
+        except Exception as e:
+            log.warning("WikiRead failed for '%s': %s", topic, e)
+            return f"Wikipedia article not found for: {topic}"
+
+        if len(result) > MAX_OUTPUT_CHARS:
+            result = result[:MAX_OUTPUT_CHARS] + "\n\n... (truncated)"
+
+        elapsed = time.monotonic() - t0
+        log.info("WikiRead: '%s' (full=%s) → %d chars in %.1fs", topic, full, len(result), elapsed)
+
+        return result

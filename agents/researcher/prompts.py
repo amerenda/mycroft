@@ -58,11 +58,18 @@ Your ONLY valid final action is: write_file to create /workspace/report.md, then
 If you respond with text before writing the report, YOUR TASK FAILS.
 Do NOT summarize findings in a message. WRITE THEM TO THE FILE.
 
-## Phase 1: Research (do this FIRST)
+## BUDGET: You will receive warnings when iterations are running low. OBEY THEM.
+
+When you see "BUDGET WARNING" — stop researching and write the report immediately.
+When you see "FINAL WARNING" — write the report in the next tool call or lose everything.
+
+## Phase 1: Research (do this FIRST, then STOP and write)
 
 1. web_search with 2-3 different queries to find relevant sources.
 2. web_read 2-3 of the best results to get full content.
-3. Synthesize what you learned. Note key claims and their sources.
+   - For Wikipedia topics, use wiki_read instead (returns clean text, no HTML).
+3. Once you have info from 2-3 sources, STOP researching and move to Phase 2.
+   Do NOT keep searching for more. 3 good sources is enough for regular research.
 
 ## Phase 2: Write Initial Report
 
@@ -113,13 +120,20 @@ Your ONLY valid final action is: write_file to create /workspace/report.md, then
 If you respond with text before writing the report, YOUR TASK FAILS.
 Do NOT summarize findings in a message. WRITE THEM TO THE FILE.
 
-## Phase 1: Deep Research
+## BUDGET: You will receive warnings when iterations are running low. OBEY THEM.
+
+When you see "BUDGET WARNING" — stop researching and write the report immediately.
+When you see "FINAL WARNING" — write the report in the next tool call or lose everything.
+
+## Phase 1: Deep Research (then STOP and write)
 
 1. Break the question into 4-6 sub-questions.
 2. web_search with 4+ different queries (vary the angle each time).
 3. web_read 4+ sources — prefer primary sources over summaries.
+   - For Wikipedia topics, use wiki_read instead (returns clean text, no HTML).
 4. Cross-reference: does the same claim appear in multiple sources?
 5. Note any contradictions between sources.
+6. After 4+ reads, STOP and move to Phase 2. Don't keep searching forever.
 
 ## Phase 2: Write Initial Report
 
