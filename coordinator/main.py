@@ -166,6 +166,111 @@ app = FastAPI(title="Mycroft Coordinator", lifespan=lifespan)
 
 
 # ---------------------------------------------------------------------------
+# Research pipeline (background)
+# ---------------------------------------------------------------------------
+
+async def _start_research_pipeline(instruction: str, effort: str) -> str:
+    """Start the two-phase research pipeline. Returns the gather task ID.
+    The pipeline runs in the background — gather completes, then writer launches.
+    """
+    from coordinator.research_pipeline import run_research_pipeline, PHASE_CONFIG
+
+    phase_config = PHASE_CONFIG.get(effort, PHASE_CONFIG["regular"])
+    gather_cfg = phase_config["gather"]
+
+    # Create gather task
+    gather_config = {
+        "instruction": instruction,
+        "model_override": gather_cfg["model"],
+        "max_iterations_override": gather_cfg["max_iterations"],
+        "tools_override": gather_cfg["tools"],
+        "system_prompt_override": run_research_pipeline.__module__
+            and __import__("coordinator.research_pipeline", fromlist=["GATHERER_PROMPT"]).GATHERER_PROMPT,
+        "phase": "gather",
+        "effort": effort,
+    }
+
+    gather_task_id = await task_manager.create_task(
+        agent_type="researcher",
+        instruction=instruction,
+        trigger="pipeline",
+        repo="",
+        config=gather_config,
+    )
+    tasks_created_total.labels(agent_type="researcher", trigger="pipeline").inc()
+    tasks_active.labels(agent_type="researcher").inc()
+
+    # Submit gather to Argo
+    await argo.submit(
+        agent_type="researcher",
+        task_id=gather_task_id,
+        params={"instruction": instruction, "model_override": gather_cfg["model"]},
+        on_update=_on_workflow_update,
+    )
+
+    log.info("Research pipeline started: gather=%s effort=%s", gather_task_id[:8], effort)
+
+    # Launch background task to wait for gather, then start writer
+    asyncio.create_task(_pipeline_writer_phase(gather_task_id, instruction, effort))
+
+    return gather_task_id
+
+
+async def _pipeline_writer_phase(gather_task_id: str, instruction: str, effort: str):
+    """Background: wait for gatherer, then launch writer with findings."""
+    from coordinator.research_pipeline import PHASE_CONFIG, WRITER_PROMPT, _wait_for_task
+
+    try:
+        findings = await _wait_for_task(gather_task_id, db, timeout=600)
+
+        if not findings or findings.startswith("("):
+            log.warning("Pipeline gatherer %s produced no usable findings", gather_task_id[:8])
+            findings = f"(Limited findings for: {instruction})"
+
+        log.info("Pipeline gatherer %s done (%d chars). Launching writer.", gather_task_id[:8], len(findings))
+
+        phase_config = PHASE_CONFIG.get(effort, PHASE_CONFIG["regular"])
+        write_cfg = phase_config["write"]
+
+        writer_instruction = (
+            f"Write a research report based on these findings.\n\n"
+            f"Original question: {instruction}\n\n"
+            f"Research findings:\n{findings[:15000]}"
+        )
+
+        write_config = {
+            "instruction": writer_instruction,
+            "model_override": write_cfg["model"],
+            "max_iterations_override": write_cfg["max_iterations"],
+            "tools_override": write_cfg["tools"],
+            "system_prompt_override": WRITER_PROMPT,
+            "phase": "write",
+            "effort": effort,
+            "parent_task_id": gather_task_id,
+        }
+
+        write_task_id = await task_manager.create_task(
+            agent_type="researcher",
+            instruction=writer_instruction,
+            trigger="pipeline",
+            repo="",
+            config=write_config,
+        )
+
+        await argo.submit(
+            agent_type="researcher",
+            task_id=write_task_id,
+            params={"instruction": writer_instruction, "model_override": write_cfg["model"]},
+            on_update=_on_workflow_update,
+        )
+
+        log.info("Pipeline writer launched: %s (parent=%s)", write_task_id[:8], gather_task_id[:8])
+
+    except Exception as e:
+        log.exception("Pipeline writer phase failed for gather=%s", gather_task_id[:8])
+
+
+# ---------------------------------------------------------------------------
 # Event handlers
 # ---------------------------------------------------------------------------
 
@@ -471,15 +576,12 @@ async def create_task(req: CreateTaskRequest):
         # Research pipeline: regular/deep tiers use two-phase gather→write
         if req.agent_type == "researcher" and req.effort in ("regular", "deep"):
             from coordinator.research_pipeline import run_research_pipeline
-            write_task_id, _ = await run_research_pipeline(
-                instruction=req.instruction,
-                effort=req.effort,
-                task_manager=task_manager,
-                argo=argo,
-                db=db,
-                on_update=_on_workflow_update,
-            )
-            return {"task_id": write_task_id}
+            # Run pipeline in background — returns the gather task ID immediately
+            # The pipeline will create the writer task when gather completes
+            import asyncio as _asyncio
+            gather_task_id = await _start_research_pipeline(
+                req.instruction, req.effort)
+            return {"task_id": gather_task_id}
 
         # Map effort to max_iterations for light researcher or other agents
         max_iter = req.max_iterations
