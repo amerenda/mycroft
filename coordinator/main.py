@@ -234,8 +234,18 @@ async def _pipeline_writer_phase(
     try:
         findings = await _wait_for_task(gather_task_id, db, timeout=600)
 
+        # Abort writer if gather was cancelled or produced nothing useful
         if not findings or findings.startswith("("):
-            log.warning("Pipeline gatherer %s produced no usable findings", gather_task_id[:8])
+            gather_task = await task_manager.get_task(gather_task_id)
+            was_cancelled = (
+                gather_task
+                and gather_task.result
+                and "Cancelled" in gather_task.result.get("error", "")
+            )
+            if was_cancelled:
+                log.info("Pipeline writer phase aborted — gather task %s was cancelled", gather_task_id[:8])
+                return
+            log.warning("Pipeline gatherer %s produced no usable findings, proceeding anyway", gather_task_id[:8])
             findings = f"(Limited findings for: {instruction})"
 
         log.info("Pipeline gatherer %s done (%d chars). Launching writer.", gather_task_id[:8], len(findings))
@@ -368,13 +378,18 @@ async def _handle_engineering_task(
 async def _on_workflow_update(task_id: str, status: str, message: str):
     """Called by Argo watcher on workflow state changes."""
 
+    # Don't overwrite a task the user already cancelled
+    current = await task_manager.get_task(task_id)
+    if current and current.status in (TaskStatus.failed, TaskStatus.completed):
+        log.debug("Ignoring workflow update for already-terminal task %s (%s)", task_id[:8], current.status)
+        return
+
     if status in ("failed", "error"):
         await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": message})
         task = await task_manager.get_task(task_id)
         if task:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="failed").inc()
-        # Failures go to logs + metrics only, not Telegram
         log.warning("Task %s failed: %s", task_id[:8], message)
 
     elif status == "succeeded":
@@ -383,7 +398,6 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
         if task:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="completed").inc()
-        # Success goes to Telegram
         try:
             await telegram_bot.send(f"Task {task_id[:8]} completed: {message}")
         except Exception:
@@ -653,6 +667,9 @@ async def cancel_task(task_id: str):
     task = await task_manager.get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
+    terminated = await argo.terminate_task(task_id)
+    if terminated:
+        log.info("Argo Workflow stopped for cancelled task %s", task_id[:8])
     await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": "Cancelled by user"})
     return {"status": "cancelled"}
 
@@ -662,6 +679,7 @@ async def delete_task(task_id: str):
     task = await task_manager.get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
+    await argo.terminate_task(task_id)
     await db.kb.delete_task(task_id)
     return {"status": "deleted"}
 

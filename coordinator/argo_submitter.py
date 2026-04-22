@@ -21,7 +21,9 @@ class ArgoSubmitter:
         self.image_repo = image_repo
         self.image_tag = image_tag
         self._api = None
-        self._watchers: dict[str, asyncio.Task] = {}
+        self._watchers: dict[str, asyncio.Task] = {}   # wf_name → watcher Task
+        self._task_to_wf: dict[str, str] = {}           # task_id → wf_name
+        self._wf_to_task: dict[str, str] = {}           # wf_name → task_id
 
     def _get_api(self):
         if self._api is None:
@@ -72,6 +74,10 @@ class ArgoSubmitter:
         wf_name = result["metadata"]["name"]
         log.info("Submitted Argo Workflow: %s (agent=%s, task=%s)", wf_name, agent_type, task_id[:8])
 
+        # Track task ↔ workflow mapping for cancellation
+        self._task_to_wf[task_id] = wf_name
+        self._wf_to_task[wf_name] = task_id
+
         # Start background watcher
         if on_update:
             self._watchers[wf_name] = asyncio.create_task(
@@ -79,6 +85,41 @@ class ArgoSubmitter:
             )
 
         return wf_name
+
+    async def terminate_task(self, task_id: str) -> bool:
+        """Stop the Argo Workflow for a task. Returns True if a workflow was found and stopped."""
+        wf_name = self._task_to_wf.get(task_id)
+        if not wf_name:
+            return False
+        return await self._terminate_workflow(wf_name)
+
+    async def _terminate_workflow(self, wf_name: str) -> bool:
+        """Stop a workflow by name, cancel its watcher, and clean up mappings."""
+        # Cancel the in-process watcher
+        watcher = self._watchers.pop(wf_name, None)
+        if watcher and not watcher.done():
+            watcher.cancel()
+
+        # Clean up bidirectional mapping
+        task_id = self._wf_to_task.pop(wf_name, None)
+        if task_id:
+            self._task_to_wf.pop(task_id, None)
+
+        api = self._get_api()
+        try:
+            api.patch_namespaced_custom_object(
+                group="argoproj.io",
+                version="v1alpha1",
+                namespace=self.namespace,
+                plural="workflows",
+                name=wf_name,
+                body={"spec": {"shutdown": "Stop"}},
+            )
+            log.info("Stopped Argo Workflow: %s", wf_name)
+            return True
+        except Exception as e:
+            log.warning("Could not stop workflow %s (may already be done): %s", wf_name, e)
+            return False
 
     async def _watch_workflow(
         self,
@@ -135,3 +176,6 @@ class ArgoSubmitter:
             log.exception("Error watching workflow %s", wf_name)
         finally:
             self._watchers.pop(wf_name, None)
+            task_id = self._wf_to_task.pop(wf_name, None)
+            if task_id:
+                self._task_to_wf.pop(task_id, None)
