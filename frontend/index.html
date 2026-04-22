@@ -12,15 +12,14 @@
   <h1>Mycroft Agent Studio</h1>
   <nav>
     <button class="tab active" data-tab="runner">Test Runner</button>
-    <button class="tab" data-tab="reports">Reports</button>
-    <button class="tab" data-tab="tasks">Tasks</button>
   </nav>
 </header>
 
 <main>
-  <!-- Test Runner Tab -->
   <section id="tab-runner" class="tab-content active">
     <div class="split">
+
+      <!-- LEFT: configure run -->
       <div class="panel left">
         <h2>Configure Run</h2>
 
@@ -33,10 +32,7 @@
             </select>
           </div>
           <div class="form-group">
-            <label>
-              Model
-              <span class="tip" data-tip="The primary LLM for this task. 'loaded' means it's warm in VRAM — first call is faster. For the research pipeline, this sets the Gather model unless overridden below.">?</span>
-            </label>
+            <label>Model <span class="tip" data-tip="Primary LLM for this task. 'loaded' = warm in VRAM, faster first call. For the research pipeline, sets the Gather model unless overridden in Advanced Options.">ⓘ</span></label>
             <select id="model"><option value="">Default</option></select>
           </div>
         </div>
@@ -46,11 +42,8 @@
             <label>Repo</label>
             <input id="repo" type="text" placeholder="amerenda/mycroft" value="amerenda/mycroft">
           </div>
-          <div class="form-group" id="agentTypeGroup">
-            <label>
-              Agent Type
-              <span class="tip" data-tip="researcher: web research → report. coder: writes/edits code + PRs. extractor: reads specific URLs and pulls out targeted facts.">?</span>
-            </label>
+          <div class="form-group">
+            <label>Agent Type <span class="tip" data-tip="researcher: web research + report. coder: writes code + PRs. extractor: reads specific URLs and pulls targeted facts — no searching, no report.">ⓘ</span></label>
             <select id="agentType" onchange="onAgentTypeChange()">
               <option value="researcher">researcher</option>
               <option value="coder">coder</option>
@@ -58,10 +51,7 @@
             </select>
           </div>
           <div class="form-group" id="effortGroup" style="display:none">
-            <label>
-              Effort
-              <span class="tip" data-tip="light: 1 search → quick Telegram reply, no report. regular: gather→write pipeline, multi-source report. deep: like regular but more searches, adversarial review pass.">?</span>
-            </label>
+            <label>Effort <span class="tip" data-tip="light: 1 search → quick answer, no report (~1 min). regular: gather→write pipeline, multi-source report (~8 min). deep: more searches + adversarial review (~12 min).">ⓘ</span></label>
             <select id="effort" onchange="onEffortChange()">
               <option value="light">Light — quick lookup</option>
               <option value="regular" selected>Regular — gather + write</option>
@@ -75,53 +65,34 @@
           <textarea id="instruction" rows="3" placeholder="e.g. How does Cilium replace kube-proxy?"></textarea>
         </div>
 
-        <details>
+        <details id="advancedOptions">
           <summary>Advanced Options</summary>
 
-          <!-- Iterations / tokens / temperature -->
           <div class="form-row" style="margin-top:10px">
             <div class="form-group">
-              <label>
-                Max Tokens
-                <span class="tip" data-tip="Token budget per LLM call. Thinking models (qwen3.5) need 4096+. For light tier, try 1024 to prevent runaway thinking. Coder: 4096 is safe.">?</span>
-              </label>
+              <label>Max Tokens <span class="tip" data-tip="Token budget per LLM call. Thinking models (qwen3.5) need 4096+. For light tier, try 1024 to cap runaway thinking. Coder: 4096 is safe.">ⓘ</span></label>
               <input id="maxTokens" type="number" value="4096" min="256" max="32768">
             </div>
             <div class="form-group">
-              <label>
-                Temperature
-                <span class="tip" data-tip="Sampling randomness. 0 = deterministic (best for code/facts). 0.7 = more creative. Leave blank for model default (~0.7). Researcher tasks usually benefit from 0–0.3.">?</span>
-              </label>
+              <label>Temperature <span class="tip" data-tip="Sampling randomness. 0 = deterministic (best for code/facts). 0.7 = more creative. Leave blank for model default. Researcher tasks benefit from 0–0.3.">ⓘ</span></label>
               <input id="temperature" type="number" value="" step="0.1" min="0" max="2" placeholder="Default">
             </div>
             <div class="form-group">
-              <label>
-                Max Iterations
-                <span class="tip" data-tip="Max number of tool-call rounds the agent gets. Light default: 6. Regular gather: 5. Regular write: 3. Higher = more thorough but slower. Exits early when done.">?</span>
-              </label>
+              <label>Max Iterations <span class="tip" data-tip="Max tool-call rounds. Light default: 6. Regular gather: 5, write: 3. Higher = more thorough but slower. Agent exits early when done.">ⓘ</span></label>
               <input id="maxIterations" type="number" value="" min="1" max="50" placeholder="Default">
             </div>
           </div>
 
-          <!-- Pipeline model chain (researcher regular/deep only) -->
+          <!-- Pipeline model chain — researcher regular/deep only -->
           <div class="adv-section" id="modelChain" style="display:none">
-            <div class="adv-section-label">
-              Pipeline Models
-              <span class="tip" data-tip="The regular/deep pipeline runs two agents in sequence: Gather searches the web and collects findings; Write turns those findings into a report. You can assign different models to each phase.">?</span>
-            </div>
+            <div class="adv-section-label">Pipeline Models <span class="tip" data-tip="regular/deep runs two agents: Gather searches + reads; Write turns findings into a report. Assign different models to each phase for best results.">ⓘ</span></div>
             <div class="form-row">
               <div class="form-group">
-                <label>
-                  Gather model
-                  <span class="tip" data-tip="Model for Phase 1 (search + read). Default: qwen3.5:9b — good at tool calling and deep reading. Try qwen3.6:27b for bigger context. The primary Model dropdown also sets this if Gather model is blank.">?</span>
-                </label>
+                <label>Gather model <span class="tip" data-tip="Model for Phase 1 (search + read). Default: qwen3.5:9b. The top-level Model dropdown also sets this if left blank. Try qwen3.6:27b for larger context window.">ⓘ</span></label>
                 <select id="gatherModel"><option value="">Default (qwen3.5:9b)</option></select>
               </div>
               <div class="form-group">
-                <label>
-                  Write model
-                  <span class="tip" data-tip="Model for Phase 2 (write report from findings). Default: llama3.1:8b — follows format instructions well and writes clearly. Try qwen3:14b if you want better prose quality.">?</span>
-                </label>
+                <label>Write model <span class="tip" data-tip="Model for Phase 2 (write report from findings). Default: llama3.1:8b — follows format instructions well. Try qwen3:14b for better prose quality.">ⓘ</span></label>
                 <select id="writeModel"><option value="">Default (llama3.1:8b)</option></select>
               </div>
             </div>
@@ -129,53 +100,51 @@
 
           <!-- Tool allowlist -->
           <div class="adv-section">
-            <div class="adv-section-label">
-              Tool Allowlist
-              <span class="tip" data-tip="Override which tools the agent can call. Useful for sandboxing experiments — e.g. giving a researcher only web_search (no web_read) to test snippet-only answers. Leave off to use agent defaults.">?</span>
-            </div>
-            <label class="override-toggle">
-              <input type="checkbox" id="toolOverrideEnabled" onchange="toggleToolOverride()">
-              Override tool allowlist
-            </label>
-            <div id="toolOverridePanel" style="display:none; margin-top:8px">
-              <div class="tool-grid" id="toolGrid">
+            <details id="toolDetails">
+              <summary class="adv-section-label">
+                Tool Allowlist <span class="tip" data-tip="Override which tools the agent can call. Useful for sandboxing: e.g. give researcher only web_search (no web_read) to test snippet-only answers. Uncheck tools to remove them. All checked = no override.">ⓘ</span>
+              </summary>
+              <div class="tool-controls">
+                <button type="button" class="btn-tool-ctrl" onclick="checkAllTools(true)">All</button>
+                <button type="button" class="btn-tool-ctrl" onclick="checkAllTools(false)">None</button>
+                <button type="button" class="btn-tool-ctrl" onclick="setDefaultTools()">Reset to defaults</button>
+              </div>
+              <div class="tool-grid">
                 <span class="tool-group-label">Web</span>
-                <label><input type="checkbox" class="tool-cb" value="web_search" checked> web_search</label>
-                <label><input type="checkbox" class="tool-cb" value="web_read" checked> web_read</label>
-                <label><input type="checkbox" class="tool-cb" value="wiki_read" checked> wiki_read</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="web_search" checked> web_search</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="web_read" checked> web_read</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="wiki_read" checked> wiki_read</label>
 
                 <span class="tool-group-label">Files</span>
-                <label><input type="checkbox" class="tool-cb" value="read_file" checked> read_file</label>
-                <label><input type="checkbox" class="tool-cb" value="write_file" checked> write_file</label>
-                <label><input type="checkbox" class="tool-cb" value="patch_file" checked> patch_file</label>
-                <label><input type="checkbox" class="tool-cb" value="search_files" checked> search_files</label>
-                <label><input type="checkbox" class="tool-cb" value="list_files" checked> list_files</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="read_file" checked> read_file</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="write_file" checked> write_file</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="patch_file" checked> patch_file</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="search_files" checked> search_files</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="list_files" checked> list_files</label>
 
                 <span class="tool-group-label">Shell</span>
-                <label><input type="checkbox" class="tool-cb" value="run_command" checked> run_command</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="run_command" checked> run_command</label>
 
                 <span class="tool-group-label">Git</span>
-                <label><input type="checkbox" class="tool-cb" value="git_clone" checked> git_clone</label>
-                <label><input type="checkbox" class="tool-cb" value="git_checkout_branch" checked> git_checkout_branch</label>
-                <label><input type="checkbox" class="tool-cb" value="git_add" checked> git_add</label>
-                <label><input type="checkbox" class="tool-cb" value="git_commit" checked> git_commit</label>
-                <label><input type="checkbox" class="tool-cb" value="git_push" checked> git_push</label>
-                <label><input type="checkbox" class="tool-cb" value="git_diff" checked> git_diff</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="git_clone"> git_clone</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="git_checkout_branch"> git_checkout_branch</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="git_add" checked> git_add</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="git_commit" checked> git_commit</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="git_push" checked> git_push</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="git_diff" checked> git_diff</label>
 
                 <span class="tool-group-label">GitHub</span>
-                <label><input type="checkbox" class="tool-cb" value="gh_create_pr" checked> gh_create_pr</label>
-                <label><input type="checkbox" class="tool-cb" value="gh_comment" checked> gh_comment</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="gh_create_pr" checked> gh_create_pr</label>
+                <label class="tool-label"><input type="checkbox" class="tool-cb" value="gh_comment" checked> gh_comment</label>
               </div>
-            </div>
+              <p class="tool-hint">All checked = use agent defaults (no override sent)</p>
+            </details>
           </div>
 
           <!-- System prompt override -->
           <div class="adv-section">
             <div class="form-group" style="margin-bottom:0">
-              <label>
-                System Prompt Override
-                <span class="tip" data-tip="Completely replaces the agent's default system prompt (including effort-level instructions). Use Preview Prompt to see the default first. Useful for experimenting with different prompting strategies.">?</span>
-              </label>
+              <label>System Prompt Override <span class="tip" data-tip="Completely replaces the agent's default system prompt. Use Preview Prompt to see the default first. Useful for experimenting with different prompting strategies.">ⓘ</span></label>
               <textarea id="systemPrompt" rows="8" placeholder="Leave empty for agent defaults."></textarea>
             </div>
           </div>
@@ -185,57 +154,65 @@
           <button class="btn-primary" id="runBtn" onclick="runTask()">Run Task</button>
           <button class="btn-secondary" onclick="previewPrompt()" id="previewBtn">Preview Prompt</button>
         </div>
-      </div>
 
-      <div class="panel right">
-        <h2>Tool Call Trace <span id="traceStatus" class="status-badge"></span></h2>
-        <div id="traceContent" class="trace">
-          <p class="empty">Run a task to see the tool call trace here.</p>
+        <!-- Prompt Preview (inline) -->
+        <div id="promptPanel" class="panel" style="display:none; margin-top:12px">
+          <h2>Prompt Preview</h2>
+          <div id="promptContent"></div>
         </div>
-        <div id="queueStats" class="queue-stats" style="display:none"></div>
       </div>
-    </div>
 
-    <!-- Prompt Preview -->
-    <div id="promptPanel" class="panel" style="display:none">
-      <h2>Prompt Preview</h2>
-      <div id="promptContent"></div>
-    </div>
-  </section>
+      <!-- RIGHT: tabbed panel — Tasks / Reports / Trace -->
+      <div class="panel right">
+        <div class="right-tab-bar">
+          <button class="rtab active" data-rtab="tasks" onclick="setRightTab('tasks')">Tasks</button>
+          <button class="rtab" data-rtab="reports" onclick="setRightTab('reports')">Reports</button>
+          <button class="rtab" data-rtab="trace" onclick="setRightTab('trace')">
+            Trace <span id="traceStatus" class="status-badge"></span>
+          </button>
+        </div>
 
-  <!-- Reports Tab -->
-  <section id="tab-reports" class="tab-content">
-    <div class="panel">
-      <div class="tasks-header">
-        <h2>Research Reports</h2>
-        <button class="btn-danger" onclick="clearAllReports()">Delete All</button>
+        <!-- Tasks sub-tab -->
+        <div id="rtab-tasks" class="rtab-content active">
+          <div class="rtab-toolbar">
+            <button class="btn-tool-ctrl" onclick="loadRightTasks()">↺ Refresh</button>
+            <button class="btn-danger" onclick="clearAllTasks()">Clear All</button>
+          </div>
+          <div id="rightTaskList"><p class="empty">Loading…</p></div>
+          <div id="rightConvPanel" class="conv-panel" style="display:none">
+            <div class="conv-panel-header">
+              <span id="rightConvId" class="conv-panel-title"></span>
+              <button class="btn-tool-ctrl" onclick="document.getElementById('rightConvPanel').style.display='none'">✕</button>
+            </div>
+            <div id="rightConvContent" class="conv-body"></div>
+          </div>
+        </div>
+
+        <!-- Reports sub-tab -->
+        <div id="rtab-reports" class="rtab-content">
+          <div class="rtab-toolbar">
+            <button class="btn-tool-ctrl" onclick="loadRightReports()">↺ Refresh</button>
+            <button class="btn-danger" onclick="clearAllReports()">Clear All</button>
+          </div>
+          <div id="rightReportList"><p class="empty">Loading…</p></div>
+          <div id="rightReportPanel" class="conv-panel" style="display:none">
+            <div class="conv-panel-header">
+              <span id="rightReportTitle" class="conv-panel-title"></span>
+              <button class="btn-tool-ctrl" onclick="document.getElementById('rightReportPanel').style.display='none'">✕</button>
+            </div>
+            <div id="rightReportContent" class="report-body conv-body"></div>
+          </div>
+        </div>
+
+        <!-- Trace sub-tab -->
+        <div id="rtab-trace" class="rtab-content">
+          <div id="traceContent" class="trace">
+            <p class="empty">Run a task to see the tool call trace here.</p>
+          </div>
+          <div id="queueStats" class="queue-stats" style="display:none"></div>
+        </div>
       </div>
-      <div id="reportList">Loading...</div>
-    </div>
 
-    <div id="reportPanel" class="panel" style="display:none">
-      <div class="tasks-header">
-        <h2 id="reportTitle"></h2>
-        <button class="btn-delete" onclick="deleteCurrentReport()" title="Delete">Delete</button>
-      </div>
-      <div class="report-meta" id="reportMeta"></div>
-      <div id="reportContent" class="report-body"></div>
-    </div>
-  </section>
-
-  <!-- Tasks Tab -->
-  <section id="tab-tasks" class="tab-content">
-    <div class="panel">
-      <div class="tasks-header">
-        <h2>Recent Tasks</h2>
-        <button class="btn-danger" onclick="clearAllTasks()">Clear All</button>
-      </div>
-      <div id="taskList">Loading...</div>
-    </div>
-
-    <div id="conversationPanel" class="panel" style="display:none">
-      <h2>Conversation <span id="convTaskId"></span></h2>
-      <div id="conversationContent"></div>
     </div>
   </section>
 </main>

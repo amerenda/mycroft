@@ -1,8 +1,8 @@
 const API = '';
 
-let activeRunner = 'mycroft'; // 'mycroft' or 'forge'
+let activeRunner = 'mycroft';
 
-// ── Tab navigation ──────────────────────────────────────────────────────────
+// ── Top-level tab navigation ─────────────────────────────────────────────────
 
 document.querySelectorAll('.tab').forEach(btn => {
   btn.addEventListener('click', () => {
@@ -13,13 +13,23 @@ document.querySelectorAll('.tab').forEach(btn => {
   });
 });
 
-// ── Runner toggle ───────────────────────────────────────────────────────────
+// ── Right-panel sub-tabs ──────────────────────────────────────────────────────
+
+function setRightTab(name) {
+  document.querySelectorAll('.rtab').forEach(b => {
+    b.classList.toggle('active', b.dataset.rtab === name);
+  });
+  document.querySelectorAll('.rtab-content').forEach(c => {
+    c.classList.toggle('active', c.id === 'rtab-' + name);
+  });
+}
+
+// ── Runner toggle ─────────────────────────────────────────────────────────────
 
 function setRunner(runner) {
   activeRunner = runner;
   const btn = document.getElementById('runBtn');
   const previewBtn = document.getElementById('previewBtn');
-
   if (runner === 'forge') {
     btn.textContent = 'Run with Forge';
     previewBtn.style.display = 'none';
@@ -29,7 +39,7 @@ function setRunner(runner) {
   }
 }
 
-// ── API helpers ─────────────────────────────────────────────────────────────
+// ── API helpers ───────────────────────────────────────────────────────────────
 
 async function api(path, opts) {
   const r = await fetch(API + path, opts);
@@ -45,7 +55,7 @@ function esc(s) {
   return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-// ── Test Runner ─────────────────────────────────────────────────────────────
+// ── Test Runner ───────────────────────────────────────────────────────────────
 
 let pollTimer = null;
 
@@ -64,8 +74,10 @@ async function runTask() {
   statusEl.textContent = 'submitting';
   statusEl.className = 'status-badge status-pending';
 
-  const statsEl = document.getElementById('queueStats');
-  statsEl.style.display = 'none';
+  document.getElementById('queueStats').style.display = 'none';
+
+  // Switch to Trace so live output is visible
+  setRightTab('trace');
 
   try {
     if (activeRunner === 'forge') {
@@ -83,59 +95,45 @@ async function runTask() {
   }
 }
 
-// ── Forge runner ────────────────────────────────────────────────────────────
+// ── Forge runner ──────────────────────────────────────────────────────────────
 
 async function runForge(instruction) {
   const model = document.getElementById('model').value || 'qwen3:14b';
   const repo = document.getElementById('repo').value.trim();
   const systemPrompt = document.getElementById('systemPrompt').value.trim();
 
-  if (!repo) {
-    throw new Error('Repo is required for Forge runs');
-  }
+  if (!repo) throw new Error('Repo is required for Forge runs');
 
   const r = await api('/api/forge/run', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      instruction,
-      repo,
-      model,
-      system_prompt: systemPrompt || null,
-    }),
+    body: JSON.stringify({ instruction, repo, model, system_prompt: systemPrompt || null }),
   });
 
   if (r.run_id) {
     const statusEl = document.getElementById('traceStatus');
     statusEl.textContent = 'running';
     statusEl.className = 'status-badge status-running';
-
     document.getElementById('traceContent').innerHTML =
       '<p class="empty">Forge is cloning repo and running...</p>';
-
     pollForgeRun(r.run_id);
   }
 }
 
 function pollForgeRun(runId) {
   if (pollTimer) clearInterval(pollTimer);
-
   pollTimer = setInterval(async () => {
     try {
       const r = await api('/api/forge/runs/' + runId);
       renderForgeResult(r);
-
       if (r.status === 'completed' || r.status === 'failed') {
         clearInterval(pollTimer);
         pollTimer = null;
-
         const statusEl = document.getElementById('traceStatus');
         statusEl.textContent = r.status;
         statusEl.className = 'status-badge status-' + r.status;
       }
-    } catch (e) {
-      // Still running
-    }
+    } catch (e) { /* still running */ }
   }, 2000);
 }
 
@@ -148,7 +146,6 @@ function renderForgeResult(r) {
     return;
   }
 
-  // Error
   if (r.error) {
     cards.push(`
       <div class="trace-card" style="border-left:3px solid #da3633">
@@ -156,11 +153,9 @@ function renderForgeResult(r) {
           <span style="color:#da3633">Error: ${esc(r.error)}</span>
         </div>
         <div class="trace-card-body">${esc(r.stderr)}</div>
-      </div>
-    `);
+      </div>`);
   }
 
-  // Git diff
   if (r.git_diff) {
     cards.push(`
       <div class="trace-card tool-call expanded" onclick="this.classList.toggle('expanded')">
@@ -169,22 +164,18 @@ function renderForgeResult(r) {
           <span class="trace-meta">${r.git_diff.length} bytes</span>
         </div>
         <div class="trace-card-body">${esc(r.git_diff)}</div>
-      </div>
-    `);
+      </div>`);
   }
 
-  // Files changed
   if (r.files_changed && r.files_changed.length) {
     cards.push(`
       <div class="trace-card llm-response">
         <div class="trace-card-header">
           <span class="trace-content">Files changed: ${r.files_changed.join(', ')}</span>
         </div>
-      </div>
-    `);
+      </div>`);
   }
 
-  // Stdout (Forge output)
   if (r.stdout) {
     cards.push(`
       <div class="trace-card" onclick="this.classList.toggle('expanded')">
@@ -193,28 +184,23 @@ function renderForgeResult(r) {
           <span class="trace-meta">${r.stdout.length} chars</span>
         </div>
         <div class="trace-card-body">${esc(r.stdout)}</div>
-      </div>
-    `);
+      </div>`);
   }
 
-  if (!cards.length) {
-    cards.push('<p class="empty">No changes made</p>');
-  }
+  if (!cards.length) cards.push('<p class="empty">No changes made</p>');
 
-  // Stats bar
   const statsEl = document.getElementById('queueStats');
   statsEl.style.display = 'flex';
   statsEl.innerHTML = `
     <span>Exit: <strong>${r.exit_code}</strong></span>
     <span>Duration: <strong>${r.duration_seconds.toFixed(1)}s</strong></span>
     <span>Files: <strong>${r.files_changed.length}</strong></span>
-    <span>Status: <strong>${r.status}</strong></span>
-  `;
+    <span>Status: <strong>${r.status}</strong></span>`;
 
   el.innerHTML = cards.join('');
 }
 
-// ── Mycroft runner ──────────────────────────────────────────────────────────
+// ── Mycroft runner ────────────────────────────────────────────────────────────
 
 async function runMycroft(instruction) {
   const model = document.getElementById('model').value;
@@ -224,17 +210,13 @@ async function runMycroft(instruction) {
   const maxIterations = document.getElementById('maxIterations').value;
   const agentType = document.getElementById('agentType').value;
   const effort = document.getElementById('effort').value;
-
-  // Pipeline model overrides (researcher regular/deep)
   const gatherModel = document.getElementById('gatherModel').value;
   const writeModel = document.getElementById('writeModel').value;
 
-  // Tool allowlist override
-  let toolsOverride = null;
-  if (document.getElementById('toolOverrideEnabled').checked) {
-    const checked = [...document.querySelectorAll('.tool-cb:checked')].map(cb => cb.value);
-    if (checked.length > 0) toolsOverride = checked;
-  }
+  // Send tool override only when not all tools are checked
+  const allCbs = [...document.querySelectorAll('.tool-cb')];
+  const checkedValues = allCbs.filter(cb => cb.checked).map(cb => cb.value);
+  const toolsOverride = checkedValues.length < allCbs.length ? checkedValues : null;
 
   const body = {
     agent_type: agentType,
@@ -261,32 +243,30 @@ async function runMycroft(instruction) {
     const statusEl = document.getElementById('traceStatus');
     statusEl.textContent = 'running';
     statusEl.className = 'status-badge status-running';
+    loadRightTasks();
     pollMycroftTask(r.task_id);
   }
 }
 
 function pollMycroftTask(taskId) {
   if (pollTimer) clearInterval(pollTimer);
-
   pollTimer = setInterval(async () => {
     try {
       const task = await api('/api/tasks/' + taskId);
       const conv = await api('/api/tasks/' + taskId + '/conversation').catch(() => null);
-
       renderTrace(conv ? conv.messages : [], task);
 
       if (task.status === 'completed' || task.status === 'failed') {
         clearInterval(pollTimer);
         pollTimer = null;
-        loadTasks();
+        loadRightTasks();
+        if (task.status === 'completed') loadRightReports();
 
         const statusEl = document.getElementById('traceStatus');
         statusEl.textContent = task.status;
         statusEl.className = 'status-badge status-' + task.status;
       }
-    } catch (e) {
-      // Task may not have conversation yet
-    }
+    } catch (e) { /* task may not have conversation yet */ }
   }, 3000);
 }
 
@@ -309,17 +289,14 @@ function renderTrace(messages, task) {
           const name = fn.name || 'unknown';
           const args = fn.arguments || '';
           const isFileOp = ['patch', 'write', 'read', 'fs_search'].includes(name);
-          const cardClass = isFileOp ? 'tool-call' : 'planning';
-
           cards.push(`
-            <div class="trace-card ${cardClass}" onclick="this.classList.toggle('expanded')">
+            <div class="trace-card ${isFileOp ? 'tool-call' : 'planning'}" onclick="this.classList.toggle('expanded')">
               <div class="trace-card-header">
                 <span><span class="trace-tool-name">${esc(name)}</span></span>
                 <span class="trace-meta">tool call</span>
               </div>
               <div class="trace-card-body">${esc(args)}</div>
-            </div>
-          `);
+            </div>`);
         }
       }
       if (msg.content) {
@@ -330,8 +307,7 @@ function renderTrace(messages, task) {
               <span class="trace-meta">response</span>
             </div>
             <div class="trace-card-body">${esc(msg.content)}</div>
-          </div>
-        `);
+          </div>`);
       }
     }
 
@@ -343,8 +319,7 @@ function renderTrace(messages, task) {
             <span class="trace-meta">${(msg.content || '').length} chars</span>
           </div>
           <div class="trace-card-body">${esc((msg.content || '').slice(0, 2000))}</div>
-        </div>
-      `);
+        </div>`);
     }
 
     if (msg.role === 'user' && messages.indexOf(msg) > 1) {
@@ -355,13 +330,14 @@ function renderTrace(messages, task) {
             <span class="trace-meta">nudge</span>
           </div>
           <div class="trace-card-body">${esc(msg.content)}</div>
-        </div>
-      `);
+        </div>`);
     }
   }
 
   el.innerHTML = cards.join('') || '<p class="empty">No tool calls yet</p>';
 }
+
+// ── Prompt preview ────────────────────────────────────────────────────────────
 
 async function previewPrompt() {
   const instruction = document.getElementById('instruction').value.trim();
@@ -383,8 +359,7 @@ async function previewPrompt() {
     panel.querySelector('#promptContent').innerHTML = `
       <div class="msg msg-system"><div class="role">System Prompt</div><pre>${esc(r.system_prompt)}</pre></div>
       <div class="msg msg-user"><div class="role">User Message</div><pre>${esc(r.user_message)}</pre></div>
-      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${r.tools.join(', ')} | Model: ${r.model}</p>
-    `;
+      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${r.tools.join(', ')} | Model: ${r.model}</p>`;
     const spEl = document.getElementById('systemPrompt');
     if (!spEl.value.trim()) spEl.value = r.system_prompt;
   } catch (e) {
@@ -392,46 +367,47 @@ async function previewPrompt() {
   }
 }
 
-// ── Tasks Tab ───────────────────────────────────────────────────────────────
+// ── Tasks sub-tab ─────────────────────────────────────────────────────────────
 
-async function loadTasks() {
+async function loadRightTasks() {
   try {
     const tasks = await api('/api/tasks?limit=20');
-    const el = document.getElementById('taskList');
+    const el = document.getElementById('rightTaskList');
     if (!tasks.length) {
       el.innerHTML = '<p class="empty">No tasks yet</p>';
       return;
     }
     el.innerHTML = tasks.map(t => `
       <div class="task-row">
-        <span class="task-info" onclick="viewConversation('${t.id}')">
+        <span class="task-info" onclick="viewRightConversation('${t.id}')">
           ${t.id.slice(0, 8)} &mdash; ${t.agent_type} &mdash; ${esc((t.config?.instruction || '').slice(0, 60))}
         </span>
         <div class="task-actions">
           <span class="status-badge status-${t.status}">${t.status}</span>
           <button class="btn-delete" onclick="deleteTask('${t.id}')" title="Delete">&#10005;</button>
         </div>
-      </div>
-    `).join('');
+      </div>`).join('');
   } catch (e) {
-    document.getElementById('taskList').innerHTML = '<p class="empty">Error loading tasks</p>';
+    document.getElementById('rightTaskList').innerHTML = '<p class="empty">Error loading tasks</p>';
   }
 }
 
-async function viewConversation(taskId) {
+async function viewRightConversation(taskId) {
+  const panel = document.getElementById('rightConvPanel');
+  const titleEl = document.getElementById('rightConvId');
+  const contentEl = document.getElementById('rightConvContent');
+
+  titleEl.textContent = taskId.slice(0, 8);
+  panel.style.display = 'block';
+
   try {
     const r = await api('/api/tasks/' + taskId + '/conversation');
-    const panel = document.getElementById('conversationPanel');
-    panel.style.display = 'block';
-    document.getElementById('convTaskId').textContent = '(' + taskId.slice(0, 8) + ')';
-
     const messages = r.messages || [];
     if (!messages.length) {
-      document.getElementById('conversationContent').innerHTML = '<p class="empty">No conversation data</p>';
+      contentEl.innerHTML = '<p class="empty">No conversation data</p>';
       return;
     }
-
-    document.getElementById('conversationContent').innerHTML = messages.map(m => {
+    contentEl.innerHTML = messages.map(m => {
       let content = m.content || '';
       if (m.tool_calls) {
         content += '\n\nTool calls:\n' + m.tool_calls.map(tc =>
@@ -441,17 +417,14 @@ async function viewConversation(taskId) {
       return `<div class="msg msg-${m.role}"><div class="role">${m.role}</div><pre>${esc(content)}</pre></div>`;
     }).join('');
   } catch (e) {
-    const panel = document.getElementById('conversationPanel');
-    panel.style.display = 'block';
-    document.getElementById('convTaskId').textContent = '(' + taskId.slice(0, 8) + ')';
-    document.getElementById('conversationContent').innerHTML = '<p class="empty">No conversation data yet</p>';
+    contentEl.innerHTML = '<p class="empty">No conversation data yet</p>';
   }
 }
 
 async function deleteTask(taskId) {
   try {
     await api('/api/tasks/' + taskId, { method: 'DELETE' });
-    loadTasks();
+    loadRightTasks();
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -461,13 +434,104 @@ async function clearAllTasks() {
   if (!confirm('Delete all tasks? This cannot be undone.')) return;
   try {
     await api('/api/tasks', { method: 'DELETE' });
-    loadTasks();
+    document.getElementById('rightConvPanel').style.display = 'none';
+    loadRightTasks();
   } catch (e) {
     alert('Error: ' + e.message);
   }
 }
 
-// ── Init ────────────────────────────────────────────────────────────────────
+// ── Reports sub-tab ───────────────────────────────────────────────────────────
+
+const md = window.markdownit ? window.markdownit() : null;
+
+async function loadRightReports() {
+  try {
+    const reports = await api('/api/reports');
+    const el = document.getElementById('rightReportList');
+    if (!reports.length) {
+      el.innerHTML = '<p class="empty">No reports yet. Run a researcher task to generate one.</p>';
+      return;
+    }
+    el.innerHTML = reports.map(r => `
+      <div class="report-row" onclick="viewRightReport('${r.id}')">
+        <div class="report-title">
+          ${esc(r.title)}
+          <span class="effort-badge effort-${r.effort || 'regular'}">${r.effort || 'regular'}</span>
+        </div>
+        <div class="report-summary">${esc(r.summary || '').slice(0, 150)}</div>
+        <div class="report-meta">${r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</div>
+      </div>`).join('');
+  } catch (e) {
+    document.getElementById('rightReportList').innerHTML = '<p class="empty">Error loading reports</p>';
+  }
+}
+
+async function viewRightReport(reportId) {
+  const panel = document.getElementById('rightReportPanel');
+  const titleEl = document.getElementById('rightReportTitle');
+  const contentEl = document.getElementById('rightReportContent');
+
+  panel.style.display = 'block';
+
+  try {
+    const r = await api('/api/reports/' + reportId);
+    titleEl.textContent = r.title;
+    if (md) {
+      contentEl.innerHTML = md.render(r.content);
+    } else {
+      contentEl.innerHTML = '<pre>' + esc(r.content) + '</pre>';
+    }
+  } catch (e) {
+    titleEl.textContent = reportId.slice(0, 8);
+    contentEl.innerHTML = '<p class="empty">Error loading report</p>';
+  }
+}
+
+async function clearAllReports() {
+  if (!confirm('Delete ALL reports? This cannot be undone.')) return;
+  try {
+    await api('/api/reports', { method: 'DELETE' });
+    document.getElementById('rightReportPanel').style.display = 'none';
+    loadRightReports();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+// ── Tool allowlist helpers ────────────────────────────────────────────────────
+
+function checkAllTools(checked) {
+  document.querySelectorAll('.tool-cb').forEach(cb => { cb.checked = checked; });
+}
+
+function setDefaultTools() {
+  const unchecked = new Set(['git_clone', 'git_checkout_branch']);
+  document.querySelectorAll('.tool-cb').forEach(cb => {
+    cb.checked = !unchecked.has(cb.value);
+  });
+}
+
+// ── Agent type + effort handlers ──────────────────────────────────────────────
+
+function onAgentTypeChange() {
+  const agent = document.getElementById('agentType').value;
+  document.getElementById('effortGroup').style.display = (agent === 'researcher') ? '' : 'none';
+  _updateModelChainVisibility();
+}
+
+function onEffortChange() {
+  _updateModelChainVisibility();
+}
+
+function _updateModelChainVisibility() {
+  const agent = document.getElementById('agentType').value;
+  const effort = document.getElementById('effort').value;
+  const show = agent === 'researcher' && (effort === 'regular' || effort === 'deep');
+  document.getElementById('modelChain').style.display = show ? '' : 'none';
+}
+
+// ── Models ────────────────────────────────────────────────────────────────────
 
 async function loadModels() {
   try {
@@ -476,8 +540,7 @@ async function loadModels() {
       .filter(m => m.downloaded !== false)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
 
-    const selects = ['model', 'gatherModel', 'writeModel'];
-    selects.forEach(selId => {
+    ['model', 'gatherModel', 'writeModel'].forEach(selId => {
       const el = document.getElementById(selId);
       list.forEach(m => {
         const opt = document.createElement('option');
@@ -495,109 +558,10 @@ async function loadModels() {
   }
 }
 
-// ── Agent type + effort change handlers ────────────────────────────────────
-
-function onAgentTypeChange() {
-  const agent = document.getElementById('agentType').value;
-  const effortGroup = document.getElementById('effortGroup');
-  effortGroup.style.display = (agent === 'researcher') ? '' : 'none';
-  _updateModelChainVisibility();
-}
-
-function onEffortChange() {
-  _updateModelChainVisibility();
-}
-
-function _updateModelChainVisibility() {
-  const agent = document.getElementById('agentType').value;
-  const effort = document.getElementById('effort').value;
-  const modelChain = document.getElementById('modelChain');
-  const show = agent === 'researcher' && (effort === 'regular' || effort === 'deep');
-  modelChain.style.display = show ? '' : 'none';
-}
-
-function toggleToolOverride() {
-  const enabled = document.getElementById('toolOverrideEnabled').checked;
-  document.getElementById('toolOverridePanel').style.display = enabled ? '' : 'none';
-}
-
-// ── Reports ─────────────────────────────────────────────────────────────────
-
-const md = window.markdownit ? window.markdownit() : null;
-let currentReportId = null;
-
-async function loadReports() {
-  try {
-    const reports = await api('/api/reports');
-    const el = document.getElementById('reportList');
-    if (!reports.length) {
-      el.innerHTML = '<p class="empty">No reports yet. Run a researcher task to generate one.</p>';
-      return;
-    }
-    el.innerHTML = reports.map(r => `
-      <div class="report-row" onclick="viewReport('${r.id}')">
-        <div class="report-title">
-          ${esc(r.title)}
-          <span class="effort-badge effort-${r.effort || 'regular'}">${r.effort || 'regular'}</span>
-        </div>
-        <div class="report-summary">${esc(r.summary || '').slice(0, 150)}</div>
-        <div class="report-meta">${r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</div>
-      </div>
-    `).join('');
-  } catch (e) {
-    document.getElementById('reportList').innerHTML = '<p class="empty">Error loading reports</p>';
-  }
-}
-
-async function viewReport(reportId) {
-  try {
-    const r = await api('/api/reports/' + reportId);
-    currentReportId = reportId;
-    const panel = document.getElementById('reportPanel');
-    panel.style.display = 'block';
-    document.getElementById('reportTitle').textContent = r.title;
-    document.getElementById('reportMeta').innerHTML =
-      `${r.effort || 'regular'} effort &middot; ${new Date(r.created_at).toLocaleString()}` +
-      (r.tags && r.tags.length ? ` &middot; ${r.tags.join(', ')}` : '');
-
-    const contentEl = document.getElementById('reportContent');
-    if (md) {
-      contentEl.innerHTML = md.render(r.content);
-    } else {
-      contentEl.innerHTML = '<pre>' + esc(r.content) + '</pre>';
-    }
-  } catch (e) {
-    alert('Error loading report: ' + e.message);
-  }
-}
-
-async function deleteCurrentReport() {
-  if (!currentReportId || !confirm('Delete this report?')) return;
-  try {
-    await api('/api/reports/' + currentReportId, { method: 'DELETE' });
-    currentReportId = null;
-    document.getElementById('reportPanel').style.display = 'none';
-    loadReports();
-  } catch (e) {
-    alert('Error: ' + e.message);
-  }
-}
-
-async function clearAllReports() {
-  if (!confirm('Delete ALL reports? This cannot be undone.')) return;
-  try {
-    await api('/api/reports', { method: 'DELETE' });
-    document.getElementById('reportPanel').style.display = 'none';
-    loadReports();
-  } catch (e) {
-    alert('Error: ' + e.message);
-  }
-}
-
-// ── Init ────────────────────────────────────────────────────────────────────
+// ── Init ──────────────────────────────────────────────────────────────────────
 
 loadModels();
-loadTasks();
-loadReports();
-setInterval(loadTasks, 30000);
-setInterval(loadReports, 60000);
+loadRightTasks();
+loadRightReports();
+setInterval(loadRightTasks, 30000);
+setInterval(loadRightReports, 60000);
