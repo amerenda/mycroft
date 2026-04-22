@@ -279,6 +279,7 @@ async def _handle_engineering_task(
     model_override: str | None = None, system_prompt_override: str | None = None,
     max_tokens: int | None = None, temperature: float | None = None,
     max_iterations: int | None = None, effort: str | None = None,
+    tools_override: list[str] | None = None,
 ) -> str:
     """Handle an engineering task from Telegram or API."""
     manifest = trigger_router.get_manifest(agent_type)
@@ -303,6 +304,8 @@ async def _handle_engineering_task(
         task_config["max_iterations_override"] = max_iterations
     if effort:
         task_config["effort"] = effort
+    if tools_override:
+        task_config["tools_override"] = tools_override
 
     # Create task
     task_id = await task_manager.create_task(
@@ -583,13 +586,15 @@ async def create_task(req: CreateTaskRequest):
                 req.instruction, req.effort)
             return {"task_id": gather_task_id}
 
-        # Light researcher: use llama3.1:8b (follows "just answer" literally)
-        # with tight iteration cap and restricted tools
+        # Light researcher: use qwen3.5:9b (reliable tool caller) with
+        # tight iteration cap and search-only tools
         max_iter = req.max_iterations
         model = req.model
+        tools_ovr = None
         if req.agent_type == "researcher" and req.effort == "light":
-            max_iter = max_iter or 3
-            model = model or "llama3.1:8b"
+            max_iter = max_iter or 2
+            model = model or "qwen3.5:9b"
+            tools_ovr = ["web_search", "wiki_read"]  # search-only, no read/write
 
         task_id = await _handle_engineering_task(
             instruction=req.instruction,
@@ -601,6 +606,7 @@ async def create_task(req: CreateTaskRequest):
             temperature=req.temperature,
             max_iterations=max_iter,
             effort=req.effort,
+            tools_override=tools_ovr,
         )
         return {"task_id": task_id}
     except ValueError as e:
