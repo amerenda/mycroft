@@ -594,7 +594,7 @@ async def create_task(req: CreateTaskRequest):
         if req.agent_type == "researcher" and req.effort == "light":
             max_iter = max_iter or 6
             model = model or "qwen3.5:9b"
-            tools_ovr = ["web_search", "wiki_read"]  # search-only, no read/write
+            tools_ovr = ["web_search", "wiki_read", "web_read"]  # search + targeted reading
 
         task_id = await _handle_engineering_task(
             instruction=req.instruction,

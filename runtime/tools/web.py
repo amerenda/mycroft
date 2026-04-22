@@ -328,9 +328,9 @@ class WikiRead:
     @property
     def description(self) -> str:
         return (
-            "Get clean text from Wikipedia. Returns the article summary by default. "
-            "Use this for factual lookups (people, places, events, counts). "
-            "Pass a topic name, not a URL."
+            "Get information from Wikipedia. Provide a prompt to extract specific "
+            "facts (e.g. 'how many films are listed'). A secondary model reads the "
+            "article and returns only the relevant answer."
         )
 
     @property
@@ -340,11 +340,15 @@ class WikiRead:
             "properties": {
                 "topic": {
                     "type": "string",
-                    "description": "The Wikipedia article topic (e.g. 'Tom Hanks', 'Python (programming language)')",
+                    "description": "The Wikipedia article topic (e.g. 'Tom Hanks', 'List of Tom Hanks performances')",
+                },
+                "prompt": {
+                    "type": "string",
+                    "description": "What to extract (e.g. 'how many films total', 'what is the population'). A secondary model answers this from the article.",
                 },
                 "full": {
                     "type": "boolean",
-                    "description": "If true, return the full article. Default: summary only.",
+                    "description": "If true, fetch the full article (more data but slower). Default: summary only.",
                 },
             },
             "required": ["topic"],
@@ -355,7 +359,11 @@ class WikiRead:
         if not topic:
             return "Error: topic is required"
 
+        prompt = args.get("prompt", "")
         full = args.get("full", False)
+        # Auto-upgrade to full when a specific prompt is given
+        if prompt and not full:
+            full = True
         t0 = time.monotonic()
         encoded = topic.replace(" ", "_")
 
@@ -372,11 +380,13 @@ class WikiRead:
                 stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=15)
                 data = _json.loads(stdout.decode())
                 pages = data.get("query", {}).get("pages", {})
-                result = f"Wikipedia article not found for: {topic}"
+                raw_content = ""
                 for page_id, page in pages.items():
                     if page.get("extract"):
-                        result = f"# {page.get('title', topic)}\n\n{page['extract']}"
+                        raw_content = f"# {page.get('title', topic)}\n\n{page['extract']}"
                         break
+                if not raw_content:
+                    return f"Wikipedia article not found for: {topic}"
             else:
                 url = f"https://en.wikipedia.org/api/rest_v1/page/summary/{encoded}"
                 proc = await asyncio.create_subprocess_exec(
@@ -390,11 +400,23 @@ class WikiRead:
                     return f"'{topic}' is a disambiguation page. Try a more specific topic."
 
                 desc = f"_{data['description']}_\n\n" if data.get("description") else ""
-                result = f"# {data.get('title', topic)}\n{desc}{data.get('extract', '')}"
+                raw_content = f"# {data.get('title', topic)}\n{desc}{data.get('extract', '')}"
 
         except Exception as e:
             log.warning("WikiRead failed for '%s': %s", topic, e)
             return f"Wikipedia article not found for: {topic}"
+
+        # Run through secondary LLM when prompt is given or content is large
+        if prompt or len(raw_content) > 3000:
+            result = await _extract_with_llm(
+                raw_content,
+                f"https://en.wikipedia.org/wiki/{encoded}",
+                prompt,
+            )
+            method = "extracted"
+        else:
+            result = raw_content
+            method = "direct"
 
         if len(result) > MAX_OUTPUT_CHARS:
             result = result[:MAX_OUTPUT_CHARS] + "\n\n... (truncated)"
