@@ -17,6 +17,7 @@ import logging
 import os
 import re
 import time
+import urllib.parse
 from typing import Any
 
 log = logging.getLogger(__name__)
@@ -162,6 +163,47 @@ async def _basic_fetch(url: str) -> str:
     return text
 
 
+# ── Search result filtering ──────────────────────────────────────────────────
+
+# Domains that consistently produce off-topic noise in research queries.
+# These appear via single-engine (usually Bing) results that don't relate
+# to the query at all — login pages, dictionary definitions, unrelated products.
+_NOISE_DOMAINS: frozenset[str] = frozenset({
+    "linkedin.com",
+    "hbomax.com",
+    "help.hbomax.com",
+    "baidu.com",
+    "zhidao.baidu.com",
+    "merriam-webster.com",
+    "dictionary.com",
+    "facebook.com",
+    "bestbuy.com",
+    "amazon.com",    # catches shopping noise; search won't surface it for tech queries anyway
+})
+
+# Minimum SearXNG score to include a result. Results below this threshold
+# are typically single-engine noise with no corroboration.
+_MIN_SCORE = float(os.environ.get("SEARXNG_MIN_SCORE", "0.3"))
+
+
+def _is_noise(result: dict) -> bool:
+    """Return True if a SearXNG result should be filtered out."""
+    url = result.get("url", "")
+    try:
+        host = urllib.parse.urlparse(url).netloc.lower().lstrip("www.")
+    except Exception:
+        return False
+
+    if any(host == d or host.endswith("." + d) for d in _NOISE_DOMAINS):
+        return True
+
+    score = result.get("score", 1.0)
+    if score < _MIN_SCORE:
+        return True
+
+    return False
+
+
 # ── WebSearch tool ───────────────────────────────────────────────────────────
 
 class WebSearch:
@@ -209,10 +251,12 @@ class WebSearch:
         max_results = int(args.get("max_results", 5))
         t0 = time.monotonic()
 
-        params = f"q={query.replace(' ', '+')}&format=json&pageno=1"
+        # Fetch more from SearXNG than needed so filtering doesn't leave us short
+        fetch_n = max(max_results * 3, 15)
+        qs = urllib.parse.urlencode({"q": query, "format": "json", "pageno": 1})
         proc = await asyncio.create_subprocess_exec(
             "curl", "-sf", "--max-time", "15",
-            f"{self.SEARXNG_URL}/search?{params}",
+            f"{self.SEARXNG_URL}/search?{qs}",
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -231,18 +275,30 @@ class WebSearch:
         except _json.JSONDecodeError:
             return f"Search returned invalid response for: {query}"
 
+        raw = data.get("results", [])
+        filtered = [r for r in raw if not _is_noise(r)]
+        dropped = len(raw) - len(filtered)
+        if dropped:
+            log.info("WebSearch: filtered %d noise results for: %s", dropped, query)
+
         results = []
-        for r in data.get("results", [])[:max_results]:
+        seen_urls: set[str] = set()
+        for r in filtered:
+            if len(results) >= max_results:
+                break
             title = r.get("title", "")
             url = r.get("url", "")
-            snippet = r.get("content", "")[:300]
-            if title and url:
-                results.append(f"- **{title}**\n  {url}\n  {snippet}")
+            if not title or not url or url in seen_urls:
+                continue
+            seen_urls.add(url)
+            snippet = r.get("content", "")[:400]
+            date = r.get("publishedDate", "")
+            date_str = f" [{date[:10]}]" if date else ""
+            results.append(f"- **{title}**{date_str}\n  {url}\n  {snippet}")
 
         elapsed = time.monotonic() - t0
-        total = data.get("number_of_results", len(results))
-        log.info("WebSearch: '%s' → %d results (of %s) in %.1fs",
-                 query, len(results), total, elapsed)
+        log.info("WebSearch: '%s' → %d results (dropped %d noise) in %.1fs",
+                 query, len(results), dropped, elapsed)
 
         if not results:
             return f"No results found for: {query}"
