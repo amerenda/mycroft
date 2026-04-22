@@ -558,10 +558,225 @@ async function loadModels() {
   }
 }
 
+// ── Agents editor ──────────────────────────────────────────────────────────────
+
+const AGENT_MANIFEST_TEMPLATE = `name: my-agent
+role: "Describe what this agent does"
+goal: "What outcome this agent produces"
+model: qwen3:14b
+backend: k8s
+max_concurrent: 2
+max_iterations: 10
+tools:
+  - web
+`;
+
+const AGENT_PROMPTS_TEMPLATE = `"""System prompt supplement for my-agent."""
+
+SYSTEM_SUPPLEMENT = """
+# Identity
+
+You are a ...
+
+# Protocol
+
+1. ...
+
+# Rules
+
+- ...
+"""
+`;
+
+let _currentAgent = null;
+
+async function loadAgents() {
+  try {
+    const agents = await api('/api/agents');
+    const el = document.getElementById('agentList');
+    if (!agents.length) {
+      el.innerHTML = '<p class="empty" style="padding:12px">No agents yet</p>';
+      return;
+    }
+    el.innerHTML = agents.map(a => `
+      <div class="editor-list-item${_currentAgent === a.name ? ' active' : ''}"
+           onclick="selectAgent('${a.name}')">
+        <span>${a.name}</span>
+      </div>`).join('');
+  } catch (e) {
+    document.getElementById('agentList').innerHTML =
+      '<p class="empty" style="padding:12px">Error loading agents</p>';
+  }
+}
+
+async function selectAgent(name) {
+  try {
+    const a = await api('/api/agents/' + name);
+    _currentAgent = name;
+    document.getElementById('agentName').value = name;
+    document.getElementById('agentManifest').value = a.manifest;
+    document.getElementById('agentPrompts').value = a.prompts;
+    document.getElementById('agentEditor').style.display = '';
+    document.getElementById('agentEmpty').style.display = 'none';
+    loadAgents(); // refresh active state
+  } catch (e) {
+    alert('Error loading agent: ' + e.message);
+  }
+}
+
+function newAgent() {
+  _currentAgent = null;
+  document.getElementById('agentName').value = '';
+  document.getElementById('agentManifest').value = AGENT_MANIFEST_TEMPLATE;
+  document.getElementById('agentPrompts').value = AGENT_PROMPTS_TEMPLATE;
+  document.getElementById('agentEditor').style.display = '';
+  document.getElementById('agentEmpty').style.display = 'none';
+  document.getElementById('agentName').focus();
+  loadAgents();
+}
+
+async function saveAgent() {
+  const name = document.getElementById('agentName').value.trim();
+  if (!name) { alert('Agent name is required'); return; }
+  const manifest = document.getElementById('agentManifest').value;
+  const prompts = document.getElementById('agentPrompts').value;
+
+  try {
+    await api('/api/agents/' + name, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manifest, prompts }),
+    });
+    _currentAgent = name;
+    loadAgents();
+  } catch (e) {
+    alert('Save failed: ' + e.message);
+  }
+}
+
+async function deleteAgent() {
+  if (!_currentAgent) return;
+  if (!confirm(`Delete agent "${_currentAgent}"? This removes the directory from disk.`)) return;
+  try {
+    await api('/api/agents/' + _currentAgent, { method: 'DELETE' });
+    _currentAgent = null;
+    document.getElementById('agentEditor').style.display = 'none';
+    document.getElementById('agentEmpty').style.display = '';
+    loadAgents();
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+// ── Workflows editor ───────────────────────────────────────────────────────────
+
+const WORKFLOW_TEMPLATE = `name: my-workflow
+display_name: "My Workflow"
+description: "What this workflow does"
+
+steps:
+  - id: step1
+    agent: researcher
+    role: gather
+    max_iterations: 5
+    tools:
+      - web_search
+      - web_read
+
+  - id: step2
+    agent: researcher
+    role: write
+    max_iterations: 3
+    tools:
+      - write_file
+      - read_file
+    depends_on:
+      - step1
+`;
+
+let _currentWorkflow = null;
+
+async function loadWorkflows() {
+  try {
+    const workflows = await api('/api/workflows');
+    const el = document.getElementById('workflowList');
+    if (!workflows.length) {
+      el.innerHTML = '<p class="empty" style="padding:12px">No workflows yet</p>';
+      return;
+    }
+    el.innerHTML = workflows.map(w => `
+      <div class="editor-list-item${_currentWorkflow === w.name ? ' active' : ''}"
+           onclick="selectWorkflow('${w.name}')">
+        <span>${w.name}</span>
+      </div>`).join('');
+  } catch (e) {
+    document.getElementById('workflowList').innerHTML =
+      '<p class="empty" style="padding:12px">Error loading workflows</p>';
+  }
+}
+
+async function selectWorkflow(name) {
+  try {
+    const w = await api('/api/workflows/' + name);
+    _currentWorkflow = name;
+    document.getElementById('workflowName').value = name;
+    document.getElementById('workflowContent').value = w.content;
+    document.getElementById('workflowEditor').style.display = '';
+    document.getElementById('workflowEmpty').style.display = 'none';
+    loadWorkflows();
+  } catch (e) {
+    alert('Error loading workflow: ' + e.message);
+  }
+}
+
+function newWorkflow() {
+  _currentWorkflow = null;
+  document.getElementById('workflowName').value = '';
+  document.getElementById('workflowContent').value = WORKFLOW_TEMPLATE;
+  document.getElementById('workflowEditor').style.display = '';
+  document.getElementById('workflowEmpty').style.display = 'none';
+  document.getElementById('workflowName').focus();
+  loadWorkflows();
+}
+
+async function saveWorkflow() {
+  const name = document.getElementById('workflowName').value.trim();
+  if (!name) { alert('Workflow name is required'); return; }
+  const content = document.getElementById('workflowContent').value;
+
+  try {
+    await api('/api/workflows/' + name, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content }),
+    });
+    _currentWorkflow = name;
+    loadWorkflows();
+  } catch (e) {
+    alert('Save failed: ' + e.message);
+  }
+}
+
+async function deleteWorkflow() {
+  if (!_currentWorkflow) return;
+  if (!confirm(`Delete workflow "${_currentWorkflow}"?`)) return;
+  try {
+    await api('/api/workflows/' + _currentWorkflow, { method: 'DELETE' });
+    _currentWorkflow = null;
+    document.getElementById('workflowEditor').style.display = 'none';
+    document.getElementById('workflowEmpty').style.display = '';
+    loadWorkflows();
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 loadModels();
 loadRightTasks();
 loadRightReports();
+loadAgents();
+loadWorkflows();
 setInterval(loadRightTasks, 30000);
 setInterval(loadRightReports, 60000);

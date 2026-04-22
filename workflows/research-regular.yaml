@@ -1,0 +1,23 @@
+name: research-regular
+display_name: "Research — Regular"
+description: "Two-phase pipeline: Gather searches and reads sources; Write distills findings into a report."
+
+steps:
+  - id: gather
+    agent: researcher
+    role: gather
+    max_iterations: 5
+    tools:
+      - web_search
+      - web_read
+      - wiki_read
+
+  - id: write
+    agent: researcher
+    role: write
+    max_iterations: 3
+    tools:
+      - write_file
+      - read_file
+    depends_on:
+      - gather

@@ -12,6 +12,8 @@
   <h1>Mycroft Agent Studio</h1>
   <nav>
     <button class="tab active" data-tab="runner">Test Runner</button>
+    <button class="tab" data-tab="agents">Agents</button>
+    <button class="tab" data-tab="workflows">Workflows</button>
   </nav>
 </header>
 
@@ -215,6 +217,83 @@
 
     </div>
   </section>
+  <!-- AGENTS TAB -->
+  <section id="tab-agents" class="tab-content">
+    <div class="editor-split">
+
+      <!-- Left: agent list -->
+      <div class="editor-list-panel">
+        <div class="editor-list-header">
+          <span>Agents</span>
+          <button class="btn-tool-ctrl" onclick="newAgent()">+ New</button>
+        </div>
+        <div id="agentList" class="editor-list"></div>
+      </div>
+
+      <!-- Right: editor -->
+      <div class="editor-pane" id="agentEditor" style="display:none">
+        <div class="editor-pane-header">
+          <input id="agentName" class="editor-name-input" type="text" placeholder="agent-name">
+          <div class="editor-pane-actions">
+            <button class="btn-primary" onclick="saveAgent()">Save</button>
+            <button class="btn-danger" onclick="deleteAgent()">Delete</button>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <div class="editor-file-label">manifest.yaml</div>
+          <textarea id="agentManifest" class="editor-textarea" rows="18" spellcheck="false"></textarea>
+        </div>
+
+        <div class="editor-section">
+          <div class="editor-file-label">prompts.py</div>
+          <textarea id="agentPrompts" class="editor-textarea" rows="14" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <div class="editor-empty" id="agentEmpty">
+        <p>Select an agent to edit, or create a new one.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- WORKFLOWS TAB -->
+  <section id="tab-workflows" class="tab-content">
+    <div class="editor-split">
+
+      <!-- Left: workflow list -->
+      <div class="editor-list-panel">
+        <div class="editor-list-header">
+          <span>Workflows</span>
+          <button class="btn-tool-ctrl" onclick="newWorkflow()">+ New</button>
+        </div>
+        <div id="workflowList" class="editor-list"></div>
+      </div>
+
+      <!-- Right: editor -->
+      <div class="editor-pane" id="workflowEditor" style="display:none">
+        <div class="editor-pane-header">
+          <input id="workflowName" class="editor-name-input" type="text" placeholder="workflow-name">
+          <div class="editor-pane-actions">
+            <button class="btn-primary" onclick="saveWorkflow()">Save</button>
+            <button class="btn-danger" onclick="deleteWorkflow()">Delete</button>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <div class="editor-file-label">workflow.yaml <span class="editor-file-hint">name · display_name · description · steps[]</span></div>
+          <textarea id="workflowContent" class="editor-textarea" rows="36" spellcheck="false"></textarea>
+        </div>
+      </div>
+
+      <div class="editor-empty" id="workflowEmpty">
+        <p>Select a workflow to edit, or create a new one.</p>
+      </div>
+
+    </div>
+  </section>
+
 </main>
 
 <script src="app.js"></script>

@@ -1,0 +1,34 @@
+name: research-deep
+display_name: "Research — Deep"
+description: "Three-phase pipeline: Gather broad coverage; Gather more via adversarial review; Write final report."
+
+steps:
+  - id: gather
+    agent: researcher
+    role: gather
+    max_iterations: 8
+    tools:
+      - web_search
+      - web_read
+      - wiki_read
+
+  - id: review
+    agent: researcher
+    role: gather
+    max_iterations: 4
+    tools:
+      - web_search
+      - web_read
+    depends_on:
+      - gather
+
+  - id: write
+    agent: researcher
+    role: write
+    max_iterations: 4
+    tools:
+      - write_file
+      - read_file
+    depends_on:
+      - gather
+      - review

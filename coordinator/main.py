@@ -907,6 +907,121 @@ async def list_models():
 
 
 # ---------------------------------------------------------------------------
+# Agent + Workflow file editors
+# ---------------------------------------------------------------------------
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_AGENTS_DIR = _REPO_ROOT / "agents"
+_WORKFLOWS_DIR = _REPO_ROOT / "workflows"
+
+_NAME_RE = __import__("re").compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
+
+
+def _safe_name(name: str) -> str:
+    if not _NAME_RE.match(name):
+        raise HTTPException(400, "Invalid name — use lowercase letters, digits, hyphens, underscores")
+    return name
+
+
+class AgentPayload(BaseModel):
+    manifest: str
+    prompts: str = ""
+
+
+class WorkflowPayload(BaseModel):
+    content: str
+
+
+@app.get("/api/agents")
+async def list_agents():
+    agents = []
+    for d in sorted(_AGENTS_DIR.iterdir()):
+        if not d.is_dir() or d.name.startswith("_"):
+            continue
+        manifest_path = d / "manifest.yaml"
+        prompts_path = d / "prompts.py"
+        agents.append({
+            "name": d.name,
+            "manifest": manifest_path.read_text() if manifest_path.exists() else "",
+            "prompts": prompts_path.read_text() if prompts_path.exists() else "",
+        })
+    return agents
+
+
+@app.get("/api/agents/{name}")
+async def get_agent(name: str):
+    _safe_name(name)
+    d = _AGENTS_DIR / name
+    if not d.is_dir():
+        raise HTTPException(404, f"Agent '{name}' not found")
+    manifest_path = d / "manifest.yaml"
+    prompts_path = d / "prompts.py"
+    return {
+        "name": name,
+        "manifest": manifest_path.read_text() if manifest_path.exists() else "",
+        "prompts": prompts_path.read_text() if prompts_path.exists() else "",
+    }
+
+
+@app.put("/api/agents/{name}")
+async def save_agent(name: str, payload: AgentPayload):
+    _safe_name(name)
+    d = _AGENTS_DIR / name
+    d.mkdir(parents=True, exist_ok=True)
+    (d / "manifest.yaml").write_text(payload.manifest)
+    if payload.prompts:
+        (d / "prompts.py").write_text(payload.prompts)
+    return {"status": "saved", "name": name}
+
+
+@app.delete("/api/agents/{name}")
+async def delete_agent(name: str):
+    _safe_name(name)
+    d = _AGENTS_DIR / name
+    if not d.is_dir():
+        raise HTTPException(404, f"Agent '{name}' not found")
+    import shutil
+    shutil.rmtree(d)
+    return {"status": "deleted", "name": name}
+
+
+@app.get("/api/workflows")
+async def list_workflows():
+    _WORKFLOWS_DIR.mkdir(exist_ok=True)
+    workflows = []
+    for f in sorted(_WORKFLOWS_DIR.glob("*.yaml")):
+        workflows.append({"name": f.stem, "content": f.read_text()})
+    return workflows
+
+
+@app.get("/api/workflows/{name}")
+async def get_workflow(name: str):
+    _safe_name(name)
+    f = _WORKFLOWS_DIR / f"{name}.yaml"
+    if not f.exists():
+        raise HTTPException(404, f"Workflow '{name}' not found")
+    return {"name": name, "content": f.read_text()}
+
+
+@app.put("/api/workflows/{name}")
+async def save_workflow(name: str, payload: WorkflowPayload):
+    _safe_name(name)
+    _WORKFLOWS_DIR.mkdir(exist_ok=True)
+    (_WORKFLOWS_DIR / f"{name}.yaml").write_text(payload.content)
+    return {"status": "saved", "name": name}
+
+
+@app.delete("/api/workflows/{name}")
+async def delete_workflow(name: str):
+    _safe_name(name)
+    f = _WORKFLOWS_DIR / f"{name}.yaml"
+    if not f.exists():
+        raise HTTPException(404, f"Workflow '{name}' not found")
+    f.unlink()
+    return {"status": "deleted", "name": name}
+
+
+# ---------------------------------------------------------------------------
 # Debug UI
 # ---------------------------------------------------------------------------
 
