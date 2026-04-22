@@ -583,17 +583,19 @@ async def create_task(req: CreateTaskRequest):
                 req.instruction, req.effort)
             return {"task_id": gather_task_id}
 
-        # Map effort to max_iterations for light researcher or other agents
+        # Light researcher: use llama3.1:8b (follows "just answer" literally)
+        # with tight iteration cap and restricted tools
         max_iter = req.max_iterations
-        if max_iter is None and req.effort and req.agent_type == "researcher":
-            effort_map = {"light": 5, "regular": 15, "deep": 25}
-            max_iter = effort_map.get(req.effort, 15)
+        model = req.model
+        if req.agent_type == "researcher" and req.effort == "light":
+            max_iter = max_iter or 3
+            model = model or "llama3.1:8b"
 
         task_id = await _handle_engineering_task(
             instruction=req.instruction,
             agent_type=req.agent_type,
             repo=req.repo,
-            model_override=req.model,
+            model_override=model,
             system_prompt_override=req.system_prompt,
             max_tokens=req.max_tokens,
             temperature=req.temperature,
