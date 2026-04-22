@@ -23,6 +23,7 @@
     <div class="split">
       <div class="panel left">
         <h2>Configure Run</h2>
+
         <div class="form-row">
           <div class="form-group">
             <label>Runner</label>
@@ -32,56 +33,154 @@
             </select>
           </div>
           <div class="form-group">
-            <label>Model</label>
-            <select id="model"><option value="">Default (qwen3:14b)</option></select>
+            <label>
+              Model
+              <span class="tip" data-tip="The primary LLM for this task. 'loaded' means it's warm in VRAM — first call is faster. For the research pipeline, this sets the Gather model unless overridden below.">?</span>
+            </label>
+            <select id="model"><option value="">Default</option></select>
           </div>
         </div>
+
         <div class="form-row">
           <div class="form-group">
             <label>Repo</label>
             <input id="repo" type="text" placeholder="amerenda/mycroft" value="amerenda/mycroft">
           </div>
           <div class="form-group" id="agentTypeGroup">
-            <label>Agent Type</label>
+            <label>
+              Agent Type
+              <span class="tip" data-tip="researcher: web research → report. coder: writes/edits code + PRs. extractor: reads specific URLs and pulls out targeted facts.">?</span>
+            </label>
             <select id="agentType" onchange="onAgentTypeChange()">
-              <option value="coder">coder</option>
               <option value="researcher">researcher</option>
+              <option value="coder">coder</option>
+              <option value="extractor">extractor</option>
             </select>
           </div>
           <div class="form-group" id="effortGroup" style="display:none">
-            <label>Effort</label>
-            <select id="effort">
-              <option value="light">Light (quick lookup, no report)</option>
-              <option value="regular" selected>Regular (verified + adversarial check)</option>
-              <option value="deep">Deep (comprehensive + adversarial challenge)</option>
+            <label>
+              Effort
+              <span class="tip" data-tip="light: 1 search → quick Telegram reply, no report. regular: gather→write pipeline, multi-source report. deep: like regular but more searches, adversarial review pass.">?</span>
+            </label>
+            <select id="effort" onchange="onEffortChange()">
+              <option value="light">Light — quick lookup</option>
+              <option value="regular" selected>Regular — gather + write</option>
+              <option value="deep">Deep — comprehensive</option>
             </select>
           </div>
         </div>
+
         <div class="form-group">
           <label>Instruction</label>
-          <textarea id="instruction" rows="3" placeholder="e.g. In calculator.py, add a multiply function and write tests for it"></textarea>
+          <textarea id="instruction" rows="3" placeholder="e.g. How does Cilium replace kube-proxy?"></textarea>
         </div>
+
         <details>
           <summary>Advanced Options</summary>
-          <div class="form-row" style="margin-top:8px">
+
+          <!-- Iterations / tokens / temperature -->
+          <div class="form-row" style="margin-top:10px">
             <div class="form-group">
-              <label>Max Tokens</label>
+              <label>
+                Max Tokens
+                <span class="tip" data-tip="Token budget per LLM call. Thinking models (qwen3.5) need 4096+. For light tier, try 1024 to prevent runaway thinking. Coder: 4096 is safe.">?</span>
+              </label>
               <input id="maxTokens" type="number" value="4096" min="256" max="32768">
             </div>
             <div class="form-group">
-              <label>Temperature</label>
+              <label>
+                Temperature
+                <span class="tip" data-tip="Sampling randomness. 0 = deterministic (best for code/facts). 0.7 = more creative. Leave blank for model default (~0.7). Researcher tasks usually benefit from 0–0.3.">?</span>
+              </label>
               <input id="temperature" type="number" value="" step="0.1" min="0" max="2" placeholder="Default">
             </div>
             <div class="form-group">
-              <label>Max Iterations</label>
+              <label>
+                Max Iterations
+                <span class="tip" data-tip="Max number of tool-call rounds the agent gets. Light default: 6. Regular gather: 5. Regular write: 3. Higher = more thorough but slower. Exits early when done.">?</span>
+              </label>
               <input id="maxIterations" type="number" value="" min="1" max="50" placeholder="Default">
             </div>
           </div>
-          <div class="form-group">
-            <label>System Prompt Override</label>
-            <textarea id="systemPrompt" rows="8" placeholder="Leave empty for default from agent manifest."></textarea>
+
+          <!-- Pipeline model chain (researcher regular/deep only) -->
+          <div class="adv-section" id="modelChain" style="display:none">
+            <div class="adv-section-label">
+              Pipeline Models
+              <span class="tip" data-tip="The regular/deep pipeline runs two agents in sequence: Gather searches the web and collects findings; Write turns those findings into a report. You can assign different models to each phase.">?</span>
+            </div>
+            <div class="form-row">
+              <div class="form-group">
+                <label>
+                  Gather model
+                  <span class="tip" data-tip="Model for Phase 1 (search + read). Default: qwen3.5:9b — good at tool calling and deep reading. Try qwen3.6:27b for bigger context. The primary Model dropdown also sets this if Gather model is blank.">?</span>
+                </label>
+                <select id="gatherModel"><option value="">Default (qwen3.5:9b)</option></select>
+              </div>
+              <div class="form-group">
+                <label>
+                  Write model
+                  <span class="tip" data-tip="Model for Phase 2 (write report from findings). Default: llama3.1:8b — follows format instructions well and writes clearly. Try qwen3:14b if you want better prose quality.">?</span>
+                </label>
+                <select id="writeModel"><option value="">Default (llama3.1:8b)</option></select>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tool allowlist -->
+          <div class="adv-section">
+            <div class="adv-section-label">
+              Tool Allowlist
+              <span class="tip" data-tip="Override which tools the agent can call. Useful for sandboxing experiments — e.g. giving a researcher only web_search (no web_read) to test snippet-only answers. Leave off to use agent defaults.">?</span>
+            </div>
+            <label class="override-toggle">
+              <input type="checkbox" id="toolOverrideEnabled" onchange="toggleToolOverride()">
+              Override tool allowlist
+            </label>
+            <div id="toolOverridePanel" style="display:none; margin-top:8px">
+              <div class="tool-grid" id="toolGrid">
+                <span class="tool-group-label">Web</span>
+                <label><input type="checkbox" class="tool-cb" value="web_search" checked> web_search</label>
+                <label><input type="checkbox" class="tool-cb" value="web_read" checked> web_read</label>
+                <label><input type="checkbox" class="tool-cb" value="wiki_read" checked> wiki_read</label>
+
+                <span class="tool-group-label">Files</span>
+                <label><input type="checkbox" class="tool-cb" value="read_file" checked> read_file</label>
+                <label><input type="checkbox" class="tool-cb" value="write_file" checked> write_file</label>
+                <label><input type="checkbox" class="tool-cb" value="patch_file" checked> patch_file</label>
+                <label><input type="checkbox" class="tool-cb" value="search_files" checked> search_files</label>
+                <label><input type="checkbox" class="tool-cb" value="list_files" checked> list_files</label>
+
+                <span class="tool-group-label">Shell</span>
+                <label><input type="checkbox" class="tool-cb" value="run_command" checked> run_command</label>
+
+                <span class="tool-group-label">Git</span>
+                <label><input type="checkbox" class="tool-cb" value="git_clone" checked> git_clone</label>
+                <label><input type="checkbox" class="tool-cb" value="git_checkout_branch" checked> git_checkout_branch</label>
+                <label><input type="checkbox" class="tool-cb" value="git_add" checked> git_add</label>
+                <label><input type="checkbox" class="tool-cb" value="git_commit" checked> git_commit</label>
+                <label><input type="checkbox" class="tool-cb" value="git_push" checked> git_push</label>
+                <label><input type="checkbox" class="tool-cb" value="git_diff" checked> git_diff</label>
+
+                <span class="tool-group-label">GitHub</span>
+                <label><input type="checkbox" class="tool-cb" value="gh_create_pr" checked> gh_create_pr</label>
+                <label><input type="checkbox" class="tool-cb" value="gh_comment" checked> gh_comment</label>
+              </div>
+            </div>
+          </div>
+
+          <!-- System prompt override -->
+          <div class="adv-section">
+            <div class="form-group" style="margin-bottom:0">
+              <label>
+                System Prompt Override
+                <span class="tip" data-tip="Completely replaces the agent's default system prompt (including effort-level instructions). Use Preview Prompt to see the default first. Useful for experimenting with different prompting strategies.">?</span>
+              </label>
+              <textarea id="systemPrompt" rows="8" placeholder="Leave empty for agent defaults."></textarea>
+            </div>
           </div>
         </details>
+
         <div class="actions">
           <button class="btn-primary" id="runBtn" onclick="runTask()">Run Task</button>
           <button class="btn-secondary" onclick="previewPrompt()" id="previewBtn">Preview Prompt</button>

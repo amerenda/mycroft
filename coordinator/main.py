@@ -169,23 +169,28 @@ app = FastAPI(title="Mycroft Coordinator", lifespan=lifespan)
 # Research pipeline (background)
 # ---------------------------------------------------------------------------
 
-async def _start_research_pipeline(instruction: str, effort: str) -> str:
-    """Start the two-phase research pipeline. Returns the gather task ID.
-    The pipeline runs in the background — gather completes, then writer launches.
-    """
-    from coordinator.research_pipeline import run_research_pipeline, PHASE_CONFIG
+async def _start_research_pipeline(
+    instruction: str,
+    effort: str,
+    gather_model: str | None = None,
+    write_model: str | None = None,
+    gather_tools: list[str] | None = None,
+) -> str:
+    """Start the two-phase gather→write pipeline. Returns the gather task ID."""
+    from coordinator.research_pipeline import PHASE_CONFIG, GATHERER_PROMPT
 
     phase_config = PHASE_CONFIG.get(effort, PHASE_CONFIG["regular"])
     gather_cfg = phase_config["gather"]
 
-    # Create gather task
+    resolved_gather_model = gather_model or gather_cfg["model"]
+    resolved_gather_tools = gather_tools or gather_cfg["tools"]
+
     gather_config = {
         "instruction": instruction,
-        "model_override": gather_cfg["model"],
+        "model_override": resolved_gather_model,
         "max_iterations_override": gather_cfg["max_iterations"],
-        "tools_override": gather_cfg["tools"],
-        "system_prompt_override": run_research_pipeline.__module__
-            and __import__("coordinator.research_pipeline", fromlist=["GATHERER_PROMPT"]).GATHERER_PROMPT,
+        "tools_override": resolved_gather_tools,
+        "system_prompt_override": GATHERER_PROMPT,
         "phase": "gather",
         "effort": effort,
     }
@@ -200,24 +205,30 @@ async def _start_research_pipeline(instruction: str, effort: str) -> str:
     tasks_created_total.labels(agent_type="researcher", trigger="pipeline").inc()
     tasks_active.labels(agent_type="researcher").inc()
 
-    # Submit gather to Argo
     await argo.submit(
         agent_type="researcher",
         task_id=gather_task_id,
-        params={"instruction": instruction, "model_override": gather_cfg["model"]},
+        params={"instruction": instruction, "model_override": resolved_gather_model},
         on_update=_on_workflow_update,
     )
 
-    log.info("Research pipeline started: gather=%s effort=%s", gather_task_id[:8], effort)
+    log.info("Research pipeline started: gather=%s model=%s effort=%s",
+             gather_task_id[:8], resolved_gather_model, effort)
 
-    # Launch background task to wait for gather, then start writer
-    asyncio.create_task(_pipeline_writer_phase(gather_task_id, instruction, effort))
+    asyncio.create_task(
+        _pipeline_writer_phase(gather_task_id, instruction, effort, write_model=write_model)
+    )
 
     return gather_task_id
 
 
-async def _pipeline_writer_phase(gather_task_id: str, instruction: str, effort: str):
-    """Background: wait for gatherer, then launch writer with findings."""
+async def _pipeline_writer_phase(
+    gather_task_id: str,
+    instruction: str,
+    effort: str,
+    write_model: str | None = None,
+):
+    """Background: wait for gatherer to finish, then launch the writer."""
     from coordinator.research_pipeline import PHASE_CONFIG, WRITER_PROMPT, _wait_for_task
 
     try:
@@ -232,6 +243,8 @@ async def _pipeline_writer_phase(gather_task_id: str, instruction: str, effort: 
         phase_config = PHASE_CONFIG.get(effort, PHASE_CONFIG["regular"])
         write_cfg = phase_config["write"]
 
+        resolved_write_model = write_model or write_cfg["model"]
+
         writer_instruction = (
             f"Write a research report based on these findings.\n\n"
             f"Original question: {instruction}\n\n"
@@ -240,7 +253,7 @@ async def _pipeline_writer_phase(gather_task_id: str, instruction: str, effort: 
 
         write_config = {
             "instruction": writer_instruction,
-            "model_override": write_cfg["model"],
+            "model_override": resolved_write_model,
             "max_iterations_override": write_cfg["max_iterations"],
             "tools_override": write_cfg["tools"],
             "system_prompt_override": WRITER_PROMPT,
@@ -260,11 +273,12 @@ async def _pipeline_writer_phase(gather_task_id: str, instruction: str, effort: 
         await argo.submit(
             agent_type="researcher",
             task_id=write_task_id,
-            params={"instruction": writer_instruction, "model_override": write_cfg["model"]},
+            params={"instruction": writer_instruction, "model_override": resolved_write_model},
             on_update=_on_workflow_update,
         )
 
-        log.info("Pipeline writer launched: %s (parent=%s)", write_task_id[:8], gather_task_id[:8])
+        log.info("Pipeline writer launched: %s model=%s (parent=%s)",
+                 write_task_id[:8], resolved_write_model, gather_task_id[:8])
 
     except Exception as e:
         log.exception("Pipeline writer phase failed for gather=%s", gather_task_id[:8])
@@ -570,7 +584,10 @@ class CreateTaskRequest(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     max_iterations: int | None = None
-    effort: str | None = None  # light, regular, deep — for researcher
+    effort: str | None = None       # light, regular, deep — for researcher
+    tools_override: list[str] | None = None   # explicit tool allowlist
+    gather_model: str | None = None           # gather phase model (regular/deep pipeline)
+    write_model: str | None = None            # write phase model (regular/deep pipeline)
 
 
 @app.post("/api/tasks")
@@ -578,23 +595,24 @@ async def create_task(req: CreateTaskRequest):
     try:
         # Research pipeline: regular/deep tiers use two-phase gather→write
         if req.agent_type == "researcher" and req.effort in ("regular", "deep"):
-            from coordinator.research_pipeline import run_research_pipeline
-            # Run pipeline in background — returns the gather task ID immediately
-            # The pipeline will create the writer task when gather completes
-            import asyncio as _asyncio
             gather_task_id = await _start_research_pipeline(
-                req.instruction, req.effort)
+                req.instruction,
+                req.effort,
+                gather_model=req.gather_model or req.model,
+                write_model=req.write_model,
+                gather_tools=req.tools_override or None,
+            )
             return {"task_id": gather_task_id}
 
-        # Light researcher: use qwen3.5:9b (reliable tool caller) with
-        # tight iteration cap and search-only tools
+        # Light researcher: defaults that can be overridden per-request
         max_iter = req.max_iterations
         model = req.model
-        tools_ovr = None
+        tools_ovr = req.tools_override
         if req.agent_type == "researcher" and req.effort == "light":
             max_iter = max_iter or 6
             model = model or "qwen3.5:9b"
-            tools_ovr = ["web_search", "wiki_read", "web_read"]  # search + targeted reading
+            if not tools_ovr:
+                tools_ovr = ["web_search", "wiki_read", "web_read"]
 
         task_id = await _handle_engineering_task(
             instruction=req.instruction,

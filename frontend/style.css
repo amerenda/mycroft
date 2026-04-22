@@ -281,3 +281,117 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
 .effort-light { background: #21262d; color: #8b949e; }
 .effort-regular { background: #1f6feb33; color: #58a6ff; }
 .effort-deep { background: #23863633; color: #3fb950; }
+
+/* Tooltips */
+.tip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  height: 14px;
+  background: #30363d;
+  border-radius: 50%;
+  font-size: 0.68em;
+  font-weight: 700;
+  cursor: help;
+  color: #8b949e;
+  position: relative;
+  vertical-align: middle;
+  margin-left: 4px;
+  flex-shrink: 0;
+}
+.tip::after {
+  content: attr(data-tip);
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #c9d1d9;
+  padding: 8px 10px;
+  border-radius: 6px;
+  font-size: 0.82em;
+  font-weight: 400;
+  white-space: normal;
+  width: 240px;
+  z-index: 200;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.15s;
+  line-height: 1.4;
+}
+.tip:hover::after { opacity: 1; }
+
+/* Advanced Options sections */
+.adv-section {
+  border-top: 1px solid #21262d;
+  margin-top: 12px;
+  padding-top: 12px;
+}
+.adv-section-label {
+  font-size: 0.78em;
+  color: #8b949e;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Tool allowlist grid */
+.tool-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 4px 12px;
+  margin-top: 8px;
+  padding: 10px;
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+}
+.tool-grid label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.82em;
+  color: #c9d1d9;
+  cursor: pointer;
+  margin: 0;
+  padding: 2px 0;
+}
+.tool-grid input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  accent-color: #58a6ff;
+  cursor: pointer;
+}
+.tool-group-label {
+  font-size: 0.72em;
+  color: #484f58;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  padding: 6px 0 2px;
+  grid-column: 1 / -1;
+  border-top: 1px solid #21262d;
+  margin-top: 4px;
+}
+.tool-group-label:first-child { border-top: none; margin-top: 0; padding-top: 0; }
+
+/* Override toggle */
+.override-toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.85em;
+  color: #c9d1d9;
+  cursor: pointer;
+  margin-bottom: 0;
+}
+.override-toggle input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+  accent-color: #58a6ff;
+}

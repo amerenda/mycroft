@@ -1,0 +1,19 @@
+name: extractor
+role: "Web content extractor"
+goal: "Fetch one or more URLs and extract specific information to answer a focused question"
+model: qwen3:14b
+backend: k8s
+max_concurrent: 4
+max_iterations: 4
+resources:
+  memory: 256Mi
+  cpu: "500m"
+  scratch: 512Mi
+tools:
+  - web
+permissions:
+  read:
+    - /tasks
+  write:
+    - /tasks
+triggers: []

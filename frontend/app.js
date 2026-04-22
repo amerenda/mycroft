@@ -222,9 +222,19 @@ async function runMycroft(instruction) {
   const maxTokens = document.getElementById('maxTokens').value;
   const temperature = document.getElementById('temperature').value;
   const maxIterations = document.getElementById('maxIterations').value;
-
   const agentType = document.getElementById('agentType').value;
   const effort = document.getElementById('effort').value;
+
+  // Pipeline model overrides (researcher regular/deep)
+  const gatherModel = document.getElementById('gatherModel').value;
+  const writeModel = document.getElementById('writeModel').value;
+
+  // Tool allowlist override
+  let toolsOverride = null;
+  if (document.getElementById('toolOverrideEnabled').checked) {
+    const checked = [...document.querySelectorAll('.tool-cb:checked')].map(cb => cb.value);
+    if (checked.length > 0) toolsOverride = checked;
+  }
 
   const body = {
     agent_type: agentType,
@@ -233,10 +243,13 @@ async function runMycroft(instruction) {
     model: model || null,
     system_prompt: systemPrompt || null,
   };
-  if (agentType === 'researcher') body.effort = effort;
+  if (agentType === 'researcher' || agentType === 'extractor') body.effort = effort || null;
   if (maxTokens) body.max_tokens = parseInt(maxTokens);
   if (temperature) body.temperature = parseFloat(temperature);
   if (maxIterations) body.max_iterations = parseInt(maxIterations);
+  if (gatherModel) body.gather_model = gatherModel;
+  if (writeModel) body.write_model = writeModel;
+  if (toolsOverride) body.tools_override = toolsOverride;
 
   const r = await api('/api/tasks', {
     method: 'POST',
@@ -459,12 +472,14 @@ async function clearAllTasks() {
 async function loadModels() {
   try {
     const models = await api('/api/models');
-    const el = document.getElementById('model');
-    const list = Array.isArray(models) ? models : (models.data || []);
-    list
+    const list = (Array.isArray(models) ? models : (models.data || []))
       .filter(m => m.downloaded !== false)
-      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''))
-      .forEach(m => {
+      .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
+
+    const selects = ['model', 'gatherModel', 'writeModel'];
+    selects.forEach(selId => {
+      const el = document.getElementById(selId);
+      list.forEach(m => {
         const opt = document.createElement('option');
         const name = m.name || m.id || '';
         opt.value = name;
@@ -474,17 +489,36 @@ async function loadModels() {
         opt.textContent = name + (tags.length ? ' (' + tags.join(', ') + ')' : '');
         el.appendChild(opt);
       });
+    });
   } catch (e) {
     console.warn('Failed to load models:', e);
   }
 }
 
-// ── Agent type change handler ───────────────────────────────────────────────
+// ── Agent type + effort change handlers ────────────────────────────────────
 
 function onAgentTypeChange() {
   const agent = document.getElementById('agentType').value;
   const effortGroup = document.getElementById('effortGroup');
-  effortGroup.style.display = agent === 'researcher' ? '' : 'none';
+  effortGroup.style.display = (agent === 'researcher') ? '' : 'none';
+  _updateModelChainVisibility();
+}
+
+function onEffortChange() {
+  _updateModelChainVisibility();
+}
+
+function _updateModelChainVisibility() {
+  const agent = document.getElementById('agentType').value;
+  const effort = document.getElementById('effort').value;
+  const modelChain = document.getElementById('modelChain');
+  const show = agent === 'researcher' && (effort === 'regular' || effort === 'deep');
+  modelChain.style.display = show ? '' : 'none';
+}
+
+function toggleToolOverride() {
+  const enabled = document.getElementById('toolOverrideEnabled').checked;
+  document.getElementById('toolOverridePanel').style.display = enabled ? '' : 'none';
 }
 
 // ── Reports ─────────────────────────────────────────────────────────────────
