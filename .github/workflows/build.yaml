@@ -255,8 +255,10 @@ jobs:
   deploy:
     needs: [set-tag, changes, build-amd64, build-arm64, manifest]
     if: |
+      always() &&
       github.event_name != 'pull_request' &&
       needs.build-amd64.result == 'success' &&
+      needs.build-arm64.result == 'success' &&
       (needs.manifest.result == 'success' || needs.manifest.result == 'skipped')
     runs-on: arc-runner-set
     steps:
