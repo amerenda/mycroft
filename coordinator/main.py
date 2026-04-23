@@ -447,9 +447,9 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
 
         is_researcher = "researcher" in source
 
-        # Researcher results → Sazed reports + Telegram summary with link
-        if is_researcher and config.sazed_url:
-            await _post_to_sazed(record, source)
+        # Researcher results → save locally, optionally post to Sazed, notify Telegram
+        if is_researcher:
+            await _handle_researcher_result(record, source)
         elif telegram_bot:
             # Other agents (coder, etc.) → Telegram directly
             pr_url = ""
@@ -472,14 +472,8 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
             log.info("Agent notification: %s", record.content[:200])
 
 
-async def _post_to_sazed(record, source: str) -> None:
-    """Post a researcher result to Sazed, save to local reports DB, notify via Telegram."""
-    import httpx
-    from common.reports import create_report
-
-    content = record.content or ""
-
-    # Extract title from first markdown heading or first line
+def _extract_title_summary(content: str) -> tuple[str, str]:
+    """Extract title and summary from markdown report content."""
     title = "Research Report"
     for line in content.split("\n"):
         line = line.strip()
@@ -490,12 +484,10 @@ async def _post_to_sazed(record, source: str) -> None:
             title = line[:80]
             break
 
-    # Summary: first paragraph or first 300 chars
     summary = ""
     lines = content.split("\n")
     for i, line in enumerate(lines):
         if line.strip().lower().startswith("## summary"):
-            # Grab text after the ## Summary heading
             summary_lines = []
             for sl in lines[i + 1:]:
                 if sl.startswith("## "):
@@ -507,66 +499,59 @@ async def _post_to_sazed(record, source: str) -> None:
     if not summary:
         summary = content[:300]
 
-    # Extract task_id from source (format: "researcher/{task_id}")
+    return title, summary
+
+
+async def _handle_researcher_result(record, source: str) -> None:
+    """Save researcher result to local DB and optionally post to Sazed + Telegram."""
+    from common.reports import create_report
+
+    content = record.content or ""
+    title, summary = _extract_title_summary(content)
     task_id = source.split("/")[-1] if "/" in source else ""
 
+    # Always save to local reports DB
     try:
-        async with httpx.AsyncClient(timeout=15) as client:
-            resp = await client.post(
-                f"{config.sazed_url}/api/reports",
-                json={
-                    "title": title,
-                    "content": content,
-                    "summary": summary,
-                    "tags": [],
-                    "source_task_id": task_id,
-                },
-            )
-            resp.raise_for_status()
-            data = resp.json()
-            report_slug = data.get("slug", data.get("id", ""))
-            report_url = f"{config.sazed_url}/r/{report_slug}"
-
-        log.info("Report posted to Sazed: %s", report_url)
-
-        # Save to local reports DB so UI can display it
-        try:
-            await create_report(
-                db.kb.pool,
-                title=title,
-                content=content,
-                summary=summary,
-                tags=[],
-                source_task_id=task_id,
-            )
-        except Exception as re:
-            log.warning("Failed to save report to local DB: %s", re)
-
-        # Send summary + link to Telegram
-        if telegram_bot:
-            msg = f"{summary}\n\nFull report: {report_url}"
-            await telegram_bot.send(msg)
-
+        await create_report(
+            db.kb.pool,
+            title=title,
+            content=content,
+            summary=summary,
+            tags=[],
+            source_task_id=task_id,
+        )
+        log.info("Report saved to local DB: %s (task=%s)", title[:50], task_id[:8])
     except Exception as e:
-        log.error("Failed to post report to Sazed: %s", e)
-        # Fallback: save to local DB and send raw content to Telegram
+        log.warning("Failed to save report to local DB: %s", e)
+
+    # Optionally post to Sazed
+    report_url = None
+    if config.sazed_url:
+        import httpx
         try:
-            await create_report(
-                db.kb.pool,
-                title=title,
-                content=content,
-                summary=summary,
-                tags=[],
-                source_task_id=task_id,
-            )
-            log.info("Report saved to local DB (Sazed unavailable)")
-        except Exception as re:
-            log.warning("Failed to save report to local DB: %s", re)
-        if telegram_bot:
-            try:
-                await telegram_bot.send(f"Agent finished: {source}\n{content[:500]}")
-            except Exception:
-                pass
+            async with httpx.AsyncClient(timeout=15) as client:
+                resp = await client.post(
+                    f"{config.sazed_url}/api/reports",
+                    json={"title": title, "content": content, "summary": summary,
+                          "tags": [], "source_task_id": task_id},
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                slug = data.get("slug", data.get("id", ""))
+                report_url = f"{config.sazed_url}/r/{slug}"
+                log.info("Report posted to Sazed: %s", report_url)
+        except Exception as e:
+            log.error("Failed to post report to Sazed: %s", e)
+
+    # Notify Telegram
+    if telegram_bot:
+        try:
+            msg = f"{summary}"
+            if report_url:
+                msg += f"\n\nFull report: {report_url}"
+            await telegram_bot.send(msg)
+        except Exception:
+            pass
 
 
 # ---------------------------------------------------------------------------
