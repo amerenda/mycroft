@@ -365,7 +365,7 @@ async function previewPrompt() {
   if (!instruction) return;
 
   const workflow = document.getElementById('workflow').value;
-  const agentType = _WORKFLOW_AGENT[workflow] || workflow;
+  const agentType = _WORKFLOW_AGENT[workflow] || 'researcher';
 
   try {
     const r = await api('/api/tasks/test', {
@@ -915,6 +915,31 @@ function updatePipelineStep(i, field, value) {
   _pipelineSteps[i][field] = value;
 }
 
+let _customWorkflowNames = [];
+
+async function loadWorkflowDropdown() {
+  try {
+    const workflows = await api('/api/workflows');
+    const custom = workflows.filter(w => w.pipeline_json).sort((a, b) => a.name.localeCompare(b.name));
+    _customWorkflowNames = custom.map(w => w.name);
+
+    const sel = document.getElementById('workflow');
+    const existing = sel.querySelector('optgroup[label="Custom"]');
+    if (existing) existing.remove();
+    if (!custom.length) return;
+
+    const group = document.createElement('optgroup');
+    group.label = 'Custom';
+    custom.forEach(w => {
+      const opt = document.createElement('option');
+      opt.value = w.name;
+      opt.textContent = w.name;
+      group.appendChild(opt);
+    });
+    sel.appendChild(group);
+  } catch (e) { /* ignore */ }
+}
+
 async function loadWorkflows() {
   try {
     const workflows = await api('/api/workflows');
@@ -948,6 +973,7 @@ async function selectWorkflow(name) {
     document.getElementById('workflowEditor').style.display = '';
     document.getElementById('workflowEmpty').style.display = 'none';
     loadWorkflows();
+    loadWorkflowDropdown();
   } catch (e) {
     alert('Error loading workflow: ' + e.message);
   }
@@ -964,6 +990,7 @@ function newWorkflow() {
   document.getElementById('workflowEmpty').style.display = 'none';
   document.getElementById('workflowName').focus();
   loadWorkflows();
+  loadWorkflowDropdown();
 }
 
 async function saveWorkflow() {
@@ -988,6 +1015,7 @@ async function saveWorkflow() {
     });
     _currentWorkflow = name;
     loadWorkflows();
+    loadWorkflowDropdown();
   } catch (e) {
     alert('Save failed: ' + e.message);
   }
@@ -1002,6 +1030,7 @@ async function deleteWorkflow() {
     document.getElementById('workflowEditor').style.display = 'none';
     document.getElementById('workflowEmpty').style.display = '';
     loadWorkflows();
+    loadWorkflowDropdown();
   } catch (e) {
     alert('Delete failed: ' + e.message);
   }
@@ -1014,5 +1043,6 @@ loadRightTasks();
 loadReports();
 loadAgents();
 loadWorkflows();
+loadWorkflowDropdown();
 setInterval(loadRightTasks, 30000);
 setInterval(loadReports, 60000);
