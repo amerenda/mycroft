@@ -327,10 +327,18 @@ class KBClient:
         if not set_parts:
             return
 
-        await self.pool.execute(
-            f"UPDATE agent_tasks SET {', '.join(set_parts)} WHERE id = $1",
-            *values,
-        )
+        try:
+            await self.pool.execute(
+                f"UPDATE agent_tasks SET {', '.join(set_parts)} WHERE id = $1",
+                *values,
+            )
+        except asyncpg.exceptions.UndefinedColumnError as e:
+            if "argo_workflow_name" in str(e) and "argo_workflow_name" in fields:
+                # Column not yet migrated — retry without it
+                log.warning("argo_workflow_name column missing, skipping (run manual migration)")
+                await self.update_task(task_id, **{k: v for k, v in fields.items() if k != "argo_workflow_name"})
+            else:
+                raise
 
     async def get_task(self, task_id: str) -> TaskRecord | None:
         row = await self.pool.fetchrow(
