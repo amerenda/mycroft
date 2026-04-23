@@ -334,7 +334,23 @@ function renderTrace(messages, task) {
     }
   }
 
-  el.innerHTML = cards.join('') || '<p class="empty">No tool calls yet</p>';
+  const newHtml = cards.join('') || '<p class="empty">No tool calls yet</p>';
+  if (el.innerHTML === newHtml) return;
+
+  // Save which card indices are expanded before wiping DOM
+  const expanded = new Set();
+  el.querySelectorAll('.trace-card').forEach((c, i) => {
+    if (c.classList.contains('expanded')) expanded.add(i);
+  });
+
+  el.innerHTML = newHtml;
+
+  // Restore expanded state
+  if (expanded.size) {
+    el.querySelectorAll('.trace-card').forEach((c, i) => {
+      if (expanded.has(i)) c.classList.add('expanded');
+    });
+  }
 }
 
 // ── Prompt preview ────────────────────────────────────────────────────────────
