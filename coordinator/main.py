@@ -117,6 +117,7 @@ async def lifespan(app: FastAPI):
         namespace=config.argo_namespace,
         image_repo=config.agent_image_repo,
         image_tag=config.agent_image_tag,
+        llm_manager_url=config.llm_manager_url,
     )
 
     # Telegram bot
@@ -214,6 +215,7 @@ async def _start_research_pipeline(
         agent_type="researcher",
         task_id=gather_task_id,
         params={"instruction": instruction, "model_override": resolved_gather_model},
+        manifest=trigger_router.get_manifest("researcher"),
         on_update=_on_workflow_update,
     )
     await db.kb.update_task(gather_task_id, argo_workflow_name=gather_wf_name)
@@ -295,6 +297,7 @@ async def _pipeline_writer_phase(
             agent_type="researcher",
             task_id=write_task_id,
             params={"instruction": writer_instruction, "model_override": resolved_write_model},
+            manifest=trigger_router.get_manifest("researcher"),
             on_update=_on_workflow_update,
         )
         await db.kb.update_task(write_task_id, argo_workflow_name=write_wf_name)
@@ -345,7 +348,11 @@ async def _start_dynamic_pipeline(
     params: dict = {"instruction": instruction}
     if model:
         params["model_override"] = model
-    wf_name = await argo.submit(agent_type=agent_type, task_id=task_id, params=params, on_update=_on_workflow_update)
+    wf_name = await argo.submit(
+        agent_type=agent_type, task_id=task_id, params=params,
+        manifest=trigger_router.get_manifest(agent_type),
+        on_update=_on_workflow_update,
+    )
     await db.kb.update_task(task_id, argo_workflow_name=wf_name)
 
     log.info("Dynamic pipeline started: step=1/%d agent=%s workflow=%s task=%s",
@@ -413,7 +420,11 @@ async def _run_dynamic_pipeline_steps(
         params: dict = {"instruction": step_instruction}
         if model:
             params["model_override"] = model
-        wf_name = await argo.submit(agent_type=agent_type, task_id=task_id, params=params, on_update=_on_workflow_update)
+        wf_name = await argo.submit(
+            agent_type=agent_type, task_id=task_id, params=params,
+            manifest=trigger_router.get_manifest(agent_type),
+            on_update=_on_workflow_update,
+        )
         await db.kb.update_task(task_id, argo_workflow_name=wf_name)
 
         log.info("Dynamic pipeline step %d/%d: agent=%s workflow=%s task=%s",
@@ -492,6 +503,7 @@ async def _handle_engineering_task(
                 agent_type=agent_type,
                 task_id=task_id,
                 params=params,
+                manifest=manifest,
                 on_update=_on_workflow_update,
             )
             await db.kb.update_task(task_id, argo_workflow_name=wf_name)

@@ -12,14 +12,30 @@ log = logging.getLogger(__name__)
 # Workflow is stale if no phase change in this many seconds
 STALE_TIMEOUT = 300  # 5 minutes
 
+# Agent type → Docker image target. Agents not listed use the researcher image,
+# which includes all agents/ code and web tools.
+_AGENT_IMAGE: dict[str, str] = {
+    "coder": "agent-coder",
+}
+_DEFAULT_IMAGE = "agent-researcher"
+
 
 class ArgoSubmitter:
     """Submits Argo Workflow CRDs and monitors progress."""
 
-    def __init__(self, namespace: str = "mycroft", image_repo: str = "amerenda/mycroft", image_tag: str = "latest"):
+    def __init__(
+        self,
+        namespace: str = "mycroft",
+        image_repo: str = "amerenda/mycroft",
+        image_tag: str = "latest",
+        llm_manager_url: str = "http://llm-manager-backend.llm-manager.svc:8081",
+        credentials_secret: str = "mycroft-credentials",
+    ):
         self.namespace = namespace
         self.image_repo = image_repo
         self.image_tag = image_tag
+        self.llm_manager_url = llm_manager_url
+        self.credentials_secret = credentials_secret
         self._api = None
         self._watchers: dict[str, asyncio.Task] = {}   # wf_name → watcher Task
         self._task_to_wf: dict[str, str] = {}           # task_id → wf_name
@@ -35,15 +51,51 @@ class ArgoSubmitter:
             self._api = client.CustomObjectsApi()
         return self._api
 
-    async def submit(
+    def _build_workflow(
         self,
         agent_type: str,
         task_id: str,
         params: dict[str, Any] | None = None,
-        on_update: Callable[[str, str, str], Coroutine] | None = None,
-    ) -> str:
-        """Submit an Argo Workflow. Optionally monitor progress via on_update(task_id, status, message)."""
-        workflow = {
+        manifest: Any | None = None,
+    ) -> dict:
+        """Build an inline Argo Workflow spec from the agent manifest.
+
+        If manifest is None and a WorkflowTemplate exists for this agent type,
+        falls back to workflowTemplateRef so pre-existing templates still work.
+        When manifest is provided, always generates inline — no template required.
+        """
+        p = params or {}
+        arguments = {
+            "parameters": [
+                {"name": "task-id", "value": task_id},
+                {"name": "config", "value": json.dumps(p)},
+                {"name": "model-override", "value": p.get("model_override", "")},
+            ]
+        }
+
+        if manifest is None:
+            # Legacy path: reference a pre-created WorkflowTemplate
+            return {
+                "apiVersion": "argoproj.io/v1alpha1",
+                "kind": "Workflow",
+                "metadata": {
+                    "generateName": f"{agent_type}-{task_id[:8]}-",
+                    "namespace": self.namespace,
+                },
+                "spec": {
+                    "workflowTemplateRef": {"name": f"agent-{agent_type}"},
+                    "arguments": arguments,
+                },
+            }
+
+        # Inline spec — no pre-created template needed
+        image_key = _AGENT_IMAGE.get(agent_type, _DEFAULT_IMAGE)
+        image = f"{self.image_repo}:{image_key}-{self.image_tag}"
+
+        res = manifest.resources
+        template_name = f"run-{agent_type}"
+
+        return {
             "apiVersion": "argoproj.io/v1alpha1",
             "kind": "Workflow",
             "metadata": {
@@ -51,16 +103,51 @@ class ArgoSubmitter:
                 "namespace": self.namespace,
             },
             "spec": {
-                "workflowTemplateRef": {"name": f"agent-{agent_type}"},
-                "arguments": {
-                    "parameters": [
-                        {"name": "task-id", "value": task_id},
-                        {"name": "config", "value": json.dumps(params or {})},
-                        {"name": "model-override", "value": (params or {}).get("model_override", "")},
-                    ]
-                },
+                "entrypoint": template_name,
+                "arguments": arguments,
+                "templates": [{
+                    "name": template_name,
+                    "activeDeadlineSeconds": 1800,
+                    "retryStrategy": {"limit": 3, "backoff": {"duration": "30s", "factor": 2}},
+                    "container": {
+                        "image": image,
+                        "imagePullPolicy": "Always",
+                        "env": [
+                            {"name": "TASK_ID", "value": "{{workflow.parameters.task-id}}"},
+                            {"name": "MYCROFT_AGENT_TYPE", "value": agent_type},
+                            {"name": "KB_DSN", "valueFrom": {"secretKeyRef": {
+                                "name": self.credentials_secret, "key": "kb-dsn"}}},
+                            {"name": "LLM_MANAGER_URL", "value": self.llm_manager_url},
+                            {"name": "LLM_REGISTRATION_SECRET", "valueFrom": {"secretKeyRef": {
+                                "name": self.credentials_secret, "key": "llm-registration-secret"}}},
+                            {"name": "MODEL_OVERRIDE",
+                             "value": "{{workflow.parameters.model-override}}"},
+                        ],
+                        "resources": {
+                            "limits": {
+                                "memory": res.memory,
+                                "cpu": res.cpu,
+                                "ephemeral-storage": res.scratch,
+                            },
+                            "requests": {"memory": "256Mi", "cpu": "500m"},
+                        },
+                        "volumeMounts": [{"name": "scratch", "mountPath": "/workspace"}],
+                    },
+                    "volumes": [{"name": "scratch", "emptyDir": {"sizeLimit": res.scratch}}],
+                }],
             },
         }
+
+    async def submit(
+        self,
+        agent_type: str,
+        task_id: str,
+        params: dict[str, Any] | None = None,
+        manifest: Any | None = None,
+        on_update: Callable[[str, str, str], Coroutine] | None = None,
+    ) -> str:
+        """Submit an Argo Workflow. Pass manifest to generate inline spec (no WorkflowTemplate needed)."""
+        workflow = self._build_workflow(agent_type, task_id, params, manifest)
 
         api = self._get_api()
         result = api.create_namespaced_custom_object(

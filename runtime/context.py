@@ -18,7 +18,8 @@ def _load_supplement(agent_name: str, effort: str | None = None) -> str:
     uses the effort-specific supplement. Otherwise falls back to SYSTEM_SUPPLEMENT.
     """
     try:
-        mod = importlib.import_module(f"agents.{agent_name}.prompts")
+        module_name = agent_name.replace("-", "_")
+        mod = importlib.import_module(f"agents.{module_name}.prompts")
     except (ModuleNotFoundError, ImportError):
         return ""
 
