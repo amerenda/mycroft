@@ -333,9 +333,9 @@
 
       <!-- Left: report list -->
       <div class="editor-list-panel">
-        <div class="editor-list-header">
-          <span>Reports</span>
-          <div style="display:flex;gap:6px">
+        <div class="editor-list-header" style="cursor:pointer" onclick="toggleReportList()">
+          <span>Reports <span id="reportListChevron">▾</span></span>
+          <div style="display:flex;gap:6px" onclick="event.stopPropagation()">
             <button class="btn-tool-ctrl" onclick="loadReports()">↺</button>
             <button class="btn-danger" style="padding:3px 8px;font-size:0.75em" onclick="clearAllReports()">Clear All</button>
           </div>

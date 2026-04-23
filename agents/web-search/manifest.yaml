@@ -1,0 +1,19 @@
+name: web-search
+role: "Web researcher"
+goal: "Search the web and gather information on a topic, returning structured findings with source URLs"
+model: qwen3.5:9b
+backend: k8s
+max_concurrent: 4
+max_iterations: 8
+resources:
+  memory: 1000Mi
+  cpu: "1"
+  scratch: 256Mi
+tools:
+  - web
+permissions:
+  read:
+    - /tasks
+  write:
+    - /agents/web-search/results
+    - /tasks

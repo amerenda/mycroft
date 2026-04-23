@@ -472,6 +472,13 @@ const md = window.markdownit ? window.markdownit() : null;
 let _currentReport = null;
 let _reportRawMode = false;
 let _reportContent = '';
+let _reportListCollapsed = false;
+
+function toggleReportList() {
+  _reportListCollapsed = !_reportListCollapsed;
+  document.getElementById('reportList').style.display = _reportListCollapsed ? 'none' : '';
+  document.getElementById('reportListChevron').textContent = _reportListCollapsed ? '▸' : '▾';
+}
 
 async function loadReports() {
   try {

@@ -1,0 +1,18 @@
+name: writer
+role: "Report writer"
+goal: "Write a clear, structured research report from gathered findings provided in context"
+model: llama3.1:8b
+backend: k8s
+max_concurrent: 4
+max_iterations: 5
+resources:
+  memory: 512Mi
+  cpu: "1"
+  scratch: 256Mi
+tools: []
+permissions:
+  read:
+    - /tasks
+  write:
+    - /agents/writer/results
+    - /tasks
