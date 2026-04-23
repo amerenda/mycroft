@@ -143,9 +143,13 @@ async def lifespan(app: FastAPI):
     from coordinator.reports import ensure_reports_table
     await ensure_reports_table(db.kb.pool)
 
-    from coordinator.editor_store import ensure_editor_tables, seed_from_filesystem
+    from coordinator.editor_store import ensure_editor_tables, seed_from_filesystem, list_agents as _list_agents
     await ensure_editor_tables(db.kb.pool)
     await seed_from_filesystem(db.kb.pool, _AGENTS_DIR, _WORKFLOWS_DIR)
+
+    # Register all DB-stored agents into trigger_router so UI-created agents work
+    for row in await _list_agents(db.kb.pool):
+        trigger_router.register(row["name"], row.get("manifest", ""), row.get("prompts", ""))
 
     # LISTEN/NOTIFY for agent completion events
     await db.start_listener(_on_agent_event)
@@ -322,12 +326,13 @@ async def _start_dynamic_pipeline(
     is_last = len(steps) == 1
     agent_type = step.get("agent", "researcher")
 
+    step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
     task_config = {
         "instruction": instruction,
         "model_override": step.get("model") or None,
         "max_iterations_override": step.get("max_iterations") or None,
         "tools_override": step.get("tools") or None,
-        "system_prompt_override": step.get("prompt_override") or None,
+        "system_prompt_override": step_prompt,
         "phase": "pipeline-step-0",
         "is_last_step": is_last,
         "workflow": workflow_name,
@@ -393,12 +398,13 @@ async def _run_dynamic_pipeline_steps(
             f"Previous step output:\n{prev_output[:15000]}"
         )
 
+        step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
         task_config = {
             "instruction": step_instruction,
             "model_override": step.get("model") or None,
             "max_iterations_override": step.get("max_iterations") or None,
             "tools_override": step.get("tools") or None,
-            "system_prompt_override": step.get("prompt_override") or None,
+            "system_prompt_override": step_prompt,
             "phase": f"pipeline-step-{step_index}",
             "is_last_step": is_last,
             "workflow": workflow_name,
@@ -455,6 +461,10 @@ async def _handle_engineering_task(
     manifest = trigger_router.get_manifest(agent_type)
     if not manifest:
         raise ValueError(f"Unknown agent type: {agent_type}")
+
+    # Inject DB-stored prompts as system_prompt_override if none explicitly set
+    if not system_prompt_override:
+        system_prompt_override = trigger_router.get_prompts(agent_type) or None
 
     # Check concurrency
     if not await task_manager.can_launch(agent_type, manifest.max_concurrent):
@@ -1020,9 +1030,10 @@ async def test_task(req: TestTaskRequest):
         manifest = manifest.model_copy()
         manifest.model = req.model
 
-    # Build prompt preview
+    # Build prompt preview — use DB prompts as system override if available
+    db_prompts = trigger_router.get_prompts(req.agent_type)
     tools = load_tools(manifest.tools)
-    system_prompt = build_system_prompt(manifest, tools.schemas())
+    system_prompt = db_prompts or build_system_prompt(manifest, tools.schemas())
     user_message = build_user_message(req.instruction, [])
 
     return {
@@ -1220,6 +1231,7 @@ async def save_agent(name: str, payload: AgentPayload):
     _safe_name(name)
     from coordinator.editor_store import save_agent as _save_agent
     await _save_agent(db.kb.pool, name, payload.manifest, payload.prompts)
+    trigger_router.register(name, payload.manifest, payload.prompts or "")
     return {"status": "saved", "name": name}
 
 
@@ -1230,6 +1242,7 @@ async def delete_agent(name: str):
     deleted = await _delete_agent(db.kb.pool, name)
     if not deleted:
         raise HTTPException(404, f"Agent '{name}' not found")
+    trigger_router.unregister(name)
     return {"status": "deleted", "name": name}
 
 

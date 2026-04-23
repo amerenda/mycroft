@@ -6,6 +6,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from common.models import AgentManifest
 
 log = logging.getLogger(__name__)
@@ -16,6 +18,7 @@ class TriggerRouter:
 
     def __init__(self):
         self.manifests: dict[str, AgentManifest] = {}
+        self.prompts: dict[str, str] = {}  # agent_name → prompts text (DB-sourced agents)
 
     def load_manifests(self, agents_dir: str | Path) -> None:
         """Load all agent manifests from the agents directory."""
@@ -24,6 +27,32 @@ class TriggerRouter:
             manifest = AgentManifest.from_yaml(manifest_file)
             self.manifests[manifest.name] = manifest
             log.info("Loaded manifest: %s (triggers=%d)", manifest.name, len(manifest.triggers))
+
+    def register(self, name: str, manifest_yaml: str, prompts_text: str = "") -> AgentManifest | None:
+        """Register or update an agent from raw YAML (used for DB-sourced agents)."""
+        try:
+            data = yaml.safe_load(manifest_yaml)
+            if not data or not isinstance(data, dict):
+                return None
+            data.setdefault("name", name)
+            manifest = AgentManifest(**data)
+            self.manifests[manifest.name] = manifest
+            if prompts_text:
+                self.prompts[manifest.name] = prompts_text
+            log.info("Registered agent from DB: %s", manifest.name)
+            return manifest
+        except Exception as e:
+            log.warning("Failed to register agent '%s': %s", name, e)
+            return None
+
+    def unregister(self, name: str) -> None:
+        """Remove an agent from the router."""
+        self.manifests.pop(name, None)
+        self.prompts.pop(name, None)
+
+    def get_prompts(self, name: str) -> str:
+        """Return stored prompts text for a DB-sourced agent (empty string if none)."""
+        return self.prompts.get(name, "")
 
     def route(self, event_type: str, payload: dict[str, Any]) -> list[str]:
         """Find agent types that should handle this event. Returns list of agent type names."""
