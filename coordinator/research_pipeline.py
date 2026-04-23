@@ -19,17 +19,15 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 log = logging.getLogger(__name__)
 
-# Phase configs by effort tier
-PHASE_CONFIG = {
-    "light": {
-        # Light skips the pipeline — single task, no report
-        "use_pipeline": False,
+# Workflow configs keyed by workflow name
+WORKFLOW_CONFIG = {
+    "research-quick": {
+        "use_pipeline": False,  # Single researcher task, no pipeline
     },
-    "regular": {
+    "research-regular": {
         "use_pipeline": True,
         "gather": {
             "model": "qwen3.5:9b",
@@ -42,20 +40,36 @@ PHASE_CONFIG = {
             "tools": ["write_file", "read_file"],
         },
     },
-    "deep": {
+    "research-deep": {
         "use_pipeline": True,
         "gather": {
             "model": "qwen3.5:9b",
-            "max_iterations": 8,
+            "max_iterations": 12,
             "tools": ["web_search", "web_read", "wiki_read", "run_command"],
         },
         "write": {
             "model": "llama3.1:8b",
-            "max_iterations": 5,
+            "max_iterations": 8,
             "tools": ["write_file", "read_file"],
         },
     },
 }
+
+# Deprecated: effort tier → workflow name mapping
+_EFFORT_TO_WORKFLOW = {
+    "light": "research-quick",
+    "regular": "research-regular",
+    "deep": "research-deep",
+}
+
+
+def resolve_workflow(workflow: str | None, effort: str | None) -> str:
+    """Return canonical workflow name, accepting either workflow or deprecated effort."""
+    if workflow:
+        return workflow
+    if effort:
+        return _EFFORT_TO_WORKFLOW.get(effort, "research-regular")
+    return "research-regular"
 
 GATHERER_PROMPT = """You are a research assistant. Your ONLY job is to search the web and gather information.
 
@@ -94,119 +108,6 @@ What to do, ranked by priority.
 
 Write the report NOW. Do not search for more information. Use ONLY write_file and read_file."""
 
-
-async def run_research_pipeline(
-    instruction: str,
-    effort: str,
-    task_manager,
-    argo,
-    db,
-    on_update,
-    config: dict[str, Any] | None = None,
-) -> tuple[str, str | None]:
-    """Run the two-phase research pipeline.
-
-    Returns (task_id, report_content) where report_content is None if
-    the pipeline hasn't completed yet (async Argo execution).
-    """
-    phase_config = PHASE_CONFIG.get(effort or "regular", PHASE_CONFIG["regular"])
-
-    if not phase_config.get("use_pipeline"):
-        # Light tier — no pipeline, return None to use normal single-task flow
-        return "", None
-
-    gather_cfg = phase_config["gather"]
-    write_cfg = phase_config["write"]
-
-    # Phase 1: Create gatherer task
-    gather_config = {
-        "instruction": instruction,
-        "model_override": gather_cfg["model"],
-        "max_iterations_override": gather_cfg["max_iterations"],
-        "tools_override": gather_cfg["tools"],
-        "system_prompt_override": GATHERER_PROMPT,
-        "phase": "gather",
-    }
-
-    gather_task_id = await task_manager.create_task(
-        agent_type="researcher",
-        instruction=instruction,
-        trigger="pipeline",
-        repo="",
-        config=gather_config,
-    )
-
-    log.info("Research pipeline: gather task %s (model=%s, iter=%d)",
-             gather_task_id[:8], gather_cfg["model"], gather_cfg["max_iterations"])
-
-    # Submit to Argo
-    try:
-        await argo.submit(
-            agent_type="researcher",
-            task_id=gather_task_id,
-            params={
-                "instruction": instruction,
-                "model_override": gather_cfg["model"],
-            },
-            on_update=on_update,
-        )
-    except Exception as e:
-        log.error("Failed to submit gather task: %s", e)
-        raise
-
-    # Wait for gatherer to complete
-    findings = await _wait_for_task(gather_task_id, db, timeout=600)
-
-    if not findings:
-        log.warning("Gatherer produced no findings for: %s", instruction[:80])
-        findings = f"(No findings gathered for: {instruction})"
-
-    log.info("Research pipeline: gatherer done (%d chars). Starting writer.", len(findings))
-
-    # Phase 2: Create writer task with findings injected
-    writer_instruction = (
-        f"Write a research report based on these findings.\n\n"
-        f"Original question: {instruction}\n\n"
-        f"Research findings:\n{findings[:15000]}"
-    )
-
-    write_config = {
-        "instruction": writer_instruction,
-        "model_override": write_cfg["model"],
-        "max_iterations_override": write_cfg["max_iterations"],
-        "tools_override": write_cfg["tools"],
-        "system_prompt_override": WRITER_PROMPT,
-        "phase": "write",
-        "parent_task_id": gather_task_id,
-    }
-
-    write_task_id = await task_manager.create_task(
-        agent_type="researcher",
-        instruction=writer_instruction,
-        trigger="pipeline",
-        repo="",
-        config=write_config,
-    )
-
-    log.info("Research pipeline: writer task %s (model=%s, iter=%d)",
-             write_task_id[:8], write_cfg["model"], write_cfg["max_iterations"])
-
-    # Submit to Argo
-    try:
-        await argo.submit(
-            agent_type="researcher",
-            task_id=write_task_id,
-            params={
-                "instruction": writer_instruction,
-                "model_override": write_cfg["model"],
-            },
-            on_update=on_update,
-        )
-    except Exception as e:
-        log.error("Failed to submit writer task: %s", e)
-        raise
-
-    return write_task_id, None  # Async — coordinator will get notified on completion
 
 
 async def _wait_for_task(task_id: str, db, timeout: int = 600) -> str:

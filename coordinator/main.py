@@ -176,16 +176,16 @@ app = FastAPI(title="Mycroft Coordinator", lifespan=lifespan)
 
 async def _start_research_pipeline(
     instruction: str,
-    effort: str,
+    workflow: str,
     gather_model: str | None = None,
     write_model: str | None = None,
     gather_tools: list[str] | None = None,
 ) -> str:
     """Start the two-phase gather→write pipeline. Returns the gather task ID."""
-    from coordinator.research_pipeline import PHASE_CONFIG, GATHERER_PROMPT
+    from coordinator.research_pipeline import WORKFLOW_CONFIG, GATHERER_PROMPT
 
-    phase_config = PHASE_CONFIG.get(effort, PHASE_CONFIG["regular"])
-    gather_cfg = phase_config["gather"]
+    wf_config = WORKFLOW_CONFIG.get(workflow, WORKFLOW_CONFIG["research-regular"])
+    gather_cfg = wf_config["gather"]
 
     resolved_gather_model = gather_model or gather_cfg["model"]
     resolved_gather_tools = gather_tools or gather_cfg["tools"]
@@ -197,7 +197,7 @@ async def _start_research_pipeline(
         "tools_override": resolved_gather_tools,
         "system_prompt_override": GATHERER_PROMPT,
         "phase": "gather",
-        "effort": effort,
+        "workflow": workflow,
     }
 
     gather_task_id = await task_manager.create_task(
@@ -218,11 +218,11 @@ async def _start_research_pipeline(
     )
     await db.kb.update_task(gather_task_id, argo_workflow_name=gather_wf_name)
 
-    log.info("Research pipeline started: gather=%s model=%s effort=%s",
-             gather_task_id[:8], resolved_gather_model, effort)
+    log.info("Research pipeline started: gather=%s model=%s workflow=%s",
+             gather_task_id[:8], resolved_gather_model, workflow)
 
     asyncio.create_task(
-        _pipeline_writer_phase(gather_task_id, instruction, effort, write_model=write_model)
+        _pipeline_writer_phase(gather_task_id, instruction, workflow, write_model=write_model)
     )
 
     return gather_task_id
@@ -231,11 +231,11 @@ async def _start_research_pipeline(
 async def _pipeline_writer_phase(
     gather_task_id: str,
     instruction: str,
-    effort: str,
+    workflow: str,
     write_model: str | None = None,
 ):
     """Background: wait for gatherer to finish, then launch the writer."""
-    from coordinator.research_pipeline import PHASE_CONFIG, WRITER_PROMPT, _wait_for_task
+    from coordinator.research_pipeline import WORKFLOW_CONFIG, WRITER_PROMPT, _wait_for_task
 
     try:
         findings = await _wait_for_task(gather_task_id, db, timeout=600)
@@ -256,8 +256,8 @@ async def _pipeline_writer_phase(
 
         log.info("Pipeline gatherer %s done (%d chars). Launching writer.", gather_task_id[:8], len(findings))
 
-        phase_config = PHASE_CONFIG.get(effort, PHASE_CONFIG["regular"])
-        write_cfg = phase_config["write"]
+        wf_config = WORKFLOW_CONFIG.get(workflow, WORKFLOW_CONFIG["research-regular"])
+        write_cfg = wf_config["write"]
 
         resolved_write_model = write_model or write_cfg["model"]
 
@@ -274,7 +274,7 @@ async def _pipeline_writer_phase(
             "tools_override": write_cfg["tools"],
             "system_prompt_override": WRITER_PROMPT,
             "phase": "write",
-            "effort": effort,
+            "workflow": workflow,
             "parent_task_id": gather_task_id,
         }
 
@@ -518,8 +518,7 @@ async def _handle_researcher_result(record, source: str) -> None:
     title, summary = _extract_title_summary(content)
 
     # Build report metadata
-    effort = (task.config.get("effort", "") if task else "") or "regular"
-    workflow = f"research-{effort}"
+    workflow = (task.config.get("workflow", "") if task else "") or "research-regular"
     models_used: dict[str, str] = {}
     commit_sha = getattr(config, "agent_image_tag", "") or ""
 
@@ -552,7 +551,7 @@ async def _handle_researcher_result(record, source: str) -> None:
             summary=summary,
             tags=[],
             source_task_id=task_id,
-            effort=effort,
+            effort=workflow,
             workflow=workflow,
             models_used=models_used,
             commit_sha=commit_sha,
@@ -645,7 +644,7 @@ async def forge_run_status(run_id: str):
 # ---------------------------------------------------------------------------
 
 class CreateTaskRequest(BaseModel):
-    agent_type: str
+    agent_type: str = ""
     instruction: str
     repo: str = ""
     trigger: str = "manual"
@@ -654,47 +653,60 @@ class CreateTaskRequest(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     max_iterations: int | None = None
-    effort: str | None = None       # light, regular, deep — for researcher
-    tools_override: list[str] | None = None   # explicit tool allowlist
-    gather_model: str | None = None           # gather phase model (regular/deep pipeline)
-    write_model: str | None = None            # write phase model (regular/deep pipeline)
+    workflow: str | None = None              # research-quick, research-regular, research-deep, coder
+    effort: str | None = None               # deprecated alias for workflow
+    tools_override: list[str] | None = None
+    gather_model: str | None = None
+    write_model: str | None = None
 
 
 @app.post("/api/tasks")
 async def create_task(req: CreateTaskRequest):
+    from coordinator.research_pipeline import resolve_workflow, WORKFLOW_CONFIG
+
     try:
-        # Research pipeline: regular/deep tiers use two-phase gather→write
-        if req.agent_type == "researcher" and req.effort in ("regular", "deep"):
+        # Resolve workflow name (accepts either workflow= or deprecated effort=)
+        workflow = resolve_workflow(req.workflow, req.effort)
+
+        # Research pipelines
+        if workflow in ("research-regular", "research-deep"):
             gather_task_id = await _start_research_pipeline(
                 req.instruction,
-                req.effort,
+                workflow,
                 gather_model=req.gather_model or req.model,
                 write_model=req.write_model,
                 gather_tools=req.tools_override or None,
             )
             return {"task_id": gather_task_id}
 
-        # Light researcher: defaults that can be overridden per-request
-        max_iter = req.max_iterations
-        model = req.model
-        tools_ovr = req.tools_override
-        if req.agent_type == "researcher" and req.effort == "light":
-            max_iter = max_iter or 6
-            model = model or "qwen3.5:9b"
-            if not tools_ovr:
-                tools_ovr = ["web_search", "wiki_read", "web_read"]
+        if workflow == "research-quick":
+            task_id = await _handle_engineering_task(
+                instruction=req.instruction,
+                agent_type="researcher",
+                repo=req.repo,
+                model_override=req.model or "qwen3.5:9b",
+                system_prompt_override=req.system_prompt,
+                max_tokens=req.max_tokens,
+                temperature=req.temperature,
+                max_iterations=req.max_iterations or 6,
+                effort=None,
+                tools_override=req.tools_override or ["web_search", "wiki_read", "web_read"],
+            )
+            return {"task_id": task_id}
 
+        # coder or explicit agent_type (backwards compat)
+        agent_type = req.agent_type or workflow
         task_id = await _handle_engineering_task(
             instruction=req.instruction,
-            agent_type=req.agent_type,
+            agent_type=agent_type,
             repo=req.repo,
-            model_override=model,
+            model_override=req.model,
             system_prompt_override=req.system_prompt,
             max_tokens=req.max_tokens,
             temperature=req.temperature,
-            max_iterations=max_iter,
-            effort=req.effort,
-            tools_override=tools_ovr,
+            max_iterations=req.max_iterations,
+            effort=None,
+            tools_override=req.tools_override,
         )
         return {"task_id": task_id}
     except ValueError as e:
