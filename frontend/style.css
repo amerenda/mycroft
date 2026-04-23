@@ -624,3 +624,49 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
   font-size: 0.9em;
   font-style: italic;
 }
+
+/* Pipeline step editor */
+.pipeline-step {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 6px;
+  margin-bottom: 8px;
+  overflow: hidden;
+}
+
+.pipeline-step-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 7px 12px;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+}
+
+.pipeline-step-num {
+  font-size: 0.72em;
+  font-weight: 700;
+  color: #58a6ff;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.pipeline-step-acts { display: flex; gap: 4px; }
+
+.pipeline-step-body { padding: 10px 12px; }
+
+.btn-step-act {
+  background: #21262d;
+  border: 1px solid #30363d;
+  color: #8b949e;
+  cursor: pointer;
+  width: 24px;
+  height: 24px;
+  border-radius: 4px;
+  font-size: 0.82em;
+  padding: 0;
+  line-height: 1;
+}
+.btn-step-act:hover:not(:disabled) { color: #c9d1d9; background: #30363d; }
+.btn-step-act:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-step-remove:hover:not(:disabled) { color: #da3633; background: #da363322; }

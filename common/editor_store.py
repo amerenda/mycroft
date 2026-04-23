@@ -28,12 +28,24 @@ async def ensure_editor_tables(pool: asyncpg.Pool) -> None:
         """)
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS workflow_definitions (
-                name        TEXT PRIMARY KEY,
-                content     TEXT NOT NULL DEFAULT '',
-                created_at  TIMESTAMPTZ DEFAULT NOW(),
-                updated_at  TIMESTAMPTZ DEFAULT NOW()
+                name          TEXT PRIMARY KEY,
+                content       TEXT NOT NULL DEFAULT '',
+                pipeline_json JSONB DEFAULT NULL,
+                created_at    TIMESTAMPTZ DEFAULT NOW(),
+                updated_at    TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        # Migrate existing table
+        exists = await conn.fetchval(
+            "SELECT 1 FROM information_schema.columns "
+            "WHERE table_name = 'workflow_definitions' AND column_name = 'pipeline_json'"
+        )
+        if not exists:
+            try:
+                await conn.execute("ALTER TABLE workflow_definitions ADD COLUMN pipeline_json JSONB DEFAULT NULL")
+                log.info("Added workflow_definitions.pipeline_json column")
+            except Exception as e:
+                log.warning("Could not add pipeline_json column: %s", e)
     log.info("Editor tables ready")
 
 
@@ -110,27 +122,44 @@ async def delete_agent(pool: asyncpg.Pool, name: str) -> bool:
 
 async def list_workflows(pool: asyncpg.Pool) -> list[dict]:
     rows = await pool.fetch(
-        "SELECT name, content FROM workflow_definitions ORDER BY name"
+        "SELECT name, content, pipeline_json FROM workflow_definitions ORDER BY name"
     )
-    return [dict(r) for r in rows]
+    return [_wf_row(r) for r in rows]
 
 
 async def get_workflow(pool: asyncpg.Pool, name: str) -> dict | None:
     row = await pool.fetchrow(
-        "SELECT name, content FROM workflow_definitions WHERE name = $1", name
+        "SELECT name, content, pipeline_json FROM workflow_definitions WHERE name = $1", name
     )
-    return dict(row) if row else None
+    return _wf_row(row) if row else None
 
 
-async def save_workflow(pool: asyncpg.Pool, name: str, content: str) -> None:
+async def save_workflow(
+    pool: asyncpg.Pool,
+    name: str,
+    content: str,
+    pipeline_json: dict | None = None,
+) -> None:
+    import json
     await pool.execute(
         """
-        INSERT INTO workflow_definitions (name, content, updated_at)
-        VALUES ($1, $2, NOW())
-        ON CONFLICT (name) DO UPDATE SET content = $2, updated_at = NOW()
+        INSERT INTO workflow_definitions (name, content, pipeline_json, updated_at)
+        VALUES ($1, $2, $3, NOW())
+        ON CONFLICT (name) DO UPDATE SET content = $2, pipeline_json = $3, updated_at = NOW()
         """,
-        name, content,
+        name, content, json.dumps(pipeline_json) if pipeline_json is not None else None,
     )
+
+
+def _wf_row(row) -> dict:
+    d = dict(row)
+    if isinstance(d.get("pipeline_json"), str):
+        import json
+        try:
+            d["pipeline_json"] = json.loads(d["pipeline_json"])
+        except Exception:
+            d["pipeline_json"] = None
+    return d
 
 
 async def delete_workflow(pool: asyncpg.Pool, name: str) -> bool:

@@ -310,9 +310,29 @@
           </div>
         </div>
 
+        <!-- Description -->
         <div class="editor-section">
-          <div class="editor-file-label">workflow.yaml <span class="editor-file-hint">name · display_name · description · steps[]</span></div>
-          <textarea id="workflowContent" class="editor-textarea" rows="36" spellcheck="false"></textarea>
+          <div class="form-group" style="margin-bottom:0">
+            <label>Description</label>
+            <input id="workflowDescription" type="text" placeholder="What this workflow does...">
+          </div>
+        </div>
+
+        <!-- Pipeline steps -->
+        <div class="editor-section">
+          <div class="editor-file-label">Pipeline Steps</div>
+          <div id="pipelineSteps"></div>
+          <button class="btn-tool-ctrl" style="margin-top:8px" onclick="addPipelineStep()">+ Add Step</button>
+        </div>
+
+        <!-- Raw YAML (advanced) -->
+        <div class="editor-section">
+          <details>
+            <summary>Raw YAML</summary>
+            <div style="margin-top:10px">
+              <textarea id="workflowContent" class="editor-textarea" rows="16" spellcheck="false"></textarea>
+            </div>
+          </details>
         </div>
       </div>
 

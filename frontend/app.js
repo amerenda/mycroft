@@ -551,16 +551,18 @@ function onWorkflowChange() {
 
 // ── Models ────────────────────────────────────────────────────────────────────
 
+let _modelList = [];
+
 async function loadModels() {
   try {
     const models = await api('/api/models');
-    const list = (Array.isArray(models) ? models : (models.data || []))
+    _modelList = (Array.isArray(models) ? models : (models.data || []))
       .filter(m => m.downloaded !== false)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
 
     ['model', 'gatherModel', 'writeModel', 'agentModel'].forEach(selId => {
       const el = document.getElementById(selId);
-      list.forEach(m => {
+      _modelList.forEach(m => {
         const opt = document.createElement('option');
         const name = m.name || m.id || '';
         opt.value = name;
@@ -592,6 +594,7 @@ tools:
 
 let _currentAgent = null;
 let _agentTestTimer = null;
+let _agentNames = [];
 
 function _extractYamlField(yaml, field) {
   const m = yaml.match(new RegExp(`^${field}:\\s*(.+)`, 'm'));
@@ -615,6 +618,7 @@ function _wrapSystemPrompt(name, content) {
 async function loadAgents() {
   try {
     const agents = await api('/api/agents');
+    _agentNames = agents.map(a => a.name);
     const el = document.getElementById('agentList');
     if (!agents.length) {
       el.innerHTML = '<p class="empty" style="padding:12px">No agents yet</p>';
@@ -774,31 +778,81 @@ function _pollAgentTest(taskId) {
 
 // ── Workflows editor ───────────────────────────────────────────────────────────
 
-const WORKFLOW_TEMPLATE = `name: my-workflow
-display_name: "My Workflow"
-description: "What this workflow does"
-
-steps:
-  - id: step1
-    agent: researcher
-    role: gather
-    max_iterations: 5
-    tools:
-      - web_search
-      - web_read
-
-  - id: step2
-    agent: researcher
-    role: write
-    max_iterations: 3
-    tools:
-      - write_file
-      - read_file
-    depends_on:
-      - step1
-`;
-
 let _currentWorkflow = null;
+let _pipelineSteps = [];
+
+function _agentOpts(selected) {
+  return '<option value="">Select agent...</option>' +
+    _agentNames.map(n =>
+      `<option value="${n}"${n === selected ? ' selected' : ''}>${n}</option>`
+    ).join('');
+}
+
+function _modelOpts(selected) {
+  return '<option value="">Default</option>' +
+    _modelList.map(m => {
+      const name = m.name || m.id || '';
+      return `<option value="${name}"${name === selected ? ' selected' : ''}>${name}</option>`;
+    }).join('');
+}
+
+function _renderPipelineSteps() {
+  const el = document.getElementById('pipelineSteps');
+  if (!_pipelineSteps.length) {
+    el.innerHTML = '<p class="empty">No steps yet — add a step to build the pipeline.</p>';
+    return;
+  }
+  el.innerHTML = _pipelineSteps.map((step, i) => `
+    <div class="pipeline-step">
+      <div class="pipeline-step-header">
+        <span class="pipeline-step-num">Step ${i + 1}</span>
+        <div class="pipeline-step-acts">
+          <button class="btn-step-act" onclick="movePipelineStep(${i},-1)" ${i === 0 ? 'disabled' : ''}>↑</button>
+          <button class="btn-step-act" onclick="movePipelineStep(${i},1)" ${i === _pipelineSteps.length - 1 ? 'disabled' : ''}>↓</button>
+          <button class="btn-step-act btn-step-remove" onclick="removePipelineStep(${i})">×</button>
+        </div>
+      </div>
+      <div class="pipeline-step-body">
+        <div class="form-row" style="margin-bottom:8px">
+          <div class="form-group" style="margin-bottom:0">
+            <label>Agent</label>
+            <select onchange="updatePipelineStep(${i},'agent',this.value)">${_agentOpts(step.agent)}</select>
+          </div>
+          <div class="form-group" style="margin-bottom:0">
+            <label>Model Override</label>
+            <select onchange="updatePipelineStep(${i},'model',this.value)">${_modelOpts(step.model)}</select>
+          </div>
+        </div>
+        <details${step.prompt_override ? ' open' : ''}>
+          <summary style="font-size:0.82em;color:#8b949e;cursor:pointer">Prompt Override</summary>
+          <textarea class="editor-textarea" rows="4" style="margin-top:6px"
+            onchange="updatePipelineStep(${i},'prompt_override',this.value)"
+            placeholder="Leave empty to use agent default">${esc(step.prompt_override || '')}</textarea>
+        </details>
+      </div>
+    </div>`).join('');
+}
+
+function addPipelineStep() {
+  _pipelineSteps.push({ agent: '', model: '', prompt_override: '' });
+  _renderPipelineSteps();
+}
+
+function removePipelineStep(i) {
+  _pipelineSteps.splice(i, 1);
+  _renderPipelineSteps();
+}
+
+function movePipelineStep(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= _pipelineSteps.length) return;
+  [_pipelineSteps[i], _pipelineSteps[j]] = [_pipelineSteps[j], _pipelineSteps[i]];
+  _renderPipelineSteps();
+}
+
+function updatePipelineStep(i, field, value) {
+  _pipelineSteps[i][field] = value;
+}
 
 async function loadWorkflows() {
   try {
@@ -812,6 +866,7 @@ async function loadWorkflows() {
       <div class="editor-list-item${_currentWorkflow === w.name ? ' active' : ''}"
            onclick="selectWorkflow('${w.name}')">
         <span>${w.name}</span>
+        ${w.pipeline_json ? '<span style="font-size:0.7em;color:#484f58">' + (w.pipeline_json.steps || []).length + ' steps</span>' : ''}
       </div>`).join('');
   } catch (e) {
     document.getElementById('workflowList').innerHTML =
@@ -824,7 +879,11 @@ async function selectWorkflow(name) {
     const w = await api('/api/workflows/' + name);
     _currentWorkflow = name;
     document.getElementById('workflowName').value = name;
-    document.getElementById('workflowContent').value = w.content;
+    document.getElementById('workflowContent').value = w.content || '';
+    document.getElementById('workflowDescription').value =
+      (w.pipeline_json && w.pipeline_json.description) || '';
+    _pipelineSteps = (w.pipeline_json && w.pipeline_json.steps) || [];
+    _renderPipelineSteps();
     document.getElementById('workflowEditor').style.display = '';
     document.getElementById('workflowEmpty').style.display = 'none';
     loadWorkflows();
@@ -835,8 +894,11 @@ async function selectWorkflow(name) {
 
 function newWorkflow() {
   _currentWorkflow = null;
+  _pipelineSteps = [{ agent: '', model: '', prompt_override: '' }];
   document.getElementById('workflowName').value = '';
-  document.getElementById('workflowContent').value = WORKFLOW_TEMPLATE;
+  document.getElementById('workflowDescription').value = '';
+  document.getElementById('workflowContent').value = '';
+  _renderPipelineSteps();
   document.getElementById('workflowEditor').style.display = '';
   document.getElementById('workflowEmpty').style.display = 'none';
   document.getElementById('workflowName').focus();
@@ -846,13 +908,22 @@ function newWorkflow() {
 async function saveWorkflow() {
   const name = document.getElementById('workflowName').value.trim();
   if (!name) { alert('Workflow name is required'); return; }
+
+  const pipeline_json = {
+    description: document.getElementById('workflowDescription').value.trim(),
+    steps: _pipelineSteps.map(s => ({
+      agent: s.agent,
+      model: s.model || '',
+      prompt_override: s.prompt_override || '',
+    })),
+  };
   const content = document.getElementById('workflowContent').value;
 
   try {
     await api('/api/workflows/' + name, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ content }),
+      body: JSON.stringify({ content, pipeline_json }),
     });
     _currentWorkflow = name;
     loadWorkflows();

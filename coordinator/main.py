@@ -1030,7 +1030,8 @@ class AgentPayload(BaseModel):
 
 
 class WorkflowPayload(BaseModel):
-    content: str
+    content: str = ""
+    pipeline_json: dict | None = None
 
 
 @app.get("/api/agents")
@@ -1087,7 +1088,7 @@ async def get_workflow(name: str):
 async def save_workflow(name: str, payload: WorkflowPayload):
     _safe_name(name)
     from common.editor_store import save_workflow as _save_workflow
-    await _save_workflow(db.kb.pool, name, payload.content)
+    await _save_workflow(db.kb.pool, name, payload.content, payload.pipeline_json)
     return {"status": "saved", "name": name}
 
 
