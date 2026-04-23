@@ -41,24 +41,17 @@
 
         <div class="form-row">
           <div class="form-group">
+            <label>Workflow <span class="tip" data-tip="research-quick: single-agent lookup, no pipeline (~2 min). research-regular: gather + write pipeline, multi-source report (~8 min). research-deep: more iterations, comprehensive report (~15 min). coder: writes code and opens PRs.">ⓘ</span></label>
+            <select id="workflow" onchange="onWorkflowChange()">
+              <option value="research-quick">research-quick — quick lookup</option>
+              <option value="research-regular" selected>research-regular — gather + write</option>
+              <option value="research-deep">research-deep — comprehensive</option>
+              <option value="coder">coder — write code + PR</option>
+            </select>
+          </div>
+          <div class="form-group" id="repoGroup" style="display:none">
             <label>Repo</label>
             <input id="repo" type="text" placeholder="amerenda/mycroft" value="amerenda/mycroft">
-          </div>
-          <div class="form-group">
-            <label>Agent Type <span class="tip" data-tip="researcher: web research + report. coder: writes code + PRs. extractor: reads specific URLs and pulls targeted facts — no searching, no report.">ⓘ</span></label>
-            <select id="agentType" onchange="onAgentTypeChange()">
-              <option value="researcher">researcher</option>
-              <option value="coder">coder</option>
-              <option value="extractor">extractor</option>
-            </select>
-          </div>
-          <div class="form-group" id="effortGroup" style="display:none">
-            <label>Effort <span class="tip" data-tip="light: 1 search → quick answer, no report (~1 min). regular: gather→write pipeline, multi-source report (~8 min). deep: more searches + adversarial review (~12 min).">ⓘ</span></label>
-            <select id="effort" onchange="onEffortChange()">
-              <option value="light">Light — quick lookup</option>
-              <option value="regular" selected>Regular — gather + write</option>
-              <option value="deep">Deep — comprehensive</option>
-            </select>
           </div>
         </div>
 

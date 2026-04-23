@@ -203,13 +203,12 @@ function renderForgeResult(r) {
 // ── Mycroft runner ────────────────────────────────────────────────────────────
 
 async function runMycroft(instruction) {
+  const workflow = document.getElementById('workflow').value;
   const model = document.getElementById('model').value;
   const systemPrompt = document.getElementById('systemPrompt').value.trim();
   const maxTokens = document.getElementById('maxTokens').value;
   const temperature = document.getElementById('temperature').value;
   const maxIterations = document.getElementById('maxIterations').value;
-  const agentType = document.getElementById('agentType').value;
-  const effort = document.getElementById('effort').value;
   const gatherModel = document.getElementById('gatherModel').value;
   const writeModel = document.getElementById('writeModel').value;
 
@@ -219,13 +218,12 @@ async function runMycroft(instruction) {
   const toolsOverride = checkedValues.length < allCbs.length ? checkedValues : null;
 
   const body = {
-    agent_type: agentType,
+    workflow,
     instruction,
     repo: document.getElementById('repo').value.trim(),
     model: model || null,
     system_prompt: systemPrompt || null,
   };
-  if (agentType === 'researcher' || agentType === 'extractor') body.effort = effort || null;
   if (maxTokens) body.max_tokens = parseInt(maxTokens);
   if (temperature) body.temperature = parseFloat(temperature);
   if (maxIterations) body.max_iterations = parseInt(maxIterations);
@@ -355,16 +353,26 @@ function renderTrace(messages, task) {
 
 // ── Prompt preview ────────────────────────────────────────────────────────────
 
+const _WORKFLOW_AGENT = {
+  'research-quick': 'researcher',
+  'research-regular': 'researcher',
+  'research-deep': 'researcher',
+  'coder': 'coder',
+};
+
 async function previewPrompt() {
   const instruction = document.getElementById('instruction').value.trim();
   if (!instruction) return;
+
+  const workflow = document.getElementById('workflow').value;
+  const agentType = _WORKFLOW_AGENT[workflow] || workflow;
 
   try {
     const r = await api('/api/tasks/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        agent_type: document.getElementById('agentType').value,
+        agent_type: agentType,
         instruction,
         model: document.getElementById('model').value || null,
       }),
@@ -469,15 +477,18 @@ async function loadRightReports() {
       el.innerHTML = '<p class="empty">No reports yet. Run a researcher task to generate one.</p>';
       return;
     }
-    el.innerHTML = reports.map(r => `
+    el.innerHTML = reports.map(r => {
+      const wf = r.workflow || r.effort || '';
+      return `
       <div class="report-row" onclick="viewRightReport('${r.id}')">
         <div class="report-title">
           ${esc(r.title)}
-          <span class="effort-badge effort-${r.effort || 'regular'}">${r.effort || 'regular'}</span>
+          ${wf ? `<span class="effort-badge effort-${wf.split('-').pop()}">${wf}</span>` : ''}
         </div>
         <div class="report-summary">${esc(r.summary || '').slice(0, 150)}</div>
         <div class="report-meta">${r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch (e) {
     document.getElementById('rightReportList').innerHTML = '<p class="empty">Error loading reports</p>';
   }
@@ -528,23 +539,14 @@ function setDefaultTools() {
   });
 }
 
-// ── Agent type + effort handlers ──────────────────────────────────────────────
+// ── Workflow change handler ───────────────────────────────────────────────────
 
-function onAgentTypeChange() {
-  const agent = document.getElementById('agentType').value;
-  document.getElementById('effortGroup').style.display = (agent === 'researcher') ? '' : 'none';
-  _updateModelChainVisibility();
-}
-
-function onEffortChange() {
-  _updateModelChainVisibility();
-}
-
-function _updateModelChainVisibility() {
-  const agent = document.getElementById('agentType').value;
-  const effort = document.getElementById('effort').value;
-  const show = agent === 'researcher' && (effort === 'regular' || effort === 'deep');
-  document.getElementById('modelChain').style.display = show ? '' : 'none';
+function onWorkflowChange() {
+  const workflow = document.getElementById('workflow').value;
+  document.getElementById('modelChain').style.display =
+    (workflow === 'research-regular' || workflow === 'research-deep') ? '' : 'none';
+  document.getElementById('repoGroup').style.display =
+    (workflow === 'coder') ? '' : 'none';
 }
 
 // ── Models ────────────────────────────────────────────────────────────────────
