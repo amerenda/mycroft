@@ -41,9 +41,44 @@ jobs:
             echo "pr_prefix=deploy" >> "$GITHUB_OUTPUT"
           fi
 
-  build-base-amd64:
-    needs: [test, set-tag]
+  # Detect which components actually changed so we can skip unnecessary builds.
+  # Always rebuilds everything on workflow_dispatch or tag push.
+  changes:
     if: github.event_name != 'pull_request'
+    runs-on: arc-runner-set
+    outputs:
+      agent: ${{ steps.detect.outputs.agent }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 2
+      - id: detect
+        run: |
+          # Force full rebuild on manual dispatch or release tag
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]] || \
+             [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "agent=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # On push, diff against the commit before the push
+          BEFORE="${{ github.event.before }}"
+          CHANGED=$(git diff --name-only "${BEFORE}" HEAD 2>/dev/null || echo "ALL")
+
+          # Agent inputs: base Dockerfile, agent Dockerfile, requirements, and
+          # all three code directories copied into the image
+          if [[ "$CHANGED" == "ALL" ]] || \
+             echo "$CHANGED" | grep -qE '^(Dockerfile\.agent|requirements-agent\.txt|common/|runtime/|agents/)'; then
+            echo "agent=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "agent=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  # ── Agent base (heavy layer, only rebuild when agent inputs change) ─────────
+
+  build-base-amd64:
+    needs: [test, set-tag, changes]
+    if: github.event_name != 'pull_request' && needs.changes.outputs.agent == 'true'
     runs-on: arc-runner-set
     steps:
       - uses: actions/checkout@v6
@@ -56,8 +91,8 @@ jobs:
           docker push "${IMAGE}:agent-base-${TAG}-amd64"
 
   build-base-arm64:
-    needs: [test, set-tag]
-    if: github.event_name != 'pull_request'
+    needs: [test, set-tag, changes]
+    if: github.event_name != 'pull_request' && needs.changes.outputs.agent == 'true'
     runs-on: [self-hosted, mac-mini]
     steps:
       - uses: actions/checkout@v6
@@ -70,7 +105,8 @@ jobs:
           docker push "${IMAGE}:agent-base-${TAG}-arm64"
 
   manifest-base:
-    needs: [set-tag, build-base-amd64, build-base-arm64]
+    needs: [set-tag, changes, build-base-amd64, build-base-arm64]
+    if: github.event_name != 'pull_request' && needs.changes.outputs.agent == 'true'
     runs-on: arc-runner-set
     steps:
       - name: Login to Docker Hub
@@ -86,8 +122,10 @@ jobs:
             "${IMAGE}:agent-base-${TAG}-amd64" \
             "${IMAGE}:agent-base-${TAG}-arm64"
 
+  # ── Coordinator + frontend (independent of agent-base, always build) ────────
+
   build-amd64:
-    needs: [set-tag, manifest-base]
+    needs: [test, set-tag]
     if: github.event_name != 'pull_request'
     runs-on: arc-runner-set
     strategy:
@@ -96,16 +134,8 @@ jobs:
         include:
           - component: coordinator
             dockerfile: Dockerfile.coordinator
-            target: ""
           - component: frontend
             dockerfile: Dockerfile.frontend
-            target: ""
-          - component: agent-coder
-            dockerfile: Dockerfile.agent
-            target: agent-coder
-          - component: agent-researcher
-            dockerfile: Dockerfile.agent
-            target: agent-researcher
     env:
       TAG: ${{ needs.set-tag.outputs.tag }}
     steps:
@@ -114,16 +144,12 @@ jobs:
         run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
       - name: Build and push ${{ matrix.component }} (amd64)
         run: |
-          ARGS=""
-          if [ -n "${{ matrix.target }}" ]; then
-            ARGS="--target ${{ matrix.target }} --build-arg BASE_TAG=${TAG}"
-          fi
-          docker build -f ${{ matrix.dockerfile }} $ARGS \
+          docker build -f ${{ matrix.dockerfile }} \
             -t "${IMAGE}:${{ matrix.component }}-${TAG}-amd64" .
           docker push "${IMAGE}:${{ matrix.component }}-${TAG}-amd64"
 
   build-arm64:
-    needs: [set-tag, manifest-base]
+    needs: [test, set-tag]
     if: github.event_name != 'pull_request'
     runs-on: [self-hosted, mac-mini]
     steps:
@@ -140,6 +166,43 @@ jobs:
           TAG=${{ needs.set-tag.outputs.tag }}
           docker build -f Dockerfile.frontend -t "${IMAGE}:frontend-${TAG}-arm64" .
           docker push "${IMAGE}:frontend-${TAG}-arm64"
+
+  # ── Agent variants (only when agent inputs changed) ─────────────────────────
+
+  build-agents-amd64:
+    needs: [set-tag, changes, manifest-base]
+    if: github.event_name != 'pull_request' && needs.changes.outputs.agent == 'true'
+    runs-on: arc-runner-set
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: agent-coder
+            target: agent-coder
+          - component: agent-researcher
+            target: agent-researcher
+    env:
+      TAG: ${{ needs.set-tag.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v6
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
+      - name: Build and push ${{ matrix.component }} (amd64)
+        run: |
+          docker build -f Dockerfile.agent \
+            --target ${{ matrix.target }} \
+            --build-arg BASE_TAG=${TAG} \
+            -t "${IMAGE}:${{ matrix.component }}-${TAG}-amd64" .
+          docker push "${IMAGE}:${{ matrix.component }}-${TAG}-amd64"
+
+  build-agents-arm64:
+    needs: [set-tag, changes, manifest-base]
+    if: github.event_name != 'pull_request' && needs.changes.outputs.agent == 'true'
+    runs-on: [self-hosted, mac-mini]
+    steps:
+      - uses: actions/checkout@v6
+      - name: Login to Docker Hub
+        run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
       - name: Build agent-coder
         run: |
           TAG=${{ needs.set-tag.outputs.tag }}
@@ -155,8 +218,10 @@ jobs:
             -t "${IMAGE}:agent-researcher-${TAG}-arm64" .
           docker push "${IMAGE}:agent-researcher-${TAG}-arm64"
 
+  # ── Manifests ────────────────────────────────────────────────────────────────
+
   manifest:
-    needs: [set-tag, build-amd64, build-arm64]
+    needs: [set-tag, changes, build-amd64, build-arm64, build-agents-amd64, build-agents-arm64]
     runs-on: arc-runner-set
     steps:
       - name: Login to Docker Hub
@@ -164,8 +229,9 @@ jobs:
       - name: Create multi-arch manifests
         env:
           TAG: ${{ needs.set-tag.outputs.tag }}
+          AGENT_CHANGED: ${{ needs.changes.outputs.agent }}
         run: |
-          for COMPONENT in coordinator frontend agent-coder agent-researcher; do
+          for COMPONENT in coordinator frontend; do
             docker buildx imagetools create -t "${IMAGE}:${COMPONENT}-${TAG}" \
               "${IMAGE}:${COMPONENT}-${TAG}-amd64" \
               "${IMAGE}:${COMPONENT}-${TAG}-arm64"
@@ -173,9 +239,21 @@ jobs:
               "${IMAGE}:${COMPONENT}-${TAG}-amd64" \
               "${IMAGE}:${COMPONENT}-${TAG}-arm64"
           done
+          if [[ "${AGENT_CHANGED}" == "true" ]]; then
+            for COMPONENT in agent-coder agent-researcher; do
+              docker buildx imagetools create -t "${IMAGE}:${COMPONENT}-${TAG}" \
+                "${IMAGE}:${COMPONENT}-${TAG}-amd64" \
+                "${IMAGE}:${COMPONENT}-${TAG}-arm64"
+              docker buildx imagetools create -t "${IMAGE}:${COMPONENT}-latest" \
+                "${IMAGE}:${COMPONENT}-${TAG}-amd64" \
+                "${IMAGE}:${COMPONENT}-${TAG}-arm64"
+            done
+          fi
+
+  # ── Deploy ───────────────────────────────────────────────────────────────────
 
   deploy:
-    needs: [set-tag, manifest]
+    needs: [set-tag, changes, manifest]
     if: github.event_name != 'pull_request'
     runs-on: arc-runner-set
     steps:
@@ -185,6 +263,7 @@ jobs:
         env:
           TAG: ${{ needs.set-tag.outputs.tag }}
           PREFIX: ${{ needs.set-tag.outputs.pr_prefix }}
+          AGENT_CHANGED: ${{ needs.changes.outputs.agent }}
         run: |
           rm -rf /tmp/gitops
           git clone https://x-access-token:${GITOPS_PAT}@github.com/${GITOPS_REPO}.git /tmp/gitops
@@ -212,13 +291,17 @@ jobs:
           BRANCH="${PREFIX}/mycroft-${TAG}"
           git checkout -b "${BRANCH}"
 
-          # Update backend (coordinator) image + AGENT_IMAGE_TAG in both UAT and prod
+          # Update coordinator image in both UAT and prod
           sed -i "s|image: amerenda/mycroft:coordinator-[^ ]*|image: amerenda/mycroft:coordinator-${TAG}|g" \
             apps/mycroft/backend-uat/deployment.yaml \
             apps/mycroft/backend/deployment.yaml
-          sed -i "s|value: \"sha-[^\"]*\"|value: \"${TAG}\"|g" \
-            apps/mycroft/backend-uat/deployment.yaml \
-            apps/mycroft/backend/deployment.yaml
+
+          # Only bump AGENT_IMAGE_TAG when agent containers were actually rebuilt
+          if [[ "${AGENT_CHANGED}" == "true" ]]; then
+            sed -i "s|value: \"sha-[^\"]*\"|value: \"${TAG}\"|g" \
+              apps/mycroft/backend-uat/deployment.yaml \
+              apps/mycroft/backend/deployment.yaml
+          fi
 
           # Update frontend image
           sed -i "s|image: amerenda/mycroft:frontend-[^ ]*|image: amerenda/mycroft:frontend-${TAG}|g" \
@@ -249,7 +332,12 @@ jobs:
           if [ -n "${COMMIT_BODY}" ]; then
             PR_BODY="${PR_BODY}${NL}${NL}${COMMIT_BODY}"
           fi
-          PR_BODY="${PR_BODY}${NL}${NL}Images: \`amerenda/mycroft:coordinator-${TAG}\`, \`amerenda/mycroft:frontend-${TAG}\`, \`amerenda/mycroft:agent-coder-${TAG}\` (multi-arch: amd64+arm64)${NL}Source: ${SOURCE_LINK}"
+          if [[ "${AGENT_CHANGED}" == "true" ]]; then
+            IMAGES_NOTE="Images: \`coordinator-${TAG}\`, \`frontend-${TAG}\`, \`agent-coder-${TAG}\` (multi-arch: amd64+arm64)"
+          else
+            IMAGES_NOTE="Images: \`coordinator-${TAG}\`, \`frontend-${TAG}\` (multi-arch: amd64+arm64) — agent images unchanged"
+          fi
+          PR_BODY="${PR_BODY}${NL}${NL}${IMAGES_NOTE}${NL}Source: ${SOURCE_LINK}"
 
           PR_RESPONSE=$(curl -s -X POST \
             -H "Authorization: token ${GITOPS_PAT}" \
@@ -275,7 +363,7 @@ jobs:
 
   notify-failure:
     if: failure()
-    needs: [test, build-base-amd64, build-base-arm64, manifest-base, build-amd64, build-arm64, manifest, deploy]
+    needs: [test, changes, build-base-amd64, build-base-arm64, manifest-base, build-amd64, build-arm64, build-agents-amd64, build-agents-arm64, manifest, deploy]
     runs-on: ubuntu-latest
     steps:
       - name: Create GitHub Issue for build failure
