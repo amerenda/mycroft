@@ -310,9 +310,9 @@ jobs:
 
           # Only bump AGENT_IMAGE_TAG when agent containers were actually rebuilt
           if [[ "${AGENT_CHANGED}" == "true" ]]; then
-            sed -i "s|value: \"sha-[^\"]*\"|value: \"${TAG}\"|g" \
-              apps/mycroft/backend-uat/deployment.yaml \
-              apps/mycroft/backend/deployment.yaml
+            for F in apps/mycroft/backend-uat/deployment.yaml apps/mycroft/backend/deployment.yaml; do
+              sed -i '/AGENT_IMAGE_TAG/{n; s|value: ".*"|value: "'"${TAG}"'"|}' "$F"
+            done
           fi
 
           # Update frontend image
