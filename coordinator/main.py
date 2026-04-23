@@ -311,6 +311,7 @@ async def _handle_engineering_task(
     max_tokens: int | None = None, temperature: float | None = None,
     max_iterations: int | None = None, effort: str | None = None,
     tools_override: list[str] | None = None,
+    workflow: str | None = None,
 ) -> str:
     """Handle an engineering task from Telegram or API."""
     manifest = trigger_router.get_manifest(agent_type)
@@ -335,6 +336,8 @@ async def _handle_engineering_task(
         task_config["max_iterations_override"] = max_iterations
     if effort:
         task_config["effort"] = effort
+    if workflow:
+        task_config["workflow"] = workflow
     if tools_override:
         task_config["tools_override"] = tools_override
 
@@ -691,6 +694,7 @@ async def create_task(req: CreateTaskRequest):
                 max_iterations=req.max_iterations or 6,
                 effort=None,
                 tools_override=req.tools_override or ["web_search", "wiki_read", "web_read"],
+                workflow="research-quick",
             )
             return {"task_id": task_id}
 
@@ -707,6 +711,7 @@ async def create_task(req: CreateTaskRequest):
             max_iterations=req.max_iterations,
             effort=None,
             tools_override=req.tools_override,
+            workflow=workflow,
         )
         return {"task_id": task_id}
     except ValueError as e:
