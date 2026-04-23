@@ -19,7 +19,7 @@ log = logging.getLogger(__name__)
 
 
 async def ensure_reports_table(pool: asyncpg.Pool) -> None:
-    """Create the reports table if it doesn't exist."""
+    """Create the reports table if it doesn't exist, and add missing columns."""
     async with pool.acquire() as conn:
         await conn.execute("""
             CREATE TABLE IF NOT EXISTS reports (
@@ -30,10 +30,28 @@ async def ensure_reports_table(pool: asyncpg.Pool) -> None:
                 tags TEXT[] DEFAULT '{}',
                 source_task_id TEXT DEFAULT '',
                 effort TEXT DEFAULT 'regular',
+                workflow TEXT DEFAULT '',
+                models_used JSONB DEFAULT '{}',
+                commit_sha TEXT DEFAULT '',
                 created_at TIMESTAMPTZ DEFAULT NOW(),
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        # Migrate existing tables missing the newer columns
+        for col_name, col_def in [
+            ("workflow", "TEXT DEFAULT ''"),
+            ("models_used", "JSONB DEFAULT '{}'"),
+            ("commit_sha", "TEXT DEFAULT ''"),
+        ]:
+            exists = await conn.fetchval(
+                "SELECT 1 FROM information_schema.columns "
+                "WHERE table_name = 'reports' AND column_name = $1", col_name)
+            if not exists:
+                try:
+                    await conn.execute(f"ALTER TABLE reports ADD COLUMN {col_name} {col_def}")
+                    log.info("Added reports column: %s", col_name)
+                except Exception as e:
+                    log.warning("Could not add reports column %s: %s", col_name, e)
 
 
 def _slugify(text: str) -> str:
@@ -53,6 +71,9 @@ async def create_report(
     tags: list[str] | None = None,
     source_task_id: str = "",
     effort: str = "regular",
+    workflow: str = "",
+    models_used: dict | None = None,
+    commit_sha: str = "",
 ) -> str:
     """Create a report. Returns the report ID (slug)."""
     report_id = _slugify(title)
@@ -66,9 +87,11 @@ async def create_report(
             report_id = f"{report_id}-{uuid.uuid4().hex[:6]}"
 
         await conn.execute(
-            """INSERT INTO reports (id, title, content, summary, tags, source_task_id, effort)
-               VALUES ($1, $2, $3, $4, $5, $6, $7)""",
+            """INSERT INTO reports
+               (id, title, content, summary, tags, source_task_id, effort, workflow, models_used, commit_sha)
+               VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)""",
             report_id, title, content, summary, tags or [], source_task_id, effort,
+            workflow, json.dumps(models_used or {}), commit_sha,
         )
 
     log.info("Report created: %s", report_id)
@@ -88,7 +111,8 @@ async def list_reports(pool: asyncpg.Pool, limit: int = 50) -> list[dict]:
     """List all reports, newest first."""
     async with pool.acquire() as conn:
         rows = await conn.fetch(
-            "SELECT id, title, summary, tags, effort, source_task_id, created_at, updated_at "
+            "SELECT id, title, summary, tags, effort, workflow, models_used, commit_sha, "
+            "source_task_id, created_at, updated_at "
             "FROM reports ORDER BY created_at DESC LIMIT $1", limit)
     return [_row_to_dict(r) for r in rows]
 

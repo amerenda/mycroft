@@ -507,18 +507,55 @@ async def _handle_researcher_result(record, source: str) -> None:
     from common.reports import create_report
 
     content = record.content or ""
-    title, summary = _extract_title_summary(content)
     task_id = source.split("/")[-1] if "/" in source else ""
+
+    # Skip gather phase — only the write (or standalone) phase creates a report
+    task = await task_manager.get_task(task_id) if task_id else None
+    if task and task.config.get("phase") == "gather":
+        log.debug("Skipping report for gather phase task %s", task_id[:8])
+        return
+
+    title, summary = _extract_title_summary(content)
+
+    # Build report metadata
+    effort = (task.config.get("effort", "") if task else "") or "regular"
+    workflow = f"research-{effort}"
+    models_used: dict[str, str] = {}
+    commit_sha = getattr(config, "agent_image_tag", "") or ""
+
+    if task:
+        writer_model = task.config.get("model_override", "")
+        if writer_model:
+            models_used["write"] = writer_model
+        parent_id = task.config.get("parent_task_id", "")
+        if parent_id:
+            parent = await task_manager.get_task(parent_id)
+            if parent:
+                gather_model = parent.config.get("model_override", "")
+                if gather_model:
+                    models_used["gather"] = gather_model
+
+    # Append metadata footer to content
+    meta_parts = [f"Workflow: {workflow}"]
+    if models_used:
+        meta_parts.append("Models: " + ", ".join(f"{k}={v}" for k, v in models_used.items()))
+    if commit_sha:
+        meta_parts.append(f"Build: {commit_sha}")
+    content_with_meta = content + "\n\n---\n\n*" + " · ".join(meta_parts) + "*"
 
     # Always save to local reports DB
     try:
         await create_report(
             db.kb.pool,
             title=title,
-            content=content,
+            content=content_with_meta,
             summary=summary,
             tags=[],
             source_task_id=task_id,
+            effort=effort,
+            workflow=workflow,
+            models_used=models_used,
+            commit_sha=commit_sha,
         )
         log.info("Report saved to local DB: %s (task=%s)", title[:50], task_id[:8])
     except Exception as e:
@@ -532,7 +569,7 @@ async def _handle_researcher_result(record, source: str) -> None:
             async with httpx.AsyncClient(timeout=15) as client:
                 resp = await client.post(
                     f"{config.sazed_url}/api/reports",
-                    json={"title": title, "content": content, "summary": summary,
+                    json={"title": title, "content": content_with_meta, "summary": summary,
                           "tags": [], "source_task_id": task_id},
                 )
                 resp.raise_for_status()
