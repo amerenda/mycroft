@@ -222,6 +222,13 @@ jobs:
 
   manifest:
     needs: [set-tag, changes, build-amd64, build-arm64, build-agents-amd64, build-agents-arm64]
+    if: |
+      always() &&
+      github.event_name != 'pull_request' &&
+      needs.build-amd64.result == 'success' &&
+      needs.build-arm64.result == 'success' &&
+      (needs.build-agents-amd64.result == 'success' || needs.build-agents-amd64.result == 'skipped') &&
+      (needs.build-agents-arm64.result == 'success' || needs.build-agents-arm64.result == 'skipped')
     runs-on: arc-runner-set
     steps:
       - name: Login to Docker Hub
