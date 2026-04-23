@@ -102,6 +102,7 @@ Hits UAT endpoints, runs integration tests, verifies the deployment works. Repor
 - All agents share the same runtime (`runtime/runner.py`) and tool registry
 - Agent identity comes from `manifest.yaml` (model, tools, permissions) + `prompts.py` (system supplement)
 - Adding a new agent = create `agents/{name}/manifest.yaml` + optional `prompts.py`
+- **Directory naming**: use underscores (`web_search/`), manifest `name` can use hyphens (`web-search`). The runtime imports `agents.{name.replace("-","_")}.prompts` — hyphenated directory names are not importable by Python.
 - Argo WorkflowTemplate per agent in k3s-dean-gitops
 - All agents use the same Docker image (`agent-coder`) — the manifest determines behavior
 - Intent classification routes Telegram messages to the right agent
