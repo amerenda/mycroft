@@ -769,13 +769,16 @@ async function saveAgent() {
   document.getElementById('agentPrompts').value = prompts;
 
   try {
-    await api('/api/agents/' + name, {
+    const result = await api('/api/agents/' + name, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ manifest, prompts }),
     });
-    _currentAgent = name;
+    const canonical = result.name || name;
+    _currentAgent = canonical;
+    document.getElementById('agentName').value = canonical;
     loadAgents();
+    loadWorkflowDropdown();
   } catch (e) {
     alert('Save failed: ' + e.message);
   }

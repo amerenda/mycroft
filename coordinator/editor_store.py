@@ -10,8 +10,22 @@ import logging
 from pathlib import Path
 
 import asyncpg
+import yaml
 
 log = logging.getLogger(__name__)
+
+
+def slugify(name: str) -> str:
+    """Normalize an agent/workflow name to a clean backend identifier.
+
+    Lowercases, collapses any run of non-alphanumeric characters to a single
+    hyphen, and strips leading/trailing hyphens.
+    Examples: "Web Search Agent" → "web-search-agent"
+              "web_search"       → "web-search"
+              "My-Agent!!"       → "my-agent"
+    """
+    import re
+    return re.sub(r"-{2,}", "-", re.sub(r"[^a-z0-9]+", "-", name.lower())).strip("-")
 
 
 async def ensure_editor_tables(pool: asyncpg.Pool) -> None:
@@ -52,21 +66,26 @@ async def ensure_editor_tables(pool: asyncpg.Pool) -> None:
 async def seed_from_filesystem(pool: asyncpg.Pool, agents_dir: Path, workflows_dir: Path) -> None:
     """Insert filesystem definitions that are not yet in the DB (never overwrites)."""
     async with pool.acquire() as conn:
-        # Agents
+        # Agents — use manifest's name field as the DB key, not the directory name
         for d in sorted(agents_dir.iterdir()):
             if not d.is_dir() or d.name.startswith("_"):
                 continue
+            manifest_file = d / "manifest.yaml"
+            if not manifest_file.exists():
+                continue
+            manifest_text = manifest_file.read_text()
+            data = yaml.safe_load(manifest_text) or {}
+            agent_name = data.get("name") or d.name
             exists = await conn.fetchval(
-                "SELECT 1 FROM agent_definitions WHERE name = $1", d.name
+                "SELECT 1 FROM agent_definitions WHERE name = $1", agent_name
             )
             if not exists:
-                manifest = (d / "manifest.yaml").read_text() if (d / "manifest.yaml").exists() else ""
                 prompts = (d / "prompts.py").read_text() if (d / "prompts.py").exists() else ""
                 await conn.execute(
                     "INSERT INTO agent_definitions (name, manifest, prompts) VALUES ($1, $2, $3)",
-                    d.name, manifest, prompts,
+                    agent_name, manifest_text, prompts,
                 )
-                log.info("Seeded agent '%s' from filesystem", d.name)
+                log.info("Seeded agent '%s' from filesystem (dir: %s)", agent_name, d.name)
 
         # Workflows
         if workflows_dir.exists():
@@ -100,15 +119,18 @@ async def get_agent(pool: asyncpg.Pool, name: str) -> dict | None:
     return dict(row) if row else None
 
 
-async def save_agent(pool: asyncpg.Pool, name: str, manifest: str, prompts: str) -> None:
+async def save_agent(pool: asyncpg.Pool, name: str, manifest: str, prompts: str) -> str:
+    """Save agent definition. Returns the canonical (slugified) name."""
+    canonical = slugify(name)
     await pool.execute(
         """
         INSERT INTO agent_definitions (name, manifest, prompts, updated_at)
         VALUES ($1, $2, $3, NOW())
         ON CONFLICT (name) DO UPDATE SET manifest = $2, prompts = $3, updated_at = NOW()
         """,
-        name, manifest, prompts,
+        canonical, manifest, prompts,
     )
+    return canonical
 
 
 async def delete_agent(pool: asyncpg.Pool, name: str) -> bool:

@@ -1229,10 +1229,10 @@ async def get_agent(name: str):
 @app.put("/api/agents/{name}")
 async def save_agent(name: str, payload: AgentPayload):
     _safe_name(name)
-    from coordinator.editor_store import save_agent as _save_agent
-    await _save_agent(db.kb.pool, name, payload.manifest, payload.prompts)
-    trigger_router.register(name, payload.manifest, payload.prompts or "")
-    return {"status": "saved", "name": name}
+    from coordinator.editor_store import save_agent as _save_agent, slugify
+    canonical = await _save_agent(db.kb.pool, name, payload.manifest, payload.prompts)
+    trigger_router.register(canonical, payload.manifest, payload.prompts or "")
+    return {"status": "saved", "name": canonical}
 
 
 @app.delete("/api/agents/{name}")
