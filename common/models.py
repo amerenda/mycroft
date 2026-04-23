@@ -128,6 +128,7 @@ class TaskRecord(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     result: dict[str, Any] | None = None
+    argo_workflow_name: str | None = None
 
 
 # ---------------------------------------------------------------------------

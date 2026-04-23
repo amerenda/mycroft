@@ -250,6 +250,29 @@ class KBClient:
     # Task records (coordinator operations)
     # -----------------------------------------------------------------------
 
+    async def ensure_tasks_table(self) -> None:
+        """Create agent_tasks if absent and add any missing columns (safe to call repeatedly)."""
+        async with self.pool.acquire() as conn:
+            await conn.execute("""
+                CREATE TABLE IF NOT EXISTS agent_tasks (
+                    id UUID PRIMARY KEY,
+                    agent_type TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'pending',
+                    trigger TEXT NOT NULL DEFAULT 'manual',
+                    trigger_ref TEXT DEFAULT '',
+                    config JSONB DEFAULT '{}',
+                    result JSONB,
+                    created_at TIMESTAMPTZ DEFAULT NOW(),
+                    started_at TIMESTAMPTZ,
+                    completed_at TIMESTAMPTZ
+                )
+            """)
+            await conn.execute("""
+                ALTER TABLE agent_tasks
+                ADD COLUMN IF NOT EXISTS argo_workflow_name TEXT
+            """)
+        log.info("agent_tasks table ready")
+
     async def create_task(
         self,
         agent_type: str,
@@ -275,7 +298,7 @@ class KBClient:
         return task_id
 
     async def update_task(self, task_id: str, **fields: Any) -> None:
-        """Update task fields. Supports: status, result, started_at, completed_at."""
+        """Update task fields. Supports: status, result, started_at, completed_at, argo_workflow_name."""
         set_parts = []
         values = [task_id]
         idx = 2
@@ -287,7 +310,7 @@ class KBClient:
             elif key == "result":
                 set_parts.append(f"result = ${idx}")
                 values.append(json.dumps(value))
-            elif key in ("started_at", "completed_at"):
+            elif key in ("started_at", "completed_at", "argo_workflow_name"):
                 set_parts.append(f"{key} = ${idx}")
                 values.append(value)
             else:
@@ -319,6 +342,7 @@ class KBClient:
             started_at=row["started_at"],
             completed_at=row["completed_at"],
             result=_json(row["result"]) if row["result"] else None,
+            argo_workflow_name=row["argo_workflow_name"] if "argo_workflow_name" in row.keys() else None,
         )
 
     async def list_tasks(
@@ -359,6 +383,7 @@ class KBClient:
                 started_at=r["started_at"],
                 completed_at=r["completed_at"],
                 result=_json(r["result"]) if r["result"] else None,
+                argo_workflow_name=r["argo_workflow_name"] if "argo_workflow_name" in r.keys() else None,
             )
             for r in rows
         ]

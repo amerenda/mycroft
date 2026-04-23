@@ -132,12 +132,13 @@ async def lifespan(app: FastAPI):
         await telegram_bot.start_polling()
         log.info("Telegram bot initialized (polling mode)")
 
-    # Tool schema versioning
+    # Schema migrations (idempotent)
+    await db.kb.ensure_tasks_table()
+
     from common.tool_schemas import ensure_schema_table, seed_default_schemas
     await ensure_schema_table(db.kb.pool)
     await seed_default_schemas(db.kb.pool)
 
-    # Reports table
     from common.reports import ensure_reports_table
     await ensure_reports_table(db.kb.pool)
 
@@ -205,12 +206,13 @@ async def _start_research_pipeline(
     tasks_created_total.labels(agent_type="researcher", trigger="pipeline").inc()
     tasks_active.labels(agent_type="researcher").inc()
 
-    await argo.submit(
+    gather_wf_name = await argo.submit(
         agent_type="researcher",
         task_id=gather_task_id,
         params={"instruction": instruction, "model_override": resolved_gather_model},
         on_update=_on_workflow_update,
     )
+    await db.kb.update_task(gather_task_id, argo_workflow_name=gather_wf_name)
 
     log.info("Research pipeline started: gather=%s model=%s effort=%s",
              gather_task_id[:8], resolved_gather_model, effort)
@@ -280,12 +282,13 @@ async def _pipeline_writer_phase(
             config=write_config,
         )
 
-        await argo.submit(
+        write_wf_name = await argo.submit(
             agent_type="researcher",
             task_id=write_task_id,
             params={"instruction": writer_instruction, "model_override": resolved_write_model},
             on_update=_on_workflow_update,
         )
+        await db.kb.update_task(write_task_id, argo_workflow_name=write_wf_name)
 
         log.info("Pipeline writer launched: %s model=%s (parent=%s)",
                  write_task_id[:8], resolved_write_model, gather_task_id[:8])
@@ -357,6 +360,7 @@ async def _handle_engineering_task(
                 params=params,
                 on_update=_on_workflow_update,
             )
+            await db.kb.update_task(task_id, argo_workflow_name=wf_name)
             log.info("Workflow %s submitted for task %s (attempt %d)", wf_name, task_id[:8], attempt)
             argo_submissions_total.labels(agent_type=agent_type, result="success").inc()
             return task_id
@@ -662,14 +666,22 @@ async def get_task(task_id: str):
     return task.model_dump()
 
 
+async def _stop_task_workflow(task: Any) -> None:
+    """Terminate the Argo Workflow for a task, using in-memory map or DB-stored name."""
+    # Try in-memory map first (fast path, works while coordinator is up)
+    if await argo.terminate_task(task.id):
+        return
+    # Fallback: use the wf_name persisted to DB (survives restarts)
+    if task.argo_workflow_name:
+        await argo._terminate_workflow(task.argo_workflow_name)
+
+
 @app.post("/api/tasks/{task_id}/cancel")
 async def cancel_task(task_id: str):
     task = await task_manager.get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
-    terminated = await argo.terminate_task(task_id)
-    if terminated:
-        log.info("Argo Workflow stopped for cancelled task %s", task_id[:8])
+    await _stop_task_workflow(task)
     await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": "Cancelled by user"})
     return {"status": "cancelled"}
 
@@ -679,7 +691,7 @@ async def delete_task(task_id: str):
     task = await task_manager.get_task(task_id)
     if not task:
         raise HTTPException(404, "Task not found")
-    await argo.terminate_task(task_id)
+    await _stop_task_workflow(task)
     await db.kb.delete_task(task_id)
     return {"status": "deleted"}
 
