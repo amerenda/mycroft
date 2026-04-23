@@ -8,9 +8,8 @@ Phase 1: GATHERER (qwen3.5:9b)
 
 Phase 2: WRITER (llama3.1:8b)
   - Receives gatherer's findings
-  - Writes structured report to /workspace/report.md
-  - Tools: write_file, read_file (NO web tools)
-  - Output: report written
+  - Outputs the structured report as its final text response (no file tools)
+  - Output: report content returned directly to coordinator
 
 Orchestrated by the coordinator — each phase is a separate Argo task.
 """
@@ -37,7 +36,7 @@ WORKFLOW_CONFIG = {
         "write": {
             "model": "llama3.1:8b",
             "max_iterations": 5,
-            "tools": ["write_file", "read_file"],
+            "tools": [],  # writer outputs text directly — no file tools needed
         },
     },
     "research-deep": {
@@ -50,7 +49,7 @@ WORKFLOW_CONFIG = {
         "write": {
             "model": "llama3.1:8b",
             "max_iterations": 8,
-            "tools": ["write_file", "read_file"],
+            "tools": [],  # writer outputs text directly — no file tools needed
         },
     },
 }
@@ -91,7 +90,7 @@ The report will be written by a separate agent after you finish."""
 
 WRITER_PROMPT = """You are a report writer. Research has already been done — your job is to write it up.
 
-The research findings are provided below. Write a structured report to /workspace/report.md using write_file.
+The research findings are in the conversation below. Write a structured report and output it as your response.
 
 Report format:
 # Research: [Topic]
@@ -109,7 +108,7 @@ What to do, ranked by priority.
 ## Sources
 - [Title](url) — what this source provided
 
-Write the report NOW. Do not search for more information. Use ONLY write_file and read_file."""
+Output the FULL report as your response now. Do not use any tools. Do not search for more information."""
 
 
 

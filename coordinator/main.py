@@ -238,10 +238,10 @@ async def _pipeline_writer_phase(
     from coordinator.research_pipeline import WORKFLOW_CONFIG, WRITER_PROMPT, _wait_for_task
 
     try:
-        findings = await _wait_for_task(gather_task_id, db, timeout=600)
+        status_hint = await _wait_for_task(gather_task_id, db, timeout=600)
 
-        # Abort writer if gather was cancelled or produced nothing useful
-        if not findings or findings.startswith("("):
+        # Abort writer if gather was cancelled
+        if not status_hint or status_hint.startswith("("):
             gather_task = await task_manager.get_task(gather_task_id)
             was_cancelled = (
                 gather_task
@@ -251,6 +251,11 @@ async def _pipeline_writer_phase(
             if was_cancelled:
                 log.info("Pipeline writer phase aborted — gather task %s was cancelled", gather_task_id[:8])
                 return
+
+        # Read full findings from KB — task.result["summary"] is truncated to 1000 chars
+        gather_record = await db.kb.get(f"/agents/researcher/results/{gather_task_id}")
+        findings = (gather_record.content if gather_record else None) or status_hint
+        if not findings:
             log.warning("Pipeline gatherer %s produced no usable findings, proceeding anyway", gather_task_id[:8])
             findings = f"(Limited findings for: {instruction})"
 
@@ -299,6 +304,128 @@ async def _pipeline_writer_phase(
 
     except Exception as e:
         log.exception("Pipeline writer phase failed for gather=%s", gather_task_id[:8])
+
+
+async def _start_dynamic_pipeline(
+    instruction: str,
+    workflow_name: str,
+    steps: list[dict],
+) -> str:
+    """Start an N-step dynamic pipeline from a DB-stored workflow definition. Returns first task ID."""
+    if not steps:
+        raise ValueError(f"Workflow '{workflow_name}' has no pipeline steps")
+
+    step = steps[0]
+    is_last = len(steps) == 1
+    agent_type = step.get("agent", "researcher")
+
+    task_config = {
+        "instruction": instruction,
+        "model_override": step.get("model") or None,
+        "max_iterations_override": step.get("max_iterations") or None,
+        "tools_override": step.get("tools") or None,
+        "system_prompt_override": step.get("prompt_override") or None,
+        "phase": "pipeline-step-0",
+        "is_last_step": is_last,
+        "workflow": workflow_name,
+        "pipeline_original_instruction": instruction,
+    }
+
+    task_id = await task_manager.create_task(
+        agent_type=agent_type,
+        instruction=instruction,
+        trigger="pipeline",
+        repo="",
+        config=task_config,
+    )
+    tasks_created_total.labels(agent_type=agent_type, trigger="pipeline").inc()
+    tasks_active.labels(agent_type=agent_type).inc()
+
+    model = step.get("model") or None
+    params: dict = {"instruction": instruction}
+    if model:
+        params["model_override"] = model
+    wf_name = await argo.submit(agent_type=agent_type, task_id=task_id, params=params, on_update=_on_workflow_update)
+    await db.kb.update_task(task_id, argo_workflow_name=wf_name)
+
+    log.info("Dynamic pipeline started: step=1/%d agent=%s workflow=%s task=%s",
+             len(steps), agent_type, workflow_name, task_id[:8])
+
+    if not is_last:
+        asyncio.create_task(
+            _run_dynamic_pipeline_steps(task_id, agent_type, instruction, workflow_name, steps, 1)
+        )
+
+    return task_id
+
+
+async def _run_dynamic_pipeline_steps(
+    prev_task_id: str,
+    prev_agent_type: str,
+    original_instruction: str,
+    workflow_name: str,
+    steps: list[dict],
+    step_index: int,
+) -> None:
+    """Background: wait for previous step to finish, then launch the next step."""
+    from coordinator.research_pipeline import _wait_for_task
+
+    try:
+        await _wait_for_task(prev_task_id, db, timeout=600)
+
+        # Read full output from KB — task.result["summary"] is truncated to 1000 chars
+        record = await db.kb.get(f"/agents/{prev_agent_type}/results/{prev_task_id}")
+        prev_output = (record.content if record else None) or f"(No output from step {step_index - 1})"
+
+        step = steps[step_index]
+        is_last = step_index == len(steps) - 1
+        agent_type = step.get("agent", "researcher")
+
+        step_instruction = (
+            f"Original question: {original_instruction}\n\n"
+            f"Previous step output:\n{prev_output[:15000]}"
+        )
+
+        task_config = {
+            "instruction": step_instruction,
+            "model_override": step.get("model") or None,
+            "max_iterations_override": step.get("max_iterations") or None,
+            "tools_override": step.get("tools") or None,
+            "system_prompt_override": step.get("prompt_override") or None,
+            "phase": f"pipeline-step-{step_index}",
+            "is_last_step": is_last,
+            "workflow": workflow_name,
+            "pipeline_original_instruction": original_instruction,
+            "parent_task_id": prev_task_id,
+        }
+
+        task_id = await task_manager.create_task(
+            agent_type=agent_type,
+            instruction=step_instruction,
+            trigger="pipeline",
+            repo="",
+            config=task_config,
+        )
+        tasks_created_total.labels(agent_type=agent_type, trigger="pipeline").inc()
+        tasks_active.labels(agent_type=agent_type).inc()
+
+        model = step.get("model") or None
+        params: dict = {"instruction": step_instruction}
+        if model:
+            params["model_override"] = model
+        wf_name = await argo.submit(agent_type=agent_type, task_id=task_id, params=params, on_update=_on_workflow_update)
+        await db.kb.update_task(task_id, argo_workflow_name=wf_name)
+
+        log.info("Dynamic pipeline step %d/%d: agent=%s workflow=%s task=%s",
+                 step_index + 1, len(steps), agent_type, workflow_name, task_id[:8])
+
+        if not is_last:
+            asyncio.create_task(
+                _run_dynamic_pipeline_steps(task_id, agent_type, original_instruction, workflow_name, steps, step_index + 1)
+            )
+
+    except Exception:
+        log.exception("Dynamic pipeline step %d failed (prev_task=%s)", step_index, prev_task_id[:8])
 
 
 # ---------------------------------------------------------------------------
@@ -450,6 +577,13 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
 
         is_researcher = "researcher" in source
 
+        # Dynamic pipeline: route final step to report handler regardless of agent type
+        task_id_hint = source.split("/")[-1] if "/" in source else ""
+        task_hint = await task_manager.get_task(task_id_hint) if task_id_hint else None
+        if task_hint and task_hint.config.get("is_last_step"):
+            await _handle_researcher_result(record, source)
+            return
+
         # Researcher results → save locally, optionally post to Sazed, notify Telegram
         if is_researcher:
             await _handle_researcher_result(record, source)
@@ -512,11 +646,17 @@ async def _handle_researcher_result(record, source: str) -> None:
     content = record.content or ""
     task_id = source.split("/")[-1] if "/" in source else ""
 
-    # Skip gather phase — only the write (or standalone) phase creates a report
+    # Skip non-final pipeline steps — only final step (or standalone) creates a report
     task = await task_manager.get_task(task_id) if task_id else None
-    if task and task.config.get("phase") == "gather":
-        log.debug("Skipping report for gather phase task %s", task_id[:8])
-        return
+    if task:
+        phase = task.config.get("phase", "")
+        is_last = task.config.get("is_last_step", False)
+        if phase == "gather":
+            log.debug("Skipping report for gather phase task %s", task_id[:8])
+            return
+        if phase.startswith("pipeline-step-") and not is_last:
+            log.debug("Skipping report for intermediate pipeline step task %s (phase=%s)", task_id[:8], phase)
+            return
 
     title, summary = _extract_title_summary(content)
 
@@ -697,6 +837,19 @@ async def create_task(req: CreateTaskRequest):
                 workflow="research-quick",
             )
             return {"task_id": task_id}
+
+        # Unknown workflow name — look up in DB and run as dynamic pipeline
+        if workflow and workflow not in ("coder",):
+            from coordinator.editor_store import get_workflow as _get_wf
+            wf_def = await _get_wf(db.kb.pool, workflow)
+            if wf_def:
+                pipeline_json = wf_def.get("pipeline_json") or {}
+                steps = pipeline_json.get("steps", [])
+                if not steps:
+                    raise ValueError(f"Workflow '{workflow}' has no pipeline steps defined")
+                first_task_id = await _start_dynamic_pipeline(req.instruction, workflow, steps)
+                return {"task_id": first_task_id}
+            raise ValueError(f"Unknown workflow: '{workflow}'")
 
         # coder, direct agent_type, or no workflow specified (test button path)
         agent_type = req.agent_type or workflow
