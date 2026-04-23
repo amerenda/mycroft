@@ -478,10 +478,10 @@ def _extract_title_summary(content: str) -> tuple[str, str]:
     for line in content.split("\n"):
         line = line.strip()
         if line.startswith("# "):
-            title = line.removeprefix("# ").strip()
+            title = line.removeprefix("# ").strip().strip("*").strip()
             break
         elif line and not line.startswith("#"):
-            title = line[:80]
+            title = line.strip("*").strip()[:80]
             break
 
     summary = ""
