@@ -142,6 +142,10 @@ async def lifespan(app: FastAPI):
     from common.reports import ensure_reports_table
     await ensure_reports_table(db.kb.pool)
 
+    from common.editor_store import ensure_editor_tables, seed_from_filesystem
+    await ensure_editor_tables(db.kb.pool)
+    await seed_from_filesystem(db.kb.pool, _AGENTS_DIR, _WORKFLOWS_DIR)
+
     # LISTEN/NOTIFY for agent completion events
     await db.start_listener(_on_agent_event)
 
@@ -964,90 +968,69 @@ class WorkflowPayload(BaseModel):
 
 @app.get("/api/agents")
 async def list_agents():
-    agents = []
-    for d in sorted(_AGENTS_DIR.iterdir()):
-        if not d.is_dir() or d.name.startswith("_"):
-            continue
-        manifest_path = d / "manifest.yaml"
-        prompts_path = d / "prompts.py"
-        agents.append({
-            "name": d.name,
-            "manifest": manifest_path.read_text() if manifest_path.exists() else "",
-            "prompts": prompts_path.read_text() if prompts_path.exists() else "",
-        })
-    return agents
+    from common.editor_store import list_agents as _list_agents
+    return await _list_agents(db.kb.pool)
 
 
 @app.get("/api/agents/{name}")
 async def get_agent(name: str):
     _safe_name(name)
-    d = _AGENTS_DIR / name
-    if not d.is_dir():
+    from common.editor_store import get_agent as _get_agent
+    agent = await _get_agent(db.kb.pool, name)
+    if not agent:
         raise HTTPException(404, f"Agent '{name}' not found")
-    manifest_path = d / "manifest.yaml"
-    prompts_path = d / "prompts.py"
-    return {
-        "name": name,
-        "manifest": manifest_path.read_text() if manifest_path.exists() else "",
-        "prompts": prompts_path.read_text() if prompts_path.exists() else "",
-    }
+    return agent
 
 
 @app.put("/api/agents/{name}")
 async def save_agent(name: str, payload: AgentPayload):
     _safe_name(name)
-    d = _AGENTS_DIR / name
-    d.mkdir(parents=True, exist_ok=True)
-    (d / "manifest.yaml").write_text(payload.manifest)
-    if payload.prompts:
-        (d / "prompts.py").write_text(payload.prompts)
+    from common.editor_store import save_agent as _save_agent
+    await _save_agent(db.kb.pool, name, payload.manifest, payload.prompts)
     return {"status": "saved", "name": name}
 
 
 @app.delete("/api/agents/{name}")
 async def delete_agent(name: str):
     _safe_name(name)
-    d = _AGENTS_DIR / name
-    if not d.is_dir():
+    from common.editor_store import delete_agent as _delete_agent
+    deleted = await _delete_agent(db.kb.pool, name)
+    if not deleted:
         raise HTTPException(404, f"Agent '{name}' not found")
-    import shutil
-    shutil.rmtree(d)
     return {"status": "deleted", "name": name}
 
 
 @app.get("/api/workflows")
 async def list_workflows():
-    _WORKFLOWS_DIR.mkdir(exist_ok=True)
-    workflows = []
-    for f in sorted(_WORKFLOWS_DIR.glob("*.yaml")):
-        workflows.append({"name": f.stem, "content": f.read_text()})
-    return workflows
+    from common.editor_store import list_workflows as _list_workflows
+    return await _list_workflows(db.kb.pool)
 
 
 @app.get("/api/workflows/{name}")
 async def get_workflow(name: str):
     _safe_name(name)
-    f = _WORKFLOWS_DIR / f"{name}.yaml"
-    if not f.exists():
+    from common.editor_store import get_workflow as _get_workflow
+    wf = await _get_workflow(db.kb.pool, name)
+    if not wf:
         raise HTTPException(404, f"Workflow '{name}' not found")
-    return {"name": name, "content": f.read_text()}
+    return wf
 
 
 @app.put("/api/workflows/{name}")
 async def save_workflow(name: str, payload: WorkflowPayload):
     _safe_name(name)
-    _WORKFLOWS_DIR.mkdir(exist_ok=True)
-    (_WORKFLOWS_DIR / f"{name}.yaml").write_text(payload.content)
+    from common.editor_store import save_workflow as _save_workflow
+    await _save_workflow(db.kb.pool, name, payload.content)
     return {"status": "saved", "name": name}
 
 
 @app.delete("/api/workflows/{name}")
 async def delete_workflow(name: str):
     _safe_name(name)
-    f = _WORKFLOWS_DIR / f"{name}.yaml"
-    if not f.exists():
+    from common.editor_store import delete_workflow as _delete_workflow
+    deleted = await _delete_workflow(db.kb.pool, name)
+    if not deleted:
         raise HTTPException(404, f"Workflow '{name}' not found")
-    f.unlink()
     return {"status": "deleted", "name": name}
 
 
