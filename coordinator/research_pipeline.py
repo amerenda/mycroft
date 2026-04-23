@@ -63,13 +63,16 @@ _EFFORT_TO_WORKFLOW = {
 }
 
 
-def resolve_workflow(workflow: str | None, effort: str | None) -> str:
-    """Return canonical workflow name, accepting either workflow or deprecated effort."""
+def resolve_workflow(workflow: str | None, effort: str | None) -> str | None:
+    """Return canonical workflow name, accepting either workflow or deprecated effort.
+
+    Returns None when neither is provided — caller runs agent directly, no pipeline.
+    """
     if workflow:
         return workflow
     if effort:
         return _EFFORT_TO_WORKFLOW.get(effort, "research-regular")
-    return "research-regular"
+    return None
 
 GATHERER_PROMPT = """You are a research assistant. Your ONLY job is to search the web and gather information.
 

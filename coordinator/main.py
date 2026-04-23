@@ -698,8 +698,10 @@ async def create_task(req: CreateTaskRequest):
             )
             return {"task_id": task_id}
 
-        # coder or explicit agent_type (backwards compat)
+        # coder, direct agent_type, or no workflow specified (test button path)
         agent_type = req.agent_type or workflow
+        if not agent_type:
+            raise ValueError("workflow or agent_type is required")
         task_id = await _handle_engineering_task(
             instruction=req.instruction,
             agent_type=agent_type,

@@ -558,7 +558,7 @@ async function loadModels() {
       .filter(m => m.downloaded !== false)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
 
-    ['model', 'gatherModel', 'writeModel'].forEach(selId => {
+    ['model', 'gatherModel', 'writeModel', 'agentModel'].forEach(selId => {
       const el = document.getElementById(selId);
       list.forEach(m => {
         const opt = document.createElement('option');
@@ -586,27 +586,31 @@ backend: k8s
 max_concurrent: 2
 max_iterations: 10
 tools:
-  - web
-`;
-
-const AGENT_PROMPTS_TEMPLATE = `"""System prompt supplement for my-agent."""
-
-SYSTEM_SUPPLEMENT = """
-# Identity
-
-You are a ...
-
-# Protocol
-
-1. ...
-
-# Rules
-
-- ...
-"""
+  - web_search
+  - web_read
 `;
 
 let _currentAgent = null;
+let _agentTestTimer = null;
+
+function _extractYamlField(yaml, field) {
+  const m = yaml.match(new RegExp(`^${field}:\\s*(.+)`, 'm'));
+  return m ? m[1].trim() : '';
+}
+
+function _updateYamlField(yaml, field, value) {
+  const re = new RegExp(`^(${field}:\\s*).*`, 'm');
+  return re.test(yaml) ? yaml.replace(re, `$1${value}`) : yaml + `\n${field}: ${value}`;
+}
+
+function _extractSystemPrompt(prompts) {
+  const m = prompts.match(/SYSTEM_SUPPLEMENT\s*=\s*"""\s*([\s\S]*?)\s*"""/);
+  return m ? m[1].trim() : '';
+}
+
+function _wrapSystemPrompt(name, content) {
+  return `"""System prompt for ${name}."""\n\nSYSTEM_SUPPLEMENT = """\n${content}\n"""\n`;
+}
 
 async function loadAgents() {
   try {
@@ -633,10 +637,25 @@ async function selectAgent(name) {
     _currentAgent = name;
     document.getElementById('agentName').value = name;
     document.getElementById('agentManifest').value = a.manifest;
-    document.getElementById('agentPrompts').value = a.prompts;
+    document.getElementById('agentPrompts').value = a.prompts || '';
+
+    // Structured fields
+    const model = _extractYamlField(a.manifest, 'model');
+    const agentModelEl = document.getElementById('agentModel');
+    if (model && !agentModelEl.querySelector(`option[value="${CSS.escape(model)}"]`)) {
+      const opt = document.createElement('option');
+      opt.value = model; opt.textContent = model;
+      agentModelEl.insertBefore(opt, agentModelEl.options[1] || null);
+    }
+    agentModelEl.value = model;
+    document.getElementById('agentMaxIterations').value = _extractYamlField(a.manifest, 'max_iterations');
+    document.getElementById('agentSystemPrompt').value = _extractSystemPrompt(a.prompts || '');
+
+    document.getElementById('agentTestStatus').style.display = 'none';
+    document.getElementById('agentTestResult').style.display = 'none';
     document.getElementById('agentEditor').style.display = '';
     document.getElementById('agentEmpty').style.display = 'none';
-    loadAgents(); // refresh active state
+    loadAgents();
   } catch (e) {
     alert('Error loading agent: ' + e.message);
   }
@@ -646,7 +665,12 @@ function newAgent() {
   _currentAgent = null;
   document.getElementById('agentName').value = '';
   document.getElementById('agentManifest').value = AGENT_MANIFEST_TEMPLATE;
-  document.getElementById('agentPrompts').value = AGENT_PROMPTS_TEMPLATE;
+  document.getElementById('agentPrompts').value = '';
+  document.getElementById('agentModel').value = 'qwen3:14b';
+  document.getElementById('agentMaxIterations').value = '10';
+  document.getElementById('agentSystemPrompt').value = '';
+  document.getElementById('agentTestStatus').style.display = 'none';
+  document.getElementById('agentTestResult').style.display = 'none';
   document.getElementById('agentEditor').style.display = '';
   document.getElementById('agentEmpty').style.display = 'none';
   document.getElementById('agentName').focus();
@@ -656,8 +680,21 @@ function newAgent() {
 async function saveAgent() {
   const name = document.getElementById('agentName').value.trim();
   if (!name) { alert('Agent name is required'); return; }
-  const manifest = document.getElementById('agentManifest').value;
-  const prompts = document.getElementById('agentPrompts').value;
+
+  // Sync structured fields → raw textareas
+  let manifest = document.getElementById('agentManifest').value;
+  const model = document.getElementById('agentModel').value;
+  const maxIter = document.getElementById('agentMaxIterations').value;
+  if (model) manifest = _updateYamlField(manifest, 'model', model);
+  if (maxIter) manifest = _updateYamlField(manifest, 'max_iterations', maxIter);
+
+  const sysPrompt = document.getElementById('agentSystemPrompt').value.trim();
+  const prompts = sysPrompt
+    ? _wrapSystemPrompt(name, sysPrompt)
+    : document.getElementById('agentPrompts').value;
+
+  document.getElementById('agentManifest').value = manifest;
+  document.getElementById('agentPrompts').value = prompts;
 
   try {
     await api('/api/agents/' + name, {
@@ -674,7 +711,7 @@ async function saveAgent() {
 
 async function deleteAgent() {
   if (!_currentAgent) return;
-  if (!confirm(`Delete agent "${_currentAgent}"? This removes the directory from disk.`)) return;
+  if (!confirm(`Delete agent "${_currentAgent}"?`)) return;
   try {
     await api('/api/agents/' + _currentAgent, { method: 'DELETE' });
     _currentAgent = null;
@@ -684,6 +721,55 @@ async function deleteAgent() {
   } catch (e) {
     alert('Delete failed: ' + e.message);
   }
+}
+
+async function testAgent() {
+  const instruction = document.getElementById('agentTestInstruction').value.trim();
+  if (!instruction || !_currentAgent) return;
+
+  const statusEl = document.getElementById('agentTestStatus');
+  const resultEl = document.getElementById('agentTestResult');
+  const contentEl = document.getElementById('agentTestContent');
+
+  statusEl.style.display = '';
+  statusEl.textContent = 'running';
+  statusEl.className = 'status-badge status-running';
+  resultEl.style.display = '';
+  contentEl.innerHTML = '<p class="empty">Submitting...</p>';
+
+  try {
+    const r = await api('/api/tasks', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ agent_type: _currentAgent, instruction, max_iterations: 6 }),
+    });
+    if (r.task_id) _pollAgentTest(r.task_id);
+  } catch (e) {
+    statusEl.textContent = 'error';
+    statusEl.className = 'status-badge status-failed';
+    contentEl.innerHTML = `<p style="color:#da3633">${esc(e.message)}</p>`;
+  }
+}
+
+function _pollAgentTest(taskId) {
+  if (_agentTestTimer) clearInterval(_agentTestTimer);
+  const statusEl = document.getElementById('agentTestStatus');
+  const contentEl = document.getElementById('agentTestContent');
+
+  _agentTestTimer = setInterval(async () => {
+    try {
+      const task = await api('/api/tasks/' + taskId);
+      if (task.status === 'completed' || task.status === 'failed') {
+        clearInterval(_agentTestTimer);
+        _agentTestTimer = null;
+        statusEl.textContent = task.status;
+        statusEl.className = 'status-badge status-' + task.status;
+        const result = task.result || {};
+        const text = result.summary || result.error || 'No output';
+        contentEl.innerHTML = `<pre>${esc(text)}</pre>`;
+      }
+    } catch (e) { /* still running */ }
+  }, 3000);
 }
 
 // ── Workflows editor ───────────────────────────────────────────────────────────
