@@ -253,8 +253,11 @@ jobs:
   # ── Deploy ───────────────────────────────────────────────────────────────────
 
   deploy:
-    needs: [set-tag, changes, manifest]
-    if: github.event_name != 'pull_request'
+    needs: [set-tag, changes, build-amd64, build-arm64, manifest]
+    if: |
+      github.event_name != 'pull_request' &&
+      needs.build-amd64.result == 'success' &&
+      (needs.manifest.result == 'success' || needs.manifest.result == 'skipped')
     runs-on: arc-runner-set
     steps:
       - uses: actions/checkout@v6
