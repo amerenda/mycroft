@@ -267,10 +267,17 @@ class KBClient:
                     completed_at TIMESTAMPTZ
                 )
             """)
-            await conn.execute("""
-                ALTER TABLE agent_tasks
-                ADD COLUMN IF NOT EXISTS argo_workflow_name TEXT
+            col_exists = await conn.fetchval("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'agent_tasks' AND column_name = 'argo_workflow_name'
             """)
+            if not col_exists:
+                try:
+                    await conn.execute(
+                        "ALTER TABLE agent_tasks ADD COLUMN argo_workflow_name TEXT"
+                    )
+                except Exception as e:
+                    log.warning("Could not add argo_workflow_name column: %s", e)
         log.info("agent_tasks table ready")
 
     async def create_task(

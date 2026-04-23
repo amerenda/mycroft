@@ -473,8 +473,9 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
 
 
 async def _post_to_sazed(record, source: str) -> None:
-    """Post a researcher result to Sazed and notify via Telegram."""
+    """Post a researcher result to Sazed, save to local reports DB, notify via Telegram."""
     import httpx
+    from common.reports import create_report
 
     content = record.content or ""
 
@@ -528,6 +529,19 @@ async def _post_to_sazed(record, source: str) -> None:
 
         log.info("Report posted to Sazed: %s", report_url)
 
+        # Save to local reports DB so UI can display it
+        try:
+            await create_report(
+                db.kb.pool,
+                title=title,
+                content=content,
+                summary=summary,
+                tags=[],
+                source_task_id=task_id,
+            )
+        except Exception as re:
+            log.warning("Failed to save report to local DB: %s", re)
+
         # Send summary + link to Telegram
         if telegram_bot:
             msg = f"{summary}\n\nFull report: {report_url}"
@@ -535,7 +549,19 @@ async def _post_to_sazed(record, source: str) -> None:
 
     except Exception as e:
         log.error("Failed to post report to Sazed: %s", e)
-        # Fallback: send raw content to Telegram
+        # Fallback: save to local DB and send raw content to Telegram
+        try:
+            await create_report(
+                db.kb.pool,
+                title=title,
+                content=content,
+                summary=summary,
+                tags=[],
+                source_task_id=task_id,
+            )
+            log.info("Report saved to local DB (Sazed unavailable)")
+        except Exception as re:
+            log.warning("Failed to save report to local DB: %s", re)
         if telegram_bot:
             try:
                 await telegram_bot.send(f"Agent finished: {source}\n{content[:500]}")
