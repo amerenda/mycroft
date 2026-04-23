@@ -33,12 +33,12 @@ PHASE_CONFIG = {
         "use_pipeline": True,
         "gather": {
             "model": "qwen3.5:9b",
-            "max_iterations": 5,
+            "max_iterations": 8,
             "tools": ["web_search", "web_read", "wiki_read", "run_command"],
         },
         "write": {
             "model": "llama3.1:8b",
-            "max_iterations": 3,
+            "max_iterations": 5,
             "tools": ["write_file", "read_file"],
         },
     },
