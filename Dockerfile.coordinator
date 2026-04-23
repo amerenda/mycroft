@@ -18,8 +18,10 @@ COPY common/ ./common/
 COPY coordinator/ ./coordinator/
 COPY runtime/ ./runtime/
 COPY agents/ ./agents/
+COPY workflows/ ./workflows/
 
-RUN mkdir -p /home/mycroft/.forge && chown -R mycroft:mycroft /home/mycroft
+RUN mkdir -p /home/mycroft/.forge \
+    && chown -R mycroft:mycroft /home/mycroft /app/agents /app/workflows
 USER mycroft
 EXPOSE 8080
 CMD ["uvicorn", "coordinator.main:app", "--host", "0.0.0.0", "--port", "8080"]
