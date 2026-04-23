@@ -66,11 +66,9 @@ jobs:
           CHANGED=$(git diff --name-only "${BEFORE}" HEAD 2>/dev/null || echo "ALL")
 
           # Agent inputs: base Dockerfile, agent Dockerfile, requirements, and
-          # the code directories/files copied into the agent image.
-          # Note: common/reports.py, common/editor_store.py, common/tool_schemas.py
-          # are coordinator-only and do NOT affect the agent container.
+          # all three code directories copied into the image.
           if [[ "$CHANGED" == "ALL" ]] || \
-             echo "$CHANGED" | grep -qE '^(Dockerfile\.agent|requirements-agent\.txt|runtime/|agents/|common/config\.py|common/kb\.py|common/llm\.py|common/metrics\.py|common/models\.py)'; then
+             echo "$CHANGED" | grep -qE '^(Dockerfile\.agent|requirements-agent\.txt|common/|runtime/|agents/)'; then
             echo "agent=true" >> "$GITHUB_OUTPUT"
           else
             echo "agent=false" >> "$GITHUB_OUTPUT"

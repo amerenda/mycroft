@@ -135,14 +135,14 @@ async def lifespan(app: FastAPI):
     # Schema migrations (idempotent)
     await db.kb.ensure_tasks_table()
 
-    from common.tool_schemas import ensure_schema_table, seed_default_schemas
+    from coordinator.tool_schemas import ensure_schema_table, seed_default_schemas
     await ensure_schema_table(db.kb.pool)
     await seed_default_schemas(db.kb.pool)
 
-    from common.reports import ensure_reports_table
+    from coordinator.reports import ensure_reports_table
     await ensure_reports_table(db.kb.pool)
 
-    from common.editor_store import ensure_editor_tables, seed_from_filesystem
+    from coordinator.editor_store import ensure_editor_tables, seed_from_filesystem
     await ensure_editor_tables(db.kb.pool)
     await seed_from_filesystem(db.kb.pool, _AGENTS_DIR, _WORKFLOWS_DIR)
 
@@ -507,7 +507,7 @@ def _extract_title_summary(content: str) -> tuple[str, str]:
 
 async def _handle_researcher_result(record, source: str) -> None:
     """Save researcher result to local DB and optionally post to Sazed + Telegram."""
-    from common.reports import create_report
+    from coordinator.reports import create_report
 
     content = record.content or ""
     task_id = source.split("/")[-1] if "/" in source else ""
@@ -886,7 +886,7 @@ async def telegram_webhook(request: Request):
 # Reports API
 # ---------------------------------------------------------------------------
 
-from common.reports import (
+from coordinator.reports import (
     create_report, get_report, list_reports, update_report,
     delete_report, delete_all_reports,
 )
@@ -941,7 +941,7 @@ async def api_delete_all_reports():
 # Tool Schema API
 # ---------------------------------------------------------------------------
 
-from common.tool_schemas import (
+from coordinator.tool_schemas import (
     get_schema, list_schemas, get_schema_history, upsert_schema, delete_schema,
 )
 
@@ -1036,14 +1036,14 @@ class WorkflowPayload(BaseModel):
 
 @app.get("/api/agents")
 async def list_agents():
-    from common.editor_store import list_agents as _list_agents
+    from coordinator.editor_store import list_agents as _list_agents
     return await _list_agents(db.kb.pool)
 
 
 @app.get("/api/agents/{name}")
 async def get_agent(name: str):
     _safe_name(name)
-    from common.editor_store import get_agent as _get_agent
+    from coordinator.editor_store import get_agent as _get_agent
     agent = await _get_agent(db.kb.pool, name)
     if not agent:
         raise HTTPException(404, f"Agent '{name}' not found")
@@ -1053,7 +1053,7 @@ async def get_agent(name: str):
 @app.put("/api/agents/{name}")
 async def save_agent(name: str, payload: AgentPayload):
     _safe_name(name)
-    from common.editor_store import save_agent as _save_agent
+    from coordinator.editor_store import save_agent as _save_agent
     await _save_agent(db.kb.pool, name, payload.manifest, payload.prompts)
     return {"status": "saved", "name": name}
 
@@ -1061,7 +1061,7 @@ async def save_agent(name: str, payload: AgentPayload):
 @app.delete("/api/agents/{name}")
 async def delete_agent(name: str):
     _safe_name(name)
-    from common.editor_store import delete_agent as _delete_agent
+    from coordinator.editor_store import delete_agent as _delete_agent
     deleted = await _delete_agent(db.kb.pool, name)
     if not deleted:
         raise HTTPException(404, f"Agent '{name}' not found")
@@ -1070,14 +1070,14 @@ async def delete_agent(name: str):
 
 @app.get("/api/workflows")
 async def list_workflows():
-    from common.editor_store import list_workflows as _list_workflows
+    from coordinator.editor_store import list_workflows as _list_workflows
     return await _list_workflows(db.kb.pool)
 
 
 @app.get("/api/workflows/{name}")
 async def get_workflow(name: str):
     _safe_name(name)
-    from common.editor_store import get_workflow as _get_workflow
+    from coordinator.editor_store import get_workflow as _get_workflow
     wf = await _get_workflow(db.kb.pool, name)
     if not wf:
         raise HTTPException(404, f"Workflow '{name}' not found")
@@ -1087,7 +1087,7 @@ async def get_workflow(name: str):
 @app.put("/api/workflows/{name}")
 async def save_workflow(name: str, payload: WorkflowPayload):
     _safe_name(name)
-    from common.editor_store import save_workflow as _save_workflow
+    from coordinator.editor_store import save_workflow as _save_workflow
     await _save_workflow(db.kb.pool, name, payload.content, payload.pipeline_json)
     return {"status": "saved", "name": name}
 
@@ -1095,7 +1095,7 @@ async def save_workflow(name: str, payload: WorkflowPayload):
 @app.delete("/api/workflows/{name}")
 async def delete_workflow(name: str):
     _safe_name(name)
-    from common.editor_store import delete_workflow as _delete_workflow
+    from coordinator.editor_store import delete_workflow as _delete_workflow
     deleted = await _delete_workflow(db.kb.pool, name)
     if not deleted:
         raise HTTPException(404, f"Workflow '{name}' not found")
