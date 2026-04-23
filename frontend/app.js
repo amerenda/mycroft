@@ -258,7 +258,7 @@ function pollMycroftTask(taskId) {
         clearInterval(pollTimer);
         pollTimer = null;
         loadRightTasks();
-        if (task.status === 'completed') loadRightReports();
+        if (task.status === 'completed') loadReports();
 
         const statusEl = document.getElementById('traceStatus');
         statusEl.textContent = task.status;
@@ -465,53 +465,112 @@ async function clearAllTasks() {
   }
 }
 
-// ── Reports sub-tab ───────────────────────────────────────────────────────────
+// ── Reports tab ───────────────────────────────────────────────────────────────
 
 const md = window.markdownit ? window.markdownit() : null;
 
-async function loadRightReports() {
+let _currentReport = null;
+let _reportRawMode = false;
+let _reportContent = '';
+
+async function loadReports() {
   try {
-    const reports = await api('/api/reports');
-    const el = document.getElementById('rightReportList');
+    const reports = await api('/api/reports?limit=50');
+    const el = document.getElementById('reportList');
     if (!reports.length) {
-      el.innerHTML = '<p class="empty">No reports yet. Run a researcher task to generate one.</p>';
+      el.innerHTML = '<p class="empty" style="padding:12px">No reports yet.</p>';
       return;
     }
     el.innerHTML = reports.map(r => {
       const wf = r.workflow || r.effort || '';
+      const tier = wf.split('-').pop();
+      const date = r.created_at ? new Date(r.created_at).toLocaleDateString() : '';
       return `
-      <div class="report-row" onclick="viewRightReport('${r.id}')">
-        <div class="report-title">
-          ${esc(r.title)}
-          ${wf ? `<span class="effort-badge effort-${wf.split('-').pop()}">${wf}</span>` : ''}
+      <div class="report-list-item${_currentReport === r.id ? ' active' : ''}"
+           onclick="selectReport('${r.id}')">
+        <div class="report-list-title">${esc(r.title)}</div>
+        <div class="report-list-meta">
+          ${wf ? `<span class="effort-badge effort-${tier}">${wf}</span>` : ''}
+          <span>${date}</span>
         </div>
-        <div class="report-summary">${esc(r.summary || '').slice(0, 150)}</div>
-        <div class="report-meta">${r.created_at ? new Date(r.created_at).toLocaleDateString() : ''}</div>
       </div>`;
     }).join('');
   } catch (e) {
-    document.getElementById('rightReportList').innerHTML = '<p class="empty">Error loading reports</p>';
+    document.getElementById('reportList').innerHTML = '<p class="empty" style="padding:12px">Error loading reports</p>';
   }
 }
 
-async function viewRightReport(reportId) {
-  const panel = document.getElementById('rightReportPanel');
-  const titleEl = document.getElementById('rightReportTitle');
-  const contentEl = document.getElementById('rightReportContent');
-
-  panel.style.display = 'block';
+async function selectReport(id) {
+  _currentReport = id;
+  _reportRawMode = false;
+  document.getElementById('reportRawToggle').textContent = 'Raw';
+  document.getElementById('reportDetail').style.display = '';
+  document.getElementById('reportEmpty').style.display = 'none';
+  document.getElementById('reportDetailRendered').style.display = '';
+  document.getElementById('reportDetailRaw').style.display = 'none';
+  document.getElementById('reportDetailTitle').textContent = 'Loading…';
+  document.getElementById('reportDetailMeta').innerHTML = '';
+  document.getElementById('reportDetailRendered').innerHTML = '<p class="empty">Loading…</p>';
+  loadReports();
 
   try {
-    const r = await api('/api/reports/' + reportId);
-    titleEl.textContent = r.title;
-    if (md) {
-      contentEl.innerHTML = md.render(r.content);
-    } else {
-      contentEl.innerHTML = '<pre>' + esc(r.content) + '</pre>';
-    }
+    const r = await api('/api/reports/' + id);
+    _reportContent = r.content || '';
+
+    document.getElementById('reportDetailTitle').textContent = r.title || id;
+
+    const wf = r.workflow || r.effort || '';
+    const date = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+    const models = r.models_used && Object.keys(r.models_used).length
+      ? Object.entries(r.models_used).map(([k, v]) => `${k}: ${v}`).join(' · ')
+      : '';
+    const build = r.commit_sha ? `build: ${r.commit_sha}` : '';
+    const metaParts = [
+      wf ? `<span class="effort-badge effort-${wf.split('-').pop()}">${wf}</span>` : '',
+      date ? `<span>${date}</span>` : '',
+      models ? `<span>${esc(models)}</span>` : '',
+      build ? `<span>${esc(build)}</span>` : '',
+    ].filter(Boolean);
+    document.getElementById('reportDetailMeta').innerHTML = metaParts.join('<span class="meta-sep">·</span>');
+
+    _renderReportContent();
   } catch (e) {
-    titleEl.textContent = reportId.slice(0, 8);
-    contentEl.innerHTML = '<p class="empty">Error loading report</p>';
+    document.getElementById('reportDetailTitle').textContent = 'Error';
+    document.getElementById('reportDetailRendered').innerHTML = `<p class="empty">${esc(e.message)}</p>`;
+  }
+}
+
+function _renderReportContent() {
+  const rendered = document.getElementById('reportDetailRendered');
+  const raw = document.getElementById('reportDetailRaw');
+  if (_reportRawMode) {
+    rendered.style.display = 'none';
+    raw.style.display = '';
+    raw.textContent = _reportContent;
+  } else {
+    raw.style.display = 'none';
+    rendered.style.display = '';
+    rendered.innerHTML = md ? md.render(_reportContent) : '<pre>' + esc(_reportContent) + '</pre>';
+  }
+}
+
+function toggleReportRaw() {
+  _reportRawMode = !_reportRawMode;
+  document.getElementById('reportRawToggle').textContent = _reportRawMode ? 'Rendered' : 'Raw';
+  _renderReportContent();
+}
+
+async function deleteCurrentReport() {
+  if (!_currentReport) return;
+  if (!confirm('Delete this report?')) return;
+  try {
+    await api('/api/reports/' + _currentReport, { method: 'DELETE' });
+    _currentReport = null;
+    document.getElementById('reportDetail').style.display = 'none';
+    document.getElementById('reportEmpty').style.display = '';
+    loadReports();
+  } catch (e) {
+    alert('Error: ' + e.message);
   }
 }
 
@@ -519,8 +578,10 @@ async function clearAllReports() {
   if (!confirm('Delete ALL reports? This cannot be undone.')) return;
   try {
     await api('/api/reports', { method: 'DELETE' });
-    document.getElementById('rightReportPanel').style.display = 'none';
-    loadRightReports();
+    _currentReport = null;
+    document.getElementById('reportDetail').style.display = 'none';
+    document.getElementById('reportEmpty').style.display = '';
+    loadReports();
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -950,8 +1011,8 @@ async function deleteWorkflow() {
 
 loadModels();
 loadRightTasks();
-loadRightReports();
+loadReports();
 loadAgents();
 loadWorkflows();
 setInterval(loadRightTasks, 30000);
-setInterval(loadRightReports, 60000);
+setInterval(loadReports, 60000);

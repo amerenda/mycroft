@@ -14,6 +14,7 @@
     <button class="tab active" data-tab="runner">Test Runner</button>
     <button class="tab" data-tab="agents">Agents</button>
     <button class="tab" data-tab="workflows">Workflows</button>
+    <button class="tab" data-tab="reports">Reports</button>
   </nav>
 </header>
 
@@ -157,11 +158,10 @@
         </div>
       </div>
 
-      <!-- RIGHT: tabbed panel — Tasks / Reports / Trace -->
+      <!-- RIGHT: tabbed panel — Tasks / Trace -->
       <div class="panel right">
         <div class="right-tab-bar">
           <button class="rtab active" data-rtab="tasks" onclick="setRightTab('tasks')">Tasks</button>
-          <button class="rtab" data-rtab="reports" onclick="setRightTab('reports')">Reports</button>
           <button class="rtab" data-rtab="trace" onclick="setRightTab('trace')">
             Trace <span id="traceStatus" class="status-badge"></span>
           </button>
@@ -180,22 +180,6 @@
               <button class="btn-tool-ctrl" onclick="document.getElementById('rightConvPanel').style.display='none'">✕</button>
             </div>
             <div id="rightConvContent" class="conv-body"></div>
-          </div>
-        </div>
-
-        <!-- Reports sub-tab -->
-        <div id="rtab-reports" class="rtab-content">
-          <div class="rtab-toolbar">
-            <button class="btn-tool-ctrl" onclick="loadRightReports()">↺ Refresh</button>
-            <button class="btn-danger" onclick="clearAllReports()">Clear All</button>
-          </div>
-          <div id="rightReportList"><p class="empty">Loading…</p></div>
-          <div id="rightReportPanel" class="conv-panel" style="display:none">
-            <div class="conv-panel-header">
-              <span id="rightReportTitle" class="conv-panel-title"></span>
-              <button class="btn-tool-ctrl" onclick="document.getElementById('rightReportPanel').style.display='none'">✕</button>
-            </div>
-            <div id="rightReportContent" class="report-body conv-body"></div>
           </div>
         </div>
 
@@ -338,6 +322,43 @@
 
       <div class="editor-empty" id="workflowEmpty">
         <p>Select a workflow to edit, or create a new one.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- REPORTS TAB -->
+  <section id="tab-reports" class="tab-content">
+    <div class="reports-split">
+
+      <!-- Left: report list -->
+      <div class="editor-list-panel">
+        <div class="editor-list-header">
+          <span>Reports</span>
+          <div style="display:flex;gap:6px">
+            <button class="btn-tool-ctrl" onclick="loadReports()">↺</button>
+            <button class="btn-danger" style="padding:3px 8px;font-size:0.75em" onclick="clearAllReports()">Clear All</button>
+          </div>
+        </div>
+        <div id="reportList" class="editor-list"></div>
+      </div>
+
+      <!-- Right: report detail -->
+      <div class="report-detail" id="reportDetail" style="display:none">
+        <div class="editor-pane-header">
+          <span id="reportDetailTitle" class="report-detail-title"></span>
+          <div class="editor-pane-actions">
+            <button class="btn-tool-ctrl" id="reportRawToggle" onclick="toggleReportRaw()">Raw</button>
+            <button class="btn-danger" onclick="deleteCurrentReport()">Delete</button>
+          </div>
+        </div>
+        <div class="report-detail-meta" id="reportDetailMeta"></div>
+        <div id="reportDetailRendered" class="report-rendered report-body"></div>
+        <pre id="reportDetailRaw" class="report-raw" style="display:none"></pre>
+      </div>
+
+      <div class="editor-empty" id="reportEmpty">
+        <p>Select a report to read it.</p>
       </div>
 
     </div>
