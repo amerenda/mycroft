@@ -705,6 +705,20 @@ function _updateYamlField(yaml, field, value) {
   return re.test(yaml) ? yaml.replace(re, `$1${value}`) : yaml + `\n${field}: ${value}`;
 }
 
+function _extractResourceField(yaml, field) {
+  const m = yaml.match(new RegExp(`^  ${field}:\\s*["']?([^"'\\n]+)["']?\\s*$`, 'm'));
+  return m ? m[1].trim() : '';
+}
+
+function _setResources(yaml, memory, cpu) {
+  const parts = [];
+  if (memory) parts.push(`  memory: ${memory}`);
+  if (cpu) parts.push(`  cpu: "${cpu}"`);
+  const block = parts.length ? `resources:\n${parts.join('\n')}` : '';
+  const stripped = yaml.replace(/^resources:(?:\n(?:[ \t].*))*\n?/m, '').trimEnd();
+  return block ? stripped + '\n' + block + '\n' : stripped + '\n';
+}
+
 function _extractPerms(yaml, type) {
   const re = new RegExp(`^  ${type}:\\s*\\n((?:    - .+\\n?)*)`, 'm');
   const m = yaml.match(re);
@@ -771,6 +785,8 @@ async function selectAgent(name) {
     }
     agentModelEl.value = model;
     document.getElementById('agentMaxIterations').value = _extractYamlField(a.manifest, 'max_iterations');
+    document.getElementById('agentMemory').value = _extractResourceField(a.manifest, 'memory');
+    document.getElementById('agentCpu').value = _extractResourceField(a.manifest, 'cpu');
     document.getElementById('agentSystemPrompt').value = _extractSystemPrompt(a.prompts || '');
 
     document.getElementById('agentPermsRead').value = _extractPerms(a.manifest, 'read');
@@ -795,6 +811,8 @@ function newAgent() {
   document.getElementById('agentPrompts').value = '';
   document.getElementById('agentModel').value = 'qwen3:14b';
   document.getElementById('agentMaxIterations').value = '10';
+  document.getElementById('agentMemory').value = '';
+  document.getElementById('agentCpu').value = '';
   document.getElementById('agentSystemPrompt').value = '';
   document.getElementById('agentPermsRead').value = '';
   document.getElementById('agentPermsWrite').value = '';
@@ -816,6 +834,9 @@ async function saveAgent() {
   const maxIter = document.getElementById('agentMaxIterations').value;
   if (model) manifest = _updateYamlField(manifest, 'model', model);
   if (maxIter) manifest = _updateYamlField(manifest, 'max_iterations', maxIter);
+  const memory = document.getElementById('agentMemory').value.trim();
+  const cpu = document.getElementById('agentCpu').value.trim();
+  if (memory || cpu) manifest = _setResources(manifest, memory, cpu);
 
   const sysPrompt = document.getElementById('agentSystemPrompt').value.trim();
   const prompts = sysPrompt
