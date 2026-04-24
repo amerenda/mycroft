@@ -723,6 +723,8 @@ async function selectAgent(name) {
     document.getElementById('agentMaxIterations').value = _extractYamlField(a.manifest, 'max_iterations');
     document.getElementById('agentSystemPrompt').value = _extractSystemPrompt(a.prompts || '');
 
+    document.getElementById('agentTestInstruction').value = '';
+    document.getElementById('agentTestContext').value = '';
     document.getElementById('agentTestStatus').style.display = 'none';
     document.getElementById('agentTestResult').style.display = 'none';
     document.getElementById('agentEditor').style.display = '';
@@ -799,12 +801,25 @@ async function deleteAgent() {
 }
 
 async function testAgent() {
-  const instruction = document.getElementById('agentTestInstruction').value.trim();
-  if (!instruction || !_currentAgent) return;
+  const rawInstruction = document.getElementById('agentTestInstruction').value.trim();
+  const context = document.getElementById('agentTestContext').value.trim();
 
   const statusEl = document.getElementById('agentTestStatus');
   const resultEl = document.getElementById('agentTestResult');
   const contentEl = document.getElementById('agentTestContent');
+
+  if (!_currentAgent) {
+    alert('Select an agent first.');
+    return;
+  }
+  if (!rawInstruction) {
+    alert('Enter an instruction.');
+    return;
+  }
+
+  const instruction = context
+    ? `Original question: ${rawInstruction}\n\nPrevious step output:\n${context}`
+    : rawInstruction;
 
   statusEl.style.display = '';
   statusEl.textContent = 'running';

@@ -253,7 +253,11 @@
         <!-- Test agent -->
         <div class="editor-section">
           <div class="editor-file-label">Test Agent <span class="editor-file-hint">— runs this agent in isolation, no pipeline</span></div>
-          <textarea id="agentTestInstruction" class="editor-textarea" rows="2" placeholder="Enter an instruction to test this agent..."></textarea>
+          <textarea id="agentTestInstruction" class="editor-textarea" rows="2" placeholder="Instruction / question..."></textarea>
+          <div class="editor-file-label" style="margin-top:8px;font-size:0.78em;color:#8b949e">
+            Context <span class="editor-file-hint">— optional: paste previous step output to skip gather phase</span>
+          </div>
+          <textarea id="agentTestContext" class="editor-textarea" rows="3" placeholder="(optional) paste known-good research output here..."></textarea>
           <div class="actions" style="margin-top:8px">
             <button class="btn-secondary" onclick="testAgent()">Run Agent</button>
             <span id="agentTestStatus" class="status-badge" style="display:none"></span>

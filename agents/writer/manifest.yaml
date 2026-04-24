@@ -16,3 +16,4 @@ permissions:
   write:
     - /agents/writer/results
     - /tasks
+    - /notifications/alex
