@@ -1145,6 +1145,7 @@ async function selectWorkflow(name) {
     document.getElementById('workflowEmpty').style.display = 'none';
     loadWorkflows();
     loadWorkflowDropdown();
+    loadWorkflowRunHistory(name);
   } catch (e) {
     alert('Error loading workflow: ' + e.message);
   }
@@ -1218,6 +1219,37 @@ async function cloneWorkflow() {
     await selectWorkflow(name);
   } catch (e) {
     alert('Clone failed: ' + e.message);
+  }
+}
+
+async function loadWorkflowRunHistory(name) {
+  const el = document.getElementById('workflowRunHistory');
+  el.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const runs = await api('/api/workflows/' + name + '/runs?limit=20');
+    if (!runs.length) { el.innerHTML = '<p class="empty">No runs yet</p>'; return; }
+    // Group by root tasks only (no gather-phase dupes) — prefer 'write' and standalone
+    const visible = runs.filter(r => {
+      const phase = r.config?.phase || '';
+      return phase !== 'gather' && !phase.startsWith('pipeline-step-') || r.config?.is_last_step;
+    });
+    el.innerHTML = (visible.length ? visible : runs).map(r => {
+      const date = r.created_at ? new Date(r.created_at).toLocaleString() : '';
+      const dur = r.completed_at && r.created_at
+        ? Math.round((new Date(r.completed_at) - new Date(r.created_at)) / 1000) + 's'
+        : '…';
+      const phase = r.config?.phase || '';
+      return `
+        <div class="wf-run-row" onclick="viewRightConversation('${r.id}');switchTab('runner');setRightTab('tasks')">
+          <span class="wf-run-date">${date}</span>
+          <span class="wf-run-agent">${esc(r.agent_type)}</span>
+          ${phase ? `<span class="wf-run-phase">${esc(phase)}</span>` : ''}
+          <span class="status-badge status-${r.status}">${r.status}</span>
+          <span class="wf-run-phase">${dur}</span>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    el.innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
   }
 }
 

@@ -1359,6 +1359,31 @@ async def list_workflows():
     return await _list_workflows(db.kb.pool)
 
 
+@app.get("/api/workflows/{name}/runs")
+async def get_workflow_runs(name: str, limit: int = 20):
+    """List recent task executions for a named workflow."""
+    _safe_name(name)
+    async with db.kb.pool.acquire() as conn:
+        rows = await conn.fetch(
+            "SELECT * FROM agent_tasks WHERE config->>'workflow' = $1 "
+            "ORDER BY created_at DESC LIMIT $2",
+            name, limit,
+        )
+    from common.models import TaskRecord
+    results = []
+    for r in rows:
+        results.append({
+            "id": str(r["id"]),
+            "agent_type": r["agent_type"],
+            "status": r["status"],
+            "trigger": r["trigger"],
+            "config": json.loads(r["config"]) if r["config"] else {},
+            "created_at": str(r["created_at"]) if r["created_at"] else None,
+            "completed_at": str(r["completed_at"]) if r["completed_at"] else None,
+        })
+    return results
+
+
 @app.get("/api/workflows/{name}")
 async def get_workflow(name: str):
     _safe_name(name)

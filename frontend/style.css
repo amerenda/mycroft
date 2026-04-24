@@ -822,6 +822,22 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
 }
 .btn-cancel:hover { background: #da363322; }
 
+/* ── Workflow run history ────────────────────────────────────────────────── */
+.wf-run-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 0;
+  border-bottom: 1px solid #21262d;
+  font-size: 0.82em;
+  cursor: pointer;
+}
+.wf-run-row:hover { background: #161b22; }
+.wf-run-row:last-child { border-bottom: none; }
+.wf-run-date { color: #8b949e; min-width: 120px; }
+.wf-run-agent { color: #c9d1d9; }
+.wf-run-phase { color: #484f58; font-size: 0.85em; }
+
 /* ── Schema history ──────────────────────────────────────────────────────── */
 .schema-history-row {
   display: flex;
