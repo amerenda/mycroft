@@ -1560,6 +1560,72 @@ async def kb_for_task(task_id: str):
 
 
 # ---------------------------------------------------------------------------
+# Tool Bridge — synchronous tool execution without Argo pods
+# ---------------------------------------------------------------------------
+
+class BridgeToolRequest(BaseModel):
+    tool: str
+    args: dict[str, Any] = {}
+
+
+@app.post("/api/bridge/run-tool")
+async def bridge_run_tool(req: BridgeToolRequest):
+    """Execute a tool synchronously in-process. For use by Open WebUI / chat clients."""
+    from runtime.tools.web import WebSearch, WebRead, WikiRead
+    from runtime.tools.shell import RunCommand
+
+    tool_name = req.tool
+    args = req.args
+
+    if tool_name == "web_search":
+        tool = WebSearch()
+        result = await tool.execute(args)
+
+    elif tool_name == "web_read":
+        tool = WebRead()
+        result = await tool.execute(args)
+
+    elif tool_name == "wiki_read":
+        tool = WikiRead()
+        result = await tool.execute(args)
+
+    elif tool_name == "run_command":
+        workspace = args.pop("workspace", "/tmp/bridge-workspace")
+        import os
+        os.makedirs(workspace, exist_ok=True)
+        tool = RunCommand(workspace=workspace)
+        result = await tool.execute(args)
+
+    elif tool_name == "kb_search":
+        query = args.get("query", "")
+        scopes = args.get("scopes", ["/"])
+        limit = int(args.get("limit", 5))
+        records = await db.kb.recall(query, scopes, limit=limit)
+        result = "\n\n".join(
+            f"[{r.scope}] (score relevance)\n{r.content}" for r in records
+        ) or "(no results)"
+
+    elif tool_name == "kb_write":
+        scope = args.get("scope", "")
+        content = args.get("content", "")
+        if not scope or not content:
+            raise HTTPException(400, "scope and content are required")
+        record_id = await db.kb.write(
+            scope,
+            content,
+            importance=float(args.get("importance", 0.5)),
+            source="bridge",
+        )
+        result = f"Written to KB: {scope} (id={record_id})"
+
+    else:
+        raise HTTPException(400, f"Unknown tool: {tool_name!r}. "
+                            f"Available: web_search, web_read, wiki_read, run_command, kb_search, kb_write")
+
+    return {"tool": tool_name, "result": result}
+
+
+# ---------------------------------------------------------------------------
 # Debug UI
 # ---------------------------------------------------------------------------
 
