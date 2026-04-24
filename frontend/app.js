@@ -13,6 +13,11 @@ document.querySelectorAll('.tab').forEach(btn => {
   });
 });
 
+function switchTab(name) {
+  document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
+}
+
 // ── Right-panel sub-tabs ──────────────────────────────────────────────────────
 
 function setRightTab(name) {
@@ -1108,6 +1113,31 @@ async function saveWorkflow() {
   } catch (e) {
     alert('Save failed: ' + e.message);
   }
+}
+
+function runWorkflowFromEditor(quick = false) {
+  if (!_currentWorkflow) return;
+  switchTab('runner');
+  loadWorkflowDropdown().then(() => {
+    const sel = document.getElementById('workflow');
+    sel.value = _currentWorkflow;
+    if (sel.value !== _currentWorkflow) {
+      const opt = document.createElement('option');
+      opt.value = _currentWorkflow;
+      opt.textContent = _currentWorkflow;
+      sel.appendChild(opt);
+      sel.value = _currentWorkflow;
+    }
+    onWorkflowChange();
+    const iterEl = document.getElementById('maxIterations');
+    if (quick) {
+      document.getElementById('advancedOptions').open = true;
+      iterEl.value = '2';
+    } else {
+      iterEl.value = '';
+    }
+    document.getElementById('instruction').focus();
+  });
 }
 
 async function deleteWorkflow() {
