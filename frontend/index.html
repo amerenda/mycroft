@@ -362,6 +362,7 @@
       <div class="editor-list-panel">
         <div class="editor-list-header">
           <span>Tool Schemas</span>
+          <button class="btn-tool-ctrl" onclick="newSchema()">+ New</button>
         </div>
         <div id="schemaList" class="editor-list"></div>
       </div>
@@ -369,7 +370,7 @@
       <!-- Right: editor -->
       <div class="editor-pane" id="schemaEditor" style="display:none">
         <div class="editor-pane-header">
-          <span id="schemaEditorName" style="font-weight:600;font-size:1em"></span>
+          <input id="schemaEditorName" class="editor-name-input" type="text" placeholder="tool-name">
           <div class="editor-pane-actions">
             <button class="btn-primary" onclick="saveSchema()">Save</button>
             <button class="btn-danger" onclick="deleteSchemaSelected()">Delete</button>

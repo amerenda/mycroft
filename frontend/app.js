@@ -1149,11 +1149,44 @@ async function loadSchemas() {
   }
 }
 
+const SCHEMA_TEMPLATE = {
+  type: 'function',
+  function: {
+    name: 'my_tool',
+    description: 'What this tool does',
+    parameters: {
+      type: 'object',
+      properties: {
+        input: { type: 'string', description: 'The input value' },
+      },
+      required: ['input'],
+    },
+  },
+};
+
+function newSchema() {
+  _currentSchema = null;
+  const nameEl = document.getElementById('schemaEditorName');
+  nameEl.value = '';
+  nameEl.readOnly = false;
+  document.getElementById('schemaVersion').value = '1.0.0';
+  document.getElementById('schemaDbVersion').value = '—';
+  document.getElementById('schemaChangelog').value = '';
+  document.getElementById('schemaContent').value = JSON.stringify(SCHEMA_TEMPLATE, null, 2);
+  document.getElementById('schemaHistory').innerHTML = '';
+  document.getElementById('schemaEditor').style.display = '';
+  document.getElementById('schemaEmpty').style.display = 'none';
+  nameEl.focus();
+  loadSchemas();
+}
+
 async function selectSchema(name) {
   try {
     const s = await api('/api/tools/schemas/' + name);
     _currentSchema = name;
-    document.getElementById('schemaEditorName').textContent = name;
+    const nameEl = document.getElementById('schemaEditorName');
+    nameEl.value = name;
+    nameEl.readOnly = true;
     document.getElementById('schemaVersion').value = s.schema_version || '1.0.0';
     document.getElementById('schemaDbVersion').value = 'v' + s.version;
     document.getElementById('schemaChangelog').value = '';
@@ -1187,7 +1220,8 @@ async function loadSchemaHistory(name) {
 }
 
 async function saveSchema() {
-  if (!_currentSchema) return;
+  const name = document.getElementById('schemaEditorName').value.trim();
+  if (!name) { alert('Tool name is required'); return; }
   let schema;
   try {
     schema = JSON.parse(document.getElementById('schemaContent').value);
@@ -1198,15 +1232,17 @@ async function saveSchema() {
   const schema_version = document.getElementById('schemaVersion').value.trim() || '1.0.0';
   const changelog = document.getElementById('schemaChangelog').value.trim();
   try {
-    const r = await api('/api/tools/schemas/' + _currentSchema, {
+    const r = await api('/api/tools/schemas/' + name, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ schema, schema_version, changelog, updated_by: 'ui' }),
     });
+    _currentSchema = name;
+    document.getElementById('schemaEditorName').readOnly = true;
     document.getElementById('schemaDbVersion').value = 'v' + r.version;
     document.getElementById('schemaChangelog').value = '';
     loadSchemas();
-    loadSchemaHistory(_currentSchema);
+    loadSchemaHistory(name);
   } catch (e) {
     alert('Save failed: ' + e.message);
   }
@@ -1218,6 +1254,8 @@ async function deleteSchemaSelected() {
   try {
     await api('/api/tools/schemas/' + _currentSchema, { method: 'DELETE' });
     _currentSchema = null;
+    document.getElementById('schemaEditorName').value = '';
+    document.getElementById('schemaEditorName').readOnly = false;
     document.getElementById('schemaEditor').style.display = 'none';
     document.getElementById('schemaEmpty').style.display = '';
     loadSchemas();
