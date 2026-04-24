@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+import collections
 import json
 import logging
+import time
 from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
@@ -49,6 +51,32 @@ llm: LLMClient
 
 # SSE client queues — one per connected browser tab
 _sse_clients: list[asyncio.Queue] = []
+
+# ---------------------------------------------------------------------------
+# In-memory log buffer
+# ---------------------------------------------------------------------------
+
+_LOG_BUFFER: collections.deque = collections.deque(maxlen=2000)
+
+
+class _UILogHandler(logging.Handler):
+    """Captures log records into the ring buffer for the Logs UI tab."""
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            _LOG_BUFFER.append({
+                "ts": record.created,
+                "level": record.levelname,
+                "logger": record.name,
+                "msg": self.format(record),
+            })
+        except Exception:
+            pass
+
+
+_ui_log_handler = _UILogHandler()
+_ui_log_handler.setFormatter(logging.Formatter("%(message)s"))
+logging.getLogger().addHandler(_ui_log_handler)
 
 
 async def _broadcast_sse(event_type: str, data: dict) -> None:
@@ -988,6 +1016,41 @@ async def sse_stream():
 
     return StreamingResponse(stream(), media_type="text/event-stream",
                              headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/logs")
+async def api_logs(
+    logger: str | None = None,
+    level: str | None = None,
+    q: str | None = None,
+    since: float | None = None,
+    limit: int = 500,
+):
+    """Return recent log records from the in-memory ring buffer.
+
+    Query params:
+      logger — filter by logger name prefix (e.g. "coordinator", "runtime")
+      level  — minimum level: DEBUG, INFO, WARNING, ERROR
+      q      — substring search in message text
+      since  — Unix timestamp; return only records newer than this
+      limit  — max records (default 500, max 2000)
+    """
+    level_order = {"DEBUG": 10, "INFO": 20, "WARNING": 30, "ERROR": 40, "CRITICAL": 50}
+    min_level = level_order.get((level or "").upper(), 0)
+    limit = min(max(1, limit), 2000)
+
+    records = list(_LOG_BUFFER)
+    if since is not None:
+        records = [r for r in records if r["ts"] > since]
+    if logger:
+        records = [r for r in records if r["logger"].startswith(logger)]
+    if min_level:
+        records = [r for r in records if level_order.get(r["level"], 0) >= min_level]
+    if q:
+        q_lower = q.lower()
+        records = [r for r in records if q_lower in r["msg"].lower()]
+
+    return records[-limit:]
 
 
 @app.get("/api/tasks/{task_id}/pipeline")
