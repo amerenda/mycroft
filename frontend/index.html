@@ -221,6 +221,7 @@
         <div class="editor-pane-header">
           <input id="agentName" class="editor-name-input" type="text" placeholder="agent-name">
           <div class="editor-pane-actions">
+            <button class="btn-tool-ctrl" onclick="cloneAgent()" title="Duplicate this agent with a new name">Clone</button>
             <button class="btn-primary" onclick="saveAgent()">Save</button>
             <button class="btn-danger" onclick="deleteAgent()">Delete</button>
           </div>
@@ -318,6 +319,7 @@
           <div class="editor-pane-actions">
             <button class="btn-secondary" onclick="runWorkflowFromEditor(false)" title="Switch to runner with this workflow selected">Run</button>
             <button class="btn-tool-ctrl" onclick="runWorkflowFromEditor(true)" title="Run with max_iterations=2 per step for quick iteration">Test</button>
+            <button class="btn-tool-ctrl" onclick="cloneWorkflow()" title="Duplicate this workflow with a new name">Clone</button>
             <button class="btn-primary" onclick="saveWorkflow()">Save</button>
             <button class="btn-danger" onclick="deleteWorkflow()">Delete</button>
           </div>

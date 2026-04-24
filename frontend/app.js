@@ -829,6 +829,26 @@ async function saveAgent() {
   }
 }
 
+async function cloneAgent() {
+  if (!_currentAgent) return;
+  const newName = prompt(`Clone "${_currentAgent}" as:`, _currentAgent + '-copy');
+  if (!newName || !newName.trim()) return;
+  const name = newName.trim();
+  let manifest = document.getElementById('agentManifest').value;
+  manifest = _updateYamlField(manifest, 'name', name);
+  const prompts = document.getElementById('agentPrompts').value;
+  try {
+    const result = await api('/api/agents/' + name, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ manifest, prompts }),
+    });
+    await selectAgent(result.name || name);
+  } catch (e) {
+    alert('Clone failed: ' + e.message);
+  }
+}
+
 async function deleteAgent() {
   if (!_currentAgent) return;
   if (!confirm(`Delete agent "${_currentAgent}"?`)) return;
@@ -1112,6 +1132,33 @@ async function saveWorkflow() {
     loadWorkflowDropdown();
   } catch (e) {
     alert('Save failed: ' + e.message);
+  }
+}
+
+async function cloneWorkflow() {
+  if (!_currentWorkflow) return;
+  const newName = prompt(`Clone "${_currentWorkflow}" as:`, _currentWorkflow + '-copy');
+  if (!newName || !newName.trim()) return;
+  const name = newName.trim();
+  const pipeline_json = {
+    description: document.getElementById('workflowDescription').value.trim(),
+    steps: _pipelineSteps.map(s => ({
+      agent: s.agent, model: s.model || '', prompt_override: s.prompt_override || '',
+      ...(s.max_iterations ? { max_iterations: parseInt(s.max_iterations) } : {}),
+      ...(s.tools && s.tools.length ? { tools: s.tools } : {}),
+    })),
+  };
+  const content = document.getElementById('workflowContent').value;
+  try {
+    await api('/api/workflows/' + name, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ content, pipeline_json }),
+    });
+    _currentWorkflow = name;
+    await selectWorkflow(name);
+  } catch (e) {
+    alert('Clone failed: ' + e.message);
   }
 }
 
