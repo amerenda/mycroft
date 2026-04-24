@@ -107,13 +107,20 @@ async def get_report(pool: asyncpg.Pool, report_id: str) -> Optional[dict]:
     return _row_to_dict(row)
 
 
-async def list_reports(pool: asyncpg.Pool, limit: int = 50) -> list[dict]:
-    """List all reports, newest first."""
+async def list_reports(pool: asyncpg.Pool, limit: int = 50, source_task_id: str | None = None) -> list[dict]:
+    """List all reports, newest first. Optionally filter by source_task_id."""
     async with pool.acquire() as conn:
-        rows = await conn.fetch(
-            "SELECT id, title, summary, tags, effort, workflow, models_used, commit_sha, "
-            "source_task_id, created_at, updated_at "
-            "FROM reports ORDER BY created_at DESC LIMIT $1", limit)
+        if source_task_id:
+            rows = await conn.fetch(
+                "SELECT id, title, summary, tags, effort, workflow, models_used, commit_sha, "
+                "source_task_id, created_at, updated_at "
+                "FROM reports WHERE source_task_id = $1 ORDER BY created_at DESC LIMIT $2",
+                source_task_id, limit)
+        else:
+            rows = await conn.fetch(
+                "SELECT id, title, summary, tags, effort, workflow, models_used, commit_sha, "
+                "source_task_id, created_at, updated_at "
+                "FROM reports ORDER BY created_at DESC LIMIT $1", limit)
     return [_row_to_dict(r) for r in rows]
 
 

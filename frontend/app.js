@@ -455,6 +455,21 @@ async function viewRightConversation(taskId) {
   titleEl.textContent = taskId.slice(0, 8);
   panel.style.display = 'block';
 
+  // Check for linked report (fire-and-forget)
+  api('/api/reports?source_task_id=' + taskId + '&limit=1').then(reports => {
+    if (reports && reports.length) {
+      const r = reports[0];
+      const banner = document.createElement('div');
+      banner.className = 'xlink-banner';
+      banner.textContent = '📄 Report: ' + r.title;
+      banner.onclick = () => {
+        switchTab('reports');
+        selectReport(r.id);
+      };
+      contentEl.prepend(banner);
+    }
+  }).catch(() => {});
+
   try {
     const r = await api('/api/tasks/' + taskId + '/conversation');
     const messages = r.messages || [];
@@ -563,11 +578,15 @@ async function selectReport(id) {
       ? Object.entries(r.models_used).map(([k, v]) => `${k}: ${v}`).join(' · ')
       : '';
     const build = r.commit_sha ? `build: ${r.commit_sha}` : '';
+    const taskLink = r.source_task_id
+      ? `<span class="xlink-badge" onclick="setRightTab('tasks');viewRightConversation('${r.source_task_id}');switchTab('runner')" title="View source task" style="cursor:pointer;color:#58a6ff">task ${r.source_task_id.slice(0, 8)}</span>`
+      : '';
     const metaParts = [
       wf ? `<span class="effort-badge effort-${wf.split('-').pop()}">${wf}</span>` : '',
       date ? `<span>${date}</span>` : '',
       models ? `<span>${esc(models)}</span>` : '',
       build ? `<span>${esc(build)}</span>` : '',
+      taskLink,
     ].filter(Boolean);
     document.getElementById('reportDetailMeta').innerHTML = metaParts.join('<span class="meta-sep">·</span>');
 

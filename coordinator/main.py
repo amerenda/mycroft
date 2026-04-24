@@ -1170,8 +1170,8 @@ class CreateReportRequest(BaseModel):
 
 
 @app.get("/api/reports")
-async def api_list_reports(limit: int = 50):
-    return await list_reports(db.kb.pool, limit)
+async def api_list_reports(limit: int = 50, source_task_id: str | None = None):
+    return await list_reports(db.kb.pool, limit, source_task_id=source_task_id)
 
 
 @app.get("/api/reports/{report_id}")

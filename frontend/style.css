@@ -760,6 +760,20 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
 .btn-step-act:disabled { opacity: 0.3; cursor: not-allowed; }
 .btn-step-remove:hover:not(:disabled) { color: #da3633; background: #da363322; }
 
+/* ── Cross-link banners ──────────────────────────────────────────────────── */
+.xlink-banner {
+  margin: 8px 0;
+  padding: 7px 12px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-left: 3px solid #58a6ff;
+  border-radius: 4px;
+  font-size: 0.82em;
+  cursor: pointer;
+  color: #58a6ff;
+}
+.xlink-banner:hover { background: #1c2128; }
+
 /* ── Toast notifications ─────────────────────────────────────────────────── */
 #toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
 .toast {
