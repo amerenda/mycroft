@@ -173,6 +173,15 @@
         <div id="rtab-tasks" class="rtab-content active">
           <div class="rtab-toolbar">
             <button class="btn-tool-ctrl" onclick="loadRightTasks()">↺ Refresh</button>
+            <select id="taskFilterStatus" onchange="applyTaskFilter()" style="font-size:0.82em;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 4px">
+              <option value="">All</option>
+              <option value="running">running</option>
+              <option value="pending">pending</option>
+              <option value="completed">completed</option>
+              <option value="failed">failed</option>
+            </select>
+            <input id="taskFilterSearch" type="text" placeholder="search…" oninput="applyTaskFilter()"
+              style="font-size:0.82em;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 6px;width:90px;outline:none">
             <button class="btn-danger" onclick="clearAllTasks()">Clear All</button>
           </div>
           <div id="rightTaskList"><p class="empty">Loading…</p></div>

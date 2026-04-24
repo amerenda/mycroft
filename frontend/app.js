@@ -399,33 +399,52 @@ async function previewPrompt() {
 
 // ── Tasks sub-tab ─────────────────────────────────────────────────────────────
 
+let _allTasks = [];
+
 async function loadRightTasks() {
   try {
-    const tasks = await api('/api/tasks?limit=20');
-    const el = document.getElementById('rightTaskList');
-    if (!tasks.length) {
-      el.innerHTML = '<p class="empty">No tasks yet</p>';
-      return;
-    }
-    el.innerHTML = tasks.map(t => {
-      const hasChain = t.config?.phase || t.config?.parent_task_id;
-      const isActive = t.status === 'running' || t.status === 'pending';
-      return `
-      <div class="task-row">
-        <span class="task-info" onclick="viewRightConversation('${t.id}')">
-          ${t.id.slice(0, 8)} &mdash; ${t.agent_type} &mdash; ${esc((t.config?.instruction || '').slice(0, 50))}
-        </span>
-        <div class="task-actions">
-          <span class="status-badge status-${t.status}">${t.status}</span>
-          ${hasChain ? `<button class="btn-tool-ctrl" onclick="viewPipelineChain('${t.id}')" title="View pipeline chain">⛓</button>` : ''}
-          ${isActive ? `<button class="btn-cancel" onclick="cancelTask('${t.id}')" title="Cancel">⊘</button>` : ''}
-          <button class="btn-delete" onclick="deleteTask('${t.id}')" title="Delete">&#10005;</button>
-        </div>
-      </div>`;
-    }).join('');
+    _allTasks = await api('/api/tasks?limit=50');
+    applyTaskFilter();
   } catch (e) {
     document.getElementById('rightTaskList').innerHTML = '<p class="empty">Error loading tasks</p>';
   }
+}
+
+function _renderTaskList(tasks) {
+  const el = document.getElementById('rightTaskList');
+  if (!tasks.length) {
+    el.innerHTML = '<p class="empty">No tasks</p>';
+    return;
+  }
+  el.innerHTML = tasks.map(t => {
+    const hasChain = t.config?.phase || t.config?.parent_task_id;
+    const isActive = t.status === 'running' || t.status === 'pending';
+    return `
+    <div class="task-row">
+      <span class="task-info" onclick="viewRightConversation('${t.id}')">
+        ${t.id.slice(0, 8)} &mdash; ${t.agent_type} &mdash; ${esc((t.config?.instruction || '').slice(0, 50))}
+      </span>
+      <div class="task-actions">
+        <span class="status-badge status-${t.status}">${t.status}</span>
+        ${hasChain ? `<button class="btn-tool-ctrl" onclick="viewPipelineChain('${t.id}')" title="View pipeline chain">⛓</button>` : ''}
+        ${isActive ? `<button class="btn-cancel" onclick="cancelTask('${t.id}')" title="Cancel">⊘</button>` : ''}
+        <button class="btn-delete" onclick="deleteTask('${t.id}')" title="Delete">&#10005;</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+function applyTaskFilter() {
+  const status = document.getElementById('taskFilterStatus').value;
+  const q = document.getElementById('taskFilterSearch').value.toLowerCase();
+  let tasks = _allTasks;
+  if (status) tasks = tasks.filter(t => t.status === status);
+  if (q) tasks = tasks.filter(t =>
+    (t.config?.instruction || '').toLowerCase().includes(q) ||
+    t.agent_type.toLowerCase().includes(q) ||
+    t.id.toLowerCase().startsWith(q)
+  );
+  _renderTaskList(tasks);
 }
 
 async function viewRightConversation(taskId) {
