@@ -347,9 +347,8 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
   .reports-split.show-list .report-detail,
   .reports-split.show-list .editor-empty { display: none !important; }
 
+  /* In show-detail: hide the list panel; report-detail and editor-empty follow JS inline styles */
   .reports-split.show-detail .editor-list-panel { display: none; }
-  .reports-split.show-detail .report-detail,
-  .reports-split.show-detail .editor-empty { display: block !important; }
 
   /* Make sure detail doesn't overflow */
   .report-detail {

@@ -282,9 +282,20 @@ function renderTrace(messages, task) {
   }
 
   const cards = [];
+  let userMsgIndex = 0;
 
   for (const msg of messages) {
-    if (msg.role === 'system') continue;
+    if (msg.role === 'system') {
+      cards.push(`
+        <div class="trace-card planning" onclick="this.classList.toggle('expanded')">
+          <div class="trace-card-header">
+            <span><span class="trace-tool-name">system prompt</span></span>
+            <span class="trace-meta">${(msg.content || '').length} chars</span>
+          </div>
+          <div class="trace-card-body">${esc(msg.content || '')}</div>
+        </div>`);
+      continue;
+    }
 
     if (msg.role === 'assistant') {
       if (msg.tool_calls && msg.tool_calls.length) {
@@ -326,14 +337,16 @@ function renderTrace(messages, task) {
         </div>`);
     }
 
-    if (msg.role === 'user' && messages.indexOf(msg) > 1) {
+    if (msg.role === 'user') {
+      const isFirst = userMsgIndex === 0;
+      userMsgIndex++;
       cards.push(`
         <div class="trace-card" onclick="this.classList.toggle('expanded')">
           <div class="trace-card-header">
-            <span>${esc(msg.content.slice(0, 80))}</span>
-            <span class="trace-meta">nudge</span>
+            <span>${esc((msg.content || '').slice(0, 80))}</span>
+            <span class="trace-meta">${isFirst ? 'instruction' : 'nudge'}</span>
           </div>
-          <div class="trace-card-body">${esc(msg.content)}</div>
+          <div class="trace-card-body">${esc(msg.content || '')}</div>
         </div>`);
     }
   }
@@ -589,7 +602,7 @@ async function selectReport(id) {
       : '';
     const build = r.commit_sha ? `build: ${r.commit_sha}` : '';
     const taskLink = r.source_task_id
-      ? `<span class="xlink-badge" onclick="setRightTab('tasks');viewRightConversation('${r.source_task_id}');switchTab('runner')" title="View source task" style="cursor:pointer;color:#58a6ff">task ${r.source_task_id.slice(0, 8)}</span>`
+      ? `<span class="xlink-badge" onclick="viewReportTaskTrace('${r.source_task_id}')" title="View trace for source task" style="cursor:pointer;color:#58a6ff">view trace ↗</span>`
       : '';
     const metaParts = [
       wf ? `<span class="effort-badge effort-${wf.split('-').pop()}">${wf}</span>` : '',
@@ -625,6 +638,30 @@ function toggleReportRaw() {
   _reportRawMode = !_reportRawMode;
   document.getElementById('reportRawToggle').textContent = _reportRawMode ? 'Rendered' : 'Raw';
   _renderReportContent();
+}
+
+async function viewReportTaskTrace(taskId) {
+  switchTab('runner');
+  setRightTab('trace');
+
+  const statusEl = document.getElementById('traceStatus');
+  statusEl.textContent = '';
+  statusEl.className = 'status-badge';
+  document.getElementById('traceContent').innerHTML = '<p class="empty">Loading trace…</p>';
+
+  try {
+    const [task, conv] = await Promise.all([
+      api('/api/tasks/' + taskId),
+      api('/api/tasks/' + taskId + '/conversation').catch(() => null),
+    ]);
+    const messages = conv ? conv.messages : [];
+    renderTrace(messages, task);
+    statusEl.textContent = task.status;
+    statusEl.className = 'status-badge status-' + task.status;
+  } catch (e) {
+    document.getElementById('traceContent').innerHTML =
+      `<p class="empty">Could not load trace: ${esc(e.message)}</p>`;
+  }
 }
 
 async function deleteCurrentReport() {
