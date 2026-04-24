@@ -440,6 +440,7 @@ function _renderTaskList(tasks) {
       <div class="task-actions">
         <span class="status-badge status-${t.status}">${t.status}</span>
         ${hasChain ? `<button class="btn-tool-ctrl" onclick="viewPipelineChain('${t.id}')" title="View pipeline chain">⛓</button>` : ''}
+        <button class="btn-tool-ctrl" onclick="viewKBForTask('${t.id}')" title="View KB data for this run" style="font-size:0.72em">KB</button>
         ${isActive ? `<button class="btn-cancel" onclick="cancelTask('${t.id}')" title="Cancel">⊘</button>` : ''}
         <button class="btn-delete" onclick="deleteTask('${t.id}')" title="Delete">&#10005;</button>
       </div>
@@ -1678,6 +1679,442 @@ document.querySelectorAll('.tab').forEach(btn => {
       }
     }
   });
+});
+
+// ── KB Explorer ───────────────────────────────────────────────────────────────
+
+let _kbPath = '/';
+let _kbEntry = null;
+let _kbEditMode = false;
+let _kbTasksExpanded = false;
+let _kbTasksAge = '20';
+let _kbChildren = [];
+let _kbTaskFilterId = null;
+let _kbTaskFilterTimer = null;
+
+// Navigate to a path and load its children
+async function kbNavigate(path) {
+  _kbPath = path;
+  _kbEntry = null;
+  _kbEditMode = false;
+  _kbTaskFilterId = null;
+  document.getElementById('kbFilterTask').value = '';
+  document.getElementById('kbFilterTaskClear').style.display = 'none';
+  document.getElementById('kbDetail').style.display = 'none';
+  document.getElementById('kbEmpty').style.display = 'flex';
+  renderKBBreadcrumb(path);
+  await loadKBChildren(path);
+}
+
+async function loadKBChildren(path) {
+  const age = document.getElementById('kbFilterAge').value;
+  const params = new URLSearchParams({ path });
+  if (age) params.set('since_minutes', age);
+  params.set('limit', 1000);
+
+  try {
+    const data = await api('/api/kb/children?' + params.toString());
+    _kbChildren = data || [];
+    renderKBTree(_kbChildren, path);
+  } catch (e) {
+    document.getElementById('kbTree').innerHTML =
+      `<div class="kb-tree-item" style="color:#da3633">Error: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderKBTree(children, currentPath) {
+  const tree = document.getElementById('kbTree');
+  tree.innerHTML = '';
+
+  const isRoot = currentPath === '/' || currentPath === '';
+
+  if (!isRoot) {
+    // Back button
+    const segs = currentPath.replace(/\/$/, '').split('/');
+    const parentPath = segs.slice(0, -1).join('/') + '/';
+    const back = document.createElement('div');
+    back.className = 'kb-tree-item kb-back';
+    back.innerHTML = '<span class="kb-item-icon">←</span><span class="kb-item-name">back</span>';
+    back.onclick = () => kbNavigate(parentPath || '/');
+    tree.appendChild(back);
+  }
+
+  if (children.length === 0 && isRoot) {
+    tree.innerHTML += '<div class="kb-tree-item" style="color:#484f58">No entries found</div>';
+  }
+
+  for (const child of children) {
+    if (isRoot && child.name === 'tasks') continue; // tasks shown via toggle at bottom
+    tree.appendChild(makeKBTreeItem(child, isRoot));
+  }
+
+  // Tasks toggle at root
+  if (isRoot) {
+    const tasksChild = children.find(c => c.name === 'tasks');
+    const toggle = document.createElement('div');
+    toggle.className = 'kb-tasks-toggle';
+    toggle.innerHTML = `<span>${_kbTasksExpanded ? '▾' : '▸'}</span><span class="kb-item-name">tasks/</span><span class="kb-item-count">${tasksChild ? tasksChild.count : ''}</span>`;
+    toggle.onclick = () => kbToggleTasks();
+    tree.appendChild(toggle);
+
+    if (_kbTasksExpanded) {
+      const filterDiv = document.createElement('div');
+      filterDiv.className = 'kb-tasks-filter';
+      filterDiv.innerHTML = `
+        <select id="kbTasksAge">
+          <option value="20">Last 20 min</option>
+          <option value="60">Last hour</option>
+          <option value="360">Last 6h</option>
+          <option value="1440">Today</option>
+          <option value="">All time</option>
+        </select>
+        <button class="btn-tool-ctrl" onclick="kbBrowseTasks()">Browse</button>
+      `;
+      tree.appendChild(filterDiv);
+      filterDiv.querySelector('#kbTasksAge').value = _kbTasksAge;
+    }
+  }
+
+  if (children.length === 0 && !isRoot) {
+    const empty = document.createElement('div');
+    empty.className = 'kb-tree-item';
+    empty.style.color = '#484f58';
+    empty.textContent = 'Empty';
+    tree.appendChild(empty);
+  }
+}
+
+function makeKBTreeItem(child) {
+  const item = document.createElement('div');
+  item.className = 'kb-tree-item';
+  item.dataset.path = child.path;
+
+  const isDir = child.type === 'dir';
+  const iconClass = isDir ? 'kb-item-icon kb-item-icon-dir' : 'kb-item-icon kb-item-icon-entry';
+  const icon = isDir ? '▶' : '◆';
+  const nameSuffix = isDir ? '/' : '';
+  const countStr = child.count > 1 ? child.count : '';
+
+  item.innerHTML = `
+    <span class="${iconClass}">${icon}</span>
+    <span class="kb-item-name">${esc(child.name)}${nameSuffix}</span>
+    <span class="kb-item-count">${countStr}</span>
+  `;
+
+  if (isDir) {
+    item.onclick = () => kbNavigate(child.path + '/');
+  } else {
+    item.onclick = () => kbSelectEntry(child.path);
+  }
+  return item;
+}
+
+async function kbSelectEntry(path) {
+  document.querySelectorAll('.kb-tree-item').forEach(i => i.classList.remove('active'));
+  document.querySelectorAll('.kb-task-record-item').forEach(i => i.classList.remove('active'));
+  document.querySelectorAll(`[data-path="${CSS.escape(path)}"]`).forEach(i => i.classList.add('active'));
+
+  try {
+    const data = await api('/api/kb/entry?' + new URLSearchParams({ path }).toString());
+    _kbEntry = data;
+    renderKBDetail(data);
+  } catch (e) {
+    showToast('Failed to load entry: ' + e.message, 'error');
+  }
+}
+
+function renderKBDetail(entry) {
+  document.getElementById('kbEmpty').style.display = 'none';
+  const detail = document.getElementById('kbDetail');
+  detail.style.display = 'flex';
+
+  document.getElementById('kbDetailPath').textContent = entry.scope;
+
+  // Metadata
+  const embBadge = entry.needs_embedding
+    ? '<span style="color:#58a6ff">⊙ embed</span>'
+    : '';
+  const srcStr = entry.source ? `source: ${esc(entry.source)}` : '';
+  const tsStr = entry.created_at ? new Date(entry.created_at).toLocaleString() : '';
+  document.getElementById('kbDetailMeta').innerHTML =
+    [srcStr, tsStr, embBadge].filter(Boolean).join('<span class="meta-sep">·</span>');
+
+  // Content
+  const content = document.getElementById('kbDetailContent');
+  const text = entry.content || '';
+  const looksMarkdown = /^#|\*\*|^\-\s|\[.*\]\(/.test(text);
+  if (looksMarkdown && window.markdownit) {
+    content.className = 'kb-content kb-markdown report-body';
+    content.innerHTML = markdownit().render(text);
+  } else {
+    content.className = 'kb-content';
+    content.textContent = text || '(empty)';
+  }
+
+  // Reset edit state
+  document.getElementById('kbDetailEdit').value = text;
+  document.getElementById('kbDetailEdit').style.display = 'none';
+  content.style.display = '';
+  document.getElementById('kbDetailFooter').style.display = 'none';
+  document.getElementById('kbEditBtn').textContent = 'Edit';
+  _kbEditMode = false;
+}
+
+function renderKBBreadcrumb(path) {
+  const crumb = document.getElementById('kbBreadcrumb');
+  crumb.innerHTML = '';
+
+  const root = document.createElement('span');
+  root.className = 'kb-bc-seg';
+  root.textContent = '/';
+  root.onclick = () => kbNavigate('/');
+  crumb.appendChild(root);
+
+  if (path === '/' || path === '') return;
+
+  const parts = path.replace(/\/$/, '').split('/').filter(Boolean);
+  let accumulated = '/';
+
+  for (let i = 0; i < parts.length; i++) {
+    const sep = document.createElement('span');
+    sep.className = 'kb-bc-sep';
+    sep.textContent = '/';
+    crumb.appendChild(sep);
+
+    accumulated += parts[i] + '/';
+    const isLast = i === parts.length - 1;
+    const seg = document.createElement('span');
+    seg.className = isLast ? 'kb-bc-current' : 'kb-bc-seg';
+    seg.textContent = parts[i];
+    if (!isLast) {
+      const p = accumulated;
+      seg.onclick = () => kbNavigate(p);
+    }
+    crumb.appendChild(seg);
+  }
+
+  // Delete subtree button
+  const spacer = document.createElement('span');
+  spacer.className = 'kb-bc-spacer';
+  crumb.appendChild(spacer);
+
+  const delBtn = document.createElement('button');
+  delBtn.className = 'btn-danger';
+  delBtn.style.cssText = 'padding:2px 7px;font-size:0.72em;flex-shrink:0';
+  delBtn.textContent = 'Delete subtree';
+  delBtn.onclick = () => kbDeleteSubtree(path);
+  crumb.appendChild(delBtn);
+}
+
+async function kbDeleteEntry() {
+  if (!_kbEntry) return;
+  if (!confirm('Delete KB entry:\n' + _kbEntry.scope + '?')) return;
+
+  try {
+    await api('/api/kb/entry?' + new URLSearchParams({ path: _kbEntry.scope }).toString(), { method: 'DELETE' });
+    showToast('Entry deleted', 'success');
+    document.getElementById('kbDetail').style.display = 'none';
+    document.getElementById('kbEmpty').style.display = 'flex';
+    _kbEntry = null;
+    await loadKBChildren(_kbPath);
+  } catch (e) {
+    showToast('Failed to delete: ' + e.message, 'error');
+  }
+}
+
+async function kbDeleteSubtree(path) {
+  try {
+    const { count } = await api('/api/kb/count?' + new URLSearchParams({ path }).toString());
+    if (!confirm(`Delete ${count} entries under ${path}?`)) return;
+    const result = await api('/api/kb/subtree?' + new URLSearchParams({ path }).toString(), { method: 'DELETE' });
+    showToast(`Deleted ${result.count} entries`, 'success');
+    // Navigate to parent
+    const segs = path.replace(/\/$/, '').split('/');
+    const parent = segs.slice(0, -1).join('/') + '/';
+    await kbNavigate(parent || '/');
+  } catch (e) {
+    showToast('Failed: ' + e.message, 'error');
+  }
+}
+
+function kbToggleEdit() {
+  _kbEditMode = !_kbEditMode;
+  const content = document.getElementById('kbDetailContent');
+  const edit = document.getElementById('kbDetailEdit');
+  const footer = document.getElementById('kbDetailFooter');
+  const btn = document.getElementById('kbEditBtn');
+
+  if (_kbEditMode) {
+    content.style.display = 'none';
+    edit.style.display = 'block';
+    edit.focus();
+    footer.style.display = 'flex';
+    btn.textContent = 'Cancel';
+  } else {
+    kbCancelEdit();
+  }
+}
+
+function kbCancelEdit() {
+  if (_kbEntry) document.getElementById('kbDetailEdit').value = _kbEntry.content || '';
+  _kbEditMode = false;
+  document.getElementById('kbDetailContent').style.display = '';
+  document.getElementById('kbDetailEdit').style.display = 'none';
+  document.getElementById('kbDetailFooter').style.display = 'none';
+  document.getElementById('kbEditBtn').textContent = 'Edit';
+}
+
+async function kbSaveEntry() {
+  if (!_kbEntry) return;
+  const content = document.getElementById('kbDetailEdit').value;
+
+  try {
+    await api('/api/kb/entry', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: _kbEntry.scope, content, source: 'ui' }),
+    });
+    _kbEntry.content = content;
+    renderKBDetail(_kbEntry);
+    showToast('Saved', 'success');
+  } catch (e) {
+    showToast('Failed to save: ' + e.message, 'error');
+  }
+}
+
+function kbCopyPath() {
+  if (!_kbEntry) return;
+  navigator.clipboard.writeText(_kbEntry.scope).then(() => showToast('Path copied', 'info'));
+}
+
+function kbToggleTasks() {
+  _kbTasksExpanded = !_kbTasksExpanded;
+  renderKBTree(_kbChildren, _kbPath);
+}
+
+function kbBrowseTasks() {
+  const sel = document.getElementById('kbTasksAge');
+  _kbTasksAge = sel ? sel.value : '20';
+  // Navigate to /tasks/ with the age filter applied
+  const ageEl = document.getElementById('kbFilterAge');
+  if (ageEl && _kbTasksAge) ageEl.value = _kbTasksAge;
+  kbNavigate('/tasks/');
+}
+
+function kbRefresh() {
+  if (_kbTaskFilterId) {
+    kbLoadTaskFilter(_kbTaskFilterId);
+  } else {
+    loadKBChildren(_kbPath);
+  }
+}
+
+function kbApplyFilters() {
+  if (_kbTaskFilterId) {
+    kbLoadTaskFilter(_kbTaskFilterId);
+  } else {
+    loadKBChildren(_kbPath);
+  }
+}
+
+function kbOnTaskInput(val) {
+  clearTimeout(_kbTaskFilterTimer);
+  document.getElementById('kbFilterTaskClear').style.display = val ? '' : 'none';
+
+  if (!val) {
+    _kbTaskFilterId = null;
+    renderKBBreadcrumb(_kbPath);
+    loadKBChildren(_kbPath);
+    return;
+  }
+
+  _kbTaskFilterTimer = setTimeout(() => {
+    if (val.length >= 8) kbLoadTaskFilter(val);
+  }, 400);
+}
+
+async function kbLoadTaskFilter(taskId) {
+  _kbTaskFilterId = taskId;
+  document.getElementById('kbFilterTaskClear').style.display = '';
+
+  // Show task context in breadcrumb
+  const crumb = document.getElementById('kbBreadcrumb');
+  crumb.innerHTML = `<span style="color:#8b949e;font-size:0.85em">Run: <code style="color:#58a6ff">${esc(taskId.substring(0, 8))}</code></span>`;
+
+  try {
+    const data = await api('/api/kb/task/' + taskId);
+    renderKBTaskRecords(data);
+  } catch (e) {
+    document.getElementById('kbTree').innerHTML =
+      `<div class="kb-tree-item" style="color:#da3633">Task not found or error: ${esc(e.message)}</div>`;
+  }
+}
+
+function renderKBTaskRecords(data) {
+  const tree = document.getElementById('kbTree');
+  tree.innerHTML = '';
+
+  if (!data.records || data.records.length === 0) {
+    tree.innerHTML = '<div class="kb-tree-item" style="color:#484f58">No KB records found for this run</div>';
+    return;
+  }
+
+  const direct = data.records.filter(r => r.group === 'direct');
+  const during = data.records.filter(r => r.group === 'during');
+
+  function addGroup(label, records) {
+    if (records.length === 0) return;
+    const hdr = document.createElement('div');
+    hdr.className = 'kb-section-header';
+    hdr.textContent = `${label} (${records.length})`;
+    tree.appendChild(hdr);
+
+    for (const r of records) {
+      const item = document.createElement('div');
+      item.className = 'kb-task-record-item';
+      item.dataset.path = r.scope;
+      const ts = r.created_at ? new Date(r.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' }) : '';
+      const groupClass = r.group === 'direct' ? 'kb-task-record-group-direct' : 'kb-task-record-group-during';
+      const groupLabel = r.group === 'direct' ? 'direct' : 'written during';
+      item.innerHTML = `
+        <div class="kb-task-record-scope">${esc(r.scope)}</div>
+        <div class="kb-task-record-meta">
+          ${r.source ? esc(r.source) + ' · ' : ''}${ts}
+          <span class="kb-task-record-group ${groupClass}">${groupLabel}</span>
+        </div>
+      `;
+      item.onclick = () => kbSelectEntry(r.scope);
+      tree.appendChild(item);
+    }
+  }
+
+  addGroup('Direct records', direct);
+  addGroup('Written during run', during);
+}
+
+function kbClearTaskFilter() {
+  document.getElementById('kbFilterTask').value = '';
+  _kbTaskFilterId = null;
+  document.getElementById('kbFilterTaskClear').style.display = 'none';
+  renderKBBreadcrumb(_kbPath);
+  loadKBChildren(_kbPath);
+}
+
+// Cross-tab: jump to KB and filter by a task ID
+function viewKBForTask(taskId) {
+  switchTab('kb');
+  document.getElementById('kbFilterTask').value = taskId;
+  document.getElementById('kbFilterTaskClear').style.display = '';
+  kbLoadTaskFilter(taskId);
+}
+
+// Load KB root when tab is clicked
+document.querySelectorAll('.tab').forEach(btn => {
+  if (btn.dataset.tab === 'kb') {
+    btn.addEventListener('click', () => {
+      if (_kbChildren.length === 0) kbNavigate('/');
+    });
+  }
 });
 
 // ── Init ──────────────────────────────────────────────────────────────────────

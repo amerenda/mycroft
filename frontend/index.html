@@ -15,6 +15,7 @@
     <button class="tab" data-tab="agents">Agents</button>
     <button class="tab" data-tab="workflows">Workflows</button>
     <button class="tab" data-tab="tools">Tools</button>
+    <button class="tab" data-tab="kb">KB</button>
     <button class="tab" data-tab="reports">Reports</button>
     <button class="tab" data-tab="logs">Logs</button>
   </nav>
@@ -446,6 +447,67 @@
 
       <div class="editor-empty" id="schemaEmpty">
         <p>Select a tool schema to view or edit it.</p>
+      </div>
+
+    </div>
+  </section>
+
+  <!-- KB TAB -->
+  <section id="tab-kb" class="tab-content">
+    <div class="kb-layout">
+
+      <!-- Left: browser panel -->
+      <div class="kb-browser">
+
+        <!-- Filter bar -->
+        <div class="kb-filter-bar">
+          <div class="kb-filter-row">
+            <select id="kbFilterAge" onchange="kbApplyFilters()" title="Filter by recency">
+              <option value="">Any time</option>
+              <option value="20">Last 20 min</option>
+              <option value="60">Last hour</option>
+              <option value="360">Last 6h</option>
+              <option value="1440">Today</option>
+            </select>
+            <button class="btn-tool-ctrl" onclick="kbRefresh()" title="Refresh">↺</button>
+          </div>
+          <div class="kb-filter-row">
+            <input id="kbFilterTask" type="text" placeholder="Filter by run (task ID)…" oninput="kbOnTaskInput(this.value)">
+            <button class="btn-tool-ctrl" id="kbFilterTaskClear" style="display:none" onclick="kbClearTaskFilter()" title="Clear run filter">✕</button>
+          </div>
+        </div>
+
+        <!-- Breadcrumb + subtree delete -->
+        <div id="kbBreadcrumb" class="kb-breadcrumb"></div>
+
+        <!-- Tree list -->
+        <div id="kbTree" class="kb-tree"></div>
+
+      </div>
+
+      <!-- Right: entry detail -->
+      <div class="kb-detail" id="kbDetail" style="display:none">
+        <div class="editor-pane-header">
+          <span id="kbDetailPath" class="kb-detail-path"></span>
+          <div class="editor-pane-actions">
+            <button class="btn-tool-ctrl" onclick="kbCopyPath()">Copy path</button>
+            <button class="btn-tool-ctrl" id="kbEditBtn" onclick="kbToggleEdit()">Edit</button>
+            <button class="btn-danger" onclick="kbDeleteEntry()">Delete</button>
+          </div>
+        </div>
+        <div class="kb-detail-meta" id="kbDetailMeta"></div>
+        <div class="kb-detail-body">
+          <div id="kbDetailContent" class="kb-content"></div>
+          <textarea id="kbDetailEdit" class="kb-edit-area" style="display:none" rows="20" spellcheck="false"></textarea>
+        </div>
+        <div class="kb-detail-footer" id="kbDetailFooter" style="display:none">
+          <button class="btn-primary" onclick="kbSaveEntry()">Save</button>
+          <button class="btn-tool-ctrl" onclick="kbCancelEdit()">Cancel</button>
+        </div>
+      </div>
+
+      <div class="editor-empty" id="kbEmpty">
+        <p>Select an entry to view it.</p>
       </div>
 
     </div>
