@@ -759,3 +759,67 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
 .btn-step-act:hover:not(:disabled) { color: #c9d1d9; background: #30363d; }
 .btn-step-act:disabled { opacity: 0.3; cursor: not-allowed; }
 .btn-step-remove:hover:not(:disabled) { color: #da3633; background: #da363322; }
+
+/* ── Toast notifications ─────────────────────────────────────────────────── */
+#toast-container { position: fixed; bottom: 20px; right: 20px; z-index: 9999; display: flex; flex-direction: column; gap: 8px; }
+.toast {
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 10px 16px;
+  font-size: 0.85em;
+  max-width: 320px;
+  animation: toast-in 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.toast-success { border-left: 3px solid #3fb950; }
+.toast-error   { border-left: 3px solid #da3633; }
+.toast-info    { border-left: 3px solid #58a6ff; }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+
+/* ── Pipeline chain panel ────────────────────────────────────────────────── */
+.pipeline-chain-step {
+  padding: 8px 12px;
+  border-bottom: 1px solid #21262d;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  cursor: pointer;
+}
+.pipeline-chain-step:hover { background: #161b22; }
+.pipeline-chain-step:last-child { border-bottom: none; }
+.pipeline-chain-num { font-size: 0.72em; font-weight: 700; color: #58a6ff; min-width: 48px; }
+.pipeline-chain-info { flex: 1; font-size: 0.82em; }
+.pipeline-chain-agent { color: #c9d1d9; }
+.pipeline-chain-phase { color: #8b949e; font-size: 0.85em; }
+
+/* ── Cancel button ───────────────────────────────────────────────────────── */
+.btn-cancel {
+  background: transparent;
+  border: 1px solid #30363d;
+  color: #da3633;
+  cursor: pointer;
+  border-radius: 4px;
+  font-size: 0.75em;
+  padding: 2px 6px;
+  line-height: 1.4;
+}
+.btn-cancel:hover { background: #da363322; }
+
+/* ── Schema history ──────────────────────────────────────────────────────── */
+.schema-history-row {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 6px 0;
+  border-bottom: 1px solid #21262d;
+  font-size: 0.82em;
+}
+.schema-history-row:last-child { border-bottom: none; }
+.schema-history-v { color: #58a6ff; min-width: 40px; font-weight: 600; }
+.schema-history-semver { color: #8b949e; min-width: 60px; }
+.schema-history-log { color: #c9d1d9; flex: 1; }
+.schema-history-by { color: #484f58; }
+.schema-history-date { color: #484f58; }

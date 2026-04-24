@@ -169,4 +169,10 @@ def _row_to_dict(row) -> dict:
     for k in ("created_at", "updated_at"):
         if k in d and d[k]:
             d[k] = str(d[k])
+    for k in ("models_used",):
+        if k in d and isinstance(d[k], str):
+            try:
+                d[k] = json.loads(d[k])
+            except Exception:
+                d[k] = {}
     return d

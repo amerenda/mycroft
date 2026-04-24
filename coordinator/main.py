@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
@@ -45,6 +46,21 @@ argo: ArgoSubmitter
 telegram_bot: TelegramBot
 trigger_router: TriggerRouter
 llm: LLMClient
+
+# SSE client queues — one per connected browser tab
+_sse_clients: list[asyncio.Queue] = []
+
+
+async def _broadcast_sse(event_type: str, data: dict) -> None:
+    msg = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
+    dead = [q for q in _sse_clients if q.full()]
+    for q in dead:
+        _sse_clients.remove(q)
+    for q in _sse_clients:
+        try:
+            q.put_nowait(msg)
+        except asyncio.QueueFull:
+            pass
 
 
 # ---------------------------------------------------------------------------
@@ -558,6 +574,8 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="failed").inc()
         log.warning("Task %s failed: %s", task_id[:8], message)
+        await _broadcast_sse("task_update", {"task_id": task_id, "status": "failed",
+                                             "agent_type": task.agent_type if task else ""})
 
     elif status == "succeeded":
         await db.kb.update_task(task_id, status=TaskStatus.completed)
@@ -570,6 +588,8 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
                 await telegram_bot.send(f"Task {task_id[:8]} completed: {message}")
             except Exception:
                 log.warning("Failed to send Telegram update for task %s", task_id[:8])
+        await _broadcast_sse("task_update", {"task_id": task_id, "status": "completed",
+                                             "agent_type": task.agent_type if task else ""})
 
 
 async def _handle_status_query(text: str) -> str:
@@ -730,6 +750,7 @@ async def _handle_researcher_result(record, source: str) -> None:
             commit_sha=commit_sha,
         )
         log.info("Report saved to local DB: %s (task=%s)", title[:50], task_id[:8])
+        await _broadcast_sse("report_saved", {"title": title, "task_id": task_id})
     except Exception as e:
         log.warning("Failed to save report to local DB: %s", e)
 
@@ -942,6 +963,65 @@ async def cancel_task(task_id: str):
     await _stop_task_workflow(task)
     await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": "Cancelled by user"})
     return {"status": "cancelled"}
+
+
+@app.get("/api/events")
+async def sse_stream():
+    """Server-Sent Events stream — broadcasts task and report updates to connected clients."""
+    queue: asyncio.Queue = asyncio.Queue(maxsize=50)
+    _sse_clients.append(queue)
+
+    async def stream():
+        try:
+            yield "event: connected\ndata: {}\n\n"
+            while True:
+                try:
+                    msg = await asyncio.wait_for(queue.get(), timeout=25)
+                    yield msg
+                except asyncio.TimeoutError:
+                    yield ": heartbeat\n\n"
+        finally:
+            try:
+                _sse_clients.remove(queue)
+            except ValueError:
+                pass
+
+    return StreamingResponse(stream(), media_type="text/event-stream",
+                             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.get("/api/tasks/{task_id}/pipeline")
+async def get_pipeline_chain(task_id: str):
+    """Return all tasks in the same pipeline chain, sorted oldest-first."""
+    task = await task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+
+    # Walk up to root via parent_task_id
+    root = task
+    visited: set[str] = set()
+    while root.config.get("parent_task_id") and root.id not in visited:
+        visited.add(root.id)
+        parent = await task_manager.get_task(root.config["parent_task_id"])
+        if not parent:
+            break
+        root = parent
+
+    # Scan recent tasks to find all descendants of root
+    all_tasks = await task_manager.list_tasks(limit=200)
+    chain = [root]
+    seen = {root.id}
+    changed = True
+    while changed:
+        changed = False
+        for t in all_tasks:
+            if t.id not in seen and t.config.get("parent_task_id") in seen:
+                chain.append(t)
+                seen.add(t.id)
+                changed = True
+
+    chain.sort(key=lambda t: t.created_at or 0)
+    return [t.model_dump() for t in chain]
 
 
 @app.delete("/api/tasks/{task_id}")

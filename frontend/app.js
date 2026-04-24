@@ -402,16 +402,22 @@ async function loadRightTasks() {
       el.innerHTML = '<p class="empty">No tasks yet</p>';
       return;
     }
-    el.innerHTML = tasks.map(t => `
+    el.innerHTML = tasks.map(t => {
+      const hasChain = t.config?.phase || t.config?.parent_task_id;
+      const isActive = t.status === 'running' || t.status === 'pending';
+      return `
       <div class="task-row">
         <span class="task-info" onclick="viewRightConversation('${t.id}')">
-          ${t.id.slice(0, 8)} &mdash; ${t.agent_type} &mdash; ${esc((t.config?.instruction || '').slice(0, 60))}
+          ${t.id.slice(0, 8)} &mdash; ${t.agent_type} &mdash; ${esc((t.config?.instruction || '').slice(0, 50))}
         </span>
         <div class="task-actions">
           <span class="status-badge status-${t.status}">${t.status}</span>
+          ${hasChain ? `<button class="btn-tool-ctrl" onclick="viewPipelineChain('${t.id}')" title="View pipeline chain">⛓</button>` : ''}
+          ${isActive ? `<button class="btn-cancel" onclick="cancelTask('${t.id}')" title="Cancel">⊘</button>` : ''}
           <button class="btn-delete" onclick="deleteTask('${t.id}')" title="Delete">&#10005;</button>
         </div>
-      </div>`).join('');
+      </div>`;
+    }).join('');
   } catch (e) {
     document.getElementById('rightTaskList').innerHTML = '<p class="empty">Error loading tasks</p>';
   }
@@ -945,8 +951,21 @@ function _renderPipelineSteps() {
             <label>Model Override</label>
             <select onchange="updatePipelineStep(${i},'model',this.value)">${_modelOpts(step.model)}</select>
           </div>
+          <div class="form-group" style="margin-bottom:0;max-width:100px">
+            <label>Max Iter <span class="tip" data-tip="Max tool-call iterations for this step. Overrides agent default.">ⓘ</span></label>
+            <input type="number" min="1" max="50" placeholder="Default"
+              value="${esc(String(step.max_iterations || ''))}"
+              onchange="updatePipelineStep(${i},'max_iterations',this.value ? parseInt(this.value) : '')">
+          </div>
         </div>
-        <details${step.prompt_override ? ' open' : ''}>
+        <details${step.tools && step.tools.length ? ' open' : ''}>
+          <summary style="font-size:0.82em;color:#8b949e;cursor:pointer">Tools Override <span class="tip" data-tip="Comma-separated tool names. Leave empty to use agent defaults.">ⓘ</span></summary>
+          <input type="text" class="editor-textarea" style="margin-top:6px;height:auto;padding:6px 8px"
+            placeholder="web_search, web_read, wiki_read (blank = agent defaults)"
+            value="${esc((step.tools || []).join(', '))}"
+            onchange="updatePipelineStep(${i},'tools',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
+        </details>
+        <details${step.prompt_override ? ' open' : ''} style="margin-top:6px">
           <summary style="font-size:0.82em;color:#8b949e;cursor:pointer">Prompt Override</summary>
           <textarea class="editor-textarea" rows="4" style="margin-top:6px"
             onchange="updatePipelineStep(${i},'prompt_override',this.value)"
@@ -957,7 +976,7 @@ function _renderPipelineSteps() {
 }
 
 function addPipelineStep() {
-  _pipelineSteps.push({ agent: '', model: '', prompt_override: '' });
+  _pipelineSteps.push({ agent: '', model: '', prompt_override: '', max_iterations: '', tools: [] });
   _renderPipelineSteps();
 }
 
@@ -1030,7 +1049,13 @@ async function selectWorkflow(name) {
     document.getElementById('workflowContent').value = w.content || '';
     document.getElementById('workflowDescription').value =
       (w.pipeline_json && w.pipeline_json.description) || '';
-    _pipelineSteps = (w.pipeline_json && w.pipeline_json.steps) || [];
+    _pipelineSteps = ((w.pipeline_json && w.pipeline_json.steps) || []).map(s => ({
+      agent: s.agent || '',
+      model: s.model || '',
+      prompt_override: s.prompt_override || '',
+      max_iterations: s.max_iterations || '',
+      tools: s.tools || [],
+    }));
     _renderPipelineSteps();
     document.getElementById('workflowEditor').style.display = '';
     document.getElementById('workflowEmpty').style.display = 'none';
@@ -1043,7 +1068,7 @@ async function selectWorkflow(name) {
 
 function newWorkflow() {
   _currentWorkflow = null;
-  _pipelineSteps = [{ agent: '', model: '', prompt_override: '' }];
+  _pipelineSteps = [{ agent: '', model: '', prompt_override: '', max_iterations: '', tools: [] }];
   document.getElementById('workflowName').value = '';
   document.getElementById('workflowDescription').value = '';
   document.getElementById('workflowContent').value = '';
@@ -1065,6 +1090,8 @@ async function saveWorkflow() {
       agent: s.agent,
       model: s.model || '',
       prompt_override: s.prompt_override || '',
+      ...(s.max_iterations ? { max_iterations: parseInt(s.max_iterations) } : {}),
+      ...(s.tools && s.tools.length ? { tools: s.tools } : {}),
     })),
   };
   const content = document.getElementById('workflowContent').value;
@@ -1098,6 +1125,189 @@ async function deleteWorkflow() {
   }
 }
 
+// ── Tool schemas editor ───────────────────────────────────────────────────────
+
+let _currentSchema = null;
+
+async function loadSchemas() {
+  try {
+    const schemas = await api('/api/tools/schemas');
+    const el = document.getElementById('schemaList');
+    if (!schemas.length) {
+      el.innerHTML = '<p class="empty" style="padding:12px">No schemas yet</p>';
+      return;
+    }
+    el.innerHTML = schemas.map(s => `
+      <div class="editor-list-item${_currentSchema === s.name ? ' active' : ''}"
+           onclick="selectSchema('${s.name}')">
+        <span>${s.name}</span>
+        <span style="font-size:0.7em;color:#484f58">v${s.version}</span>
+      </div>`).join('');
+  } catch (e) {
+    document.getElementById('schemaList').innerHTML =
+      '<p class="empty" style="padding:12px">Error loading schemas</p>';
+  }
+}
+
+async function selectSchema(name) {
+  try {
+    const s = await api('/api/tools/schemas/' + name);
+    _currentSchema = name;
+    document.getElementById('schemaEditorName').textContent = name;
+    document.getElementById('schemaVersion').value = s.schema_version || '1.0.0';
+    document.getElementById('schemaDbVersion').value = 'v' + s.version;
+    document.getElementById('schemaChangelog').value = '';
+    document.getElementById('schemaContent').value = JSON.stringify(s.schema, null, 2);
+    document.getElementById('schemaEditor').style.display = '';
+    document.getElementById('schemaEmpty').style.display = 'none';
+    loadSchemas();
+    loadSchemaHistory(name);
+  } catch (e) {
+    alert('Error loading schema: ' + e.message);
+  }
+}
+
+async function loadSchemaHistory(name) {
+  const el = document.getElementById('schemaHistory');
+  el.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const history = await api('/api/tools/schemas/' + name + '/history');
+    if (!history.length) { el.innerHTML = '<p class="empty">No history</p>'; return; }
+    el.innerHTML = history.map(h => `
+      <div class="schema-history-row">
+        <span class="schema-history-v">v${h.version}</span>
+        <span class="schema-history-semver">${esc(h.schema_version)}</span>
+        <span class="schema-history-log">${esc(h.changelog || '—')}</span>
+        <span class="schema-history-by">${esc(h.updated_by)}</span>
+        <span class="schema-history-date">${h.created_at ? new Date(h.created_at).toLocaleDateString() : ''}</span>
+      </div>`).join('');
+  } catch (e) {
+    el.innerHTML = '<p class="empty">Error loading history</p>';
+  }
+}
+
+async function saveSchema() {
+  if (!_currentSchema) return;
+  let schema;
+  try {
+    schema = JSON.parse(document.getElementById('schemaContent').value);
+  } catch (e) {
+    alert('Invalid JSON: ' + e.message);
+    return;
+  }
+  const schema_version = document.getElementById('schemaVersion').value.trim() || '1.0.0';
+  const changelog = document.getElementById('schemaChangelog').value.trim();
+  try {
+    const r = await api('/api/tools/schemas/' + _currentSchema, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ schema, schema_version, changelog, updated_by: 'ui' }),
+    });
+    document.getElementById('schemaDbVersion').value = 'v' + r.version;
+    document.getElementById('schemaChangelog').value = '';
+    loadSchemas();
+    loadSchemaHistory(_currentSchema);
+  } catch (e) {
+    alert('Save failed: ' + e.message);
+  }
+}
+
+async function deleteSchemaSelected() {
+  if (!_currentSchema) return;
+  if (!confirm(`Delete all versions of schema "${_currentSchema}"?`)) return;
+  try {
+    await api('/api/tools/schemas/' + _currentSchema, { method: 'DELETE' });
+    _currentSchema = null;
+    document.getElementById('schemaEditor').style.display = 'none';
+    document.getElementById('schemaEmpty').style.display = '';
+    loadSchemas();
+  } catch (e) {
+    alert('Delete failed: ' + e.message);
+  }
+}
+
+// ── SSE + toast ───────────────────────────────────────────────────────────────
+
+function showToast(msg, type = 'info', duration = 5000) {
+  const container = document.getElementById('toast-container');
+  const el = document.createElement('div');
+  el.className = `toast toast-${type}`;
+  el.textContent = msg;
+  container.appendChild(el);
+  setTimeout(() => el.remove(), duration);
+}
+
+function connectSSE() {
+  const es = new EventSource('/api/events');
+
+  es.addEventListener('task_update', e => {
+    const d = JSON.parse(e.data);
+    const id8 = d.task_id ? d.task_id.slice(0, 8) : '?';
+    if (d.status === 'completed') {
+      showToast(`Task ${id8} completed`, 'success');
+    } else if (d.status === 'failed') {
+      showToast(`Task ${id8} failed`, 'error');
+    }
+    loadRightTasks();
+  });
+
+  es.addEventListener('report_saved', e => {
+    const d = JSON.parse(e.data);
+    showToast(`Report saved: ${d.title ? d.title.slice(0, 50) : ''}`, 'success');
+    loadReports();
+  });
+
+  es.onerror = () => {
+    es.close();
+    setTimeout(connectSSE, 5000);
+  };
+}
+
+// ── Pipeline chain ────────────────────────────────────────────────────────────
+
+async function viewPipelineChain(taskId) {
+  const panel = document.getElementById('rightPipelinePanel');
+  const content = document.getElementById('rightPipelineContent');
+  panel.style.display = '';
+  content.innerHTML = '<p class="empty" style="padding:12px">Loading…</p>';
+
+  try {
+    const chain = await api('/api/tasks/' + taskId + '/pipeline');
+    if (chain.length <= 1) {
+      panel.style.display = 'none';
+      viewRightConversation(taskId);
+      return;
+    }
+    content.innerHTML = chain.map((t, i) => {
+      const phase = t.config?.phase || `step ${i}`;
+      const dur = t.completed_at && t.created_at
+        ? Math.round((new Date(t.completed_at) - new Date(t.created_at)) / 1000) + 's'
+        : '';
+      return `
+        <div class="pipeline-chain-step" onclick="viewRightConversation('${t.id}')">
+          <span class="pipeline-chain-num">Step ${i + 1}</span>
+          <span class="pipeline-chain-info">
+            <span class="pipeline-chain-agent">${esc(t.agent_type)}</span>
+            <span class="pipeline-chain-phase"> · ${esc(phase)}${dur ? ' · ' + dur : ''}</span>
+          </span>
+          <span class="status-badge status-${t.status}">${t.status}</span>
+        </div>`;
+    }).join('');
+  } catch (e) {
+    content.innerHTML = `<p class="empty" style="padding:12px">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+async function cancelTask(taskId) {
+  if (!confirm('Cancel this task?')) return;
+  try {
+    await api('/api/tasks/' + taskId + '/cancel', { method: 'POST' });
+    loadRightTasks();
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 loadModels();
@@ -1106,5 +1316,5 @@ loadReports();
 loadAgents();
 loadWorkflows();
 loadWorkflowDropdown();
-setInterval(loadRightTasks, 30000);
-setInterval(loadReports, 60000);
+loadSchemas();
+connectSSE();

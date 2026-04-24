@@ -14,6 +14,7 @@
     <button class="tab active" data-tab="runner">Test Runner</button>
     <button class="tab" data-tab="agents">Agents</button>
     <button class="tab" data-tab="workflows">Workflows</button>
+    <button class="tab" data-tab="tools">Tools</button>
     <button class="tab" data-tab="reports">Reports</button>
   </nav>
 </header>
@@ -175,6 +176,13 @@
             <button class="btn-danger" onclick="clearAllTasks()">Clear All</button>
           </div>
           <div id="rightTaskList"><p class="empty">Loading…</p></div>
+          <div id="rightPipelinePanel" class="conv-panel" style="display:none">
+            <div class="conv-panel-header">
+              <span class="conv-panel-title">Pipeline Chain</span>
+              <button class="btn-tool-ctrl" onclick="document.getElementById('rightPipelinePanel').style.display='none'">✕</button>
+            </div>
+            <div id="rightPipelineContent"></div>
+          </div>
           <div id="rightConvPanel" class="conv-panel" style="display:none">
             <div class="conv-panel-header">
               <span id="rightConvId" class="conv-panel-title"></span>
@@ -346,6 +354,65 @@
     </div>
   </section>
 
+  <!-- TOOLS TAB -->
+  <section id="tab-tools" class="tab-content">
+    <div class="editor-split">
+
+      <!-- Left: schema list -->
+      <div class="editor-list-panel">
+        <div class="editor-list-header">
+          <span>Tool Schemas</span>
+        </div>
+        <div id="schemaList" class="editor-list"></div>
+      </div>
+
+      <!-- Right: editor -->
+      <div class="editor-pane" id="schemaEditor" style="display:none">
+        <div class="editor-pane-header">
+          <span id="schemaEditorName" style="font-weight:600;font-size:1em"></span>
+          <div class="editor-pane-actions">
+            <button class="btn-primary" onclick="saveSchema()">Save</button>
+            <button class="btn-danger" onclick="deleteSchemaSelected()">Delete</button>
+          </div>
+        </div>
+
+        <div class="editor-section">
+          <div class="form-row" style="margin-bottom:0">
+            <div class="form-group" style="margin-bottom:0">
+              <label>Semver <span class="tip" data-tip="Cosmetic label for this version. The DB auto-increments an integer version on each save.">ⓘ</span></label>
+              <input id="schemaVersion" type="text" placeholder="1.0.0" style="max-width:120px">
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label>DB version</label>
+              <input id="schemaDbVersion" type="text" disabled style="color:#8b949e;max-width:80px">
+            </div>
+            <div class="form-group" style="margin-bottom:0;flex:1">
+              <label>Changelog</label>
+              <input id="schemaChangelog" type="text" placeholder="What changed…">
+            </div>
+          </div>
+        </div>
+
+        <div class="editor-section" style="flex:1">
+          <div class="editor-file-label">Schema JSON <span class="editor-file-hint">— OpenAI function-calling format</span></div>
+          <textarea id="schemaContent" class="editor-textarea" rows="24" spellcheck="false"></textarea>
+        </div>
+
+        <div class="editor-section">
+          <details>
+            <summary>Version History</summary>
+            <div id="schemaHistory" style="margin-top:10px"></div>
+          </details>
+        </div>
+      </div>
+
+      <div class="editor-empty" id="schemaEmpty">
+        <p>Select a tool schema to view or edit it.</p>
+      </div>
+
+    </div>
+  </section>
+
   <!-- REPORTS TAB -->
   <section id="tab-reports" class="tab-content">
     <div class="reports-split">
@@ -385,6 +452,7 @@
 
 </main>
 
+<div id="toast-container"></div>
 <script src="app.js"></script>
 </body>
 </html>
