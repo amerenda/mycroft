@@ -416,7 +416,7 @@ let _allTasks = [];
 
 async function loadRightTasks() {
   try {
-    _allTasks = await api('/api/tasks?limit=50');
+    _allTasks = await api('/api/tasks?limit=100');
     applyTaskFilter();
   } catch (e) {
     document.getElementById('rightTaskList').innerHTML = '<p class="empty">Error loading tasks</p>';
@@ -449,9 +449,13 @@ function _renderTaskList(tasks) {
 
 function applyTaskFilter() {
   const status = document.getElementById('taskFilterStatus').value;
+  const ageMinutes = parseInt(document.getElementById('taskFilterAge').value) || 0;
   const q = document.getElementById('taskFilterSearch').value.toLowerCase();
+  const cutoff = ageMinutes ? Date.now() - ageMinutes * 60 * 1000 : 0;
+
   let tasks = _allTasks;
   if (status) tasks = tasks.filter(t => t.status === status);
+  if (cutoff) tasks = tasks.filter(t => t.created_at && new Date(t.created_at).getTime() >= cutoff);
   if (q) tasks = tasks.filter(t =>
     (t.config?.instruction || '').toLowerCase().includes(q) ||
     t.agent_type.toLowerCase().includes(q) ||

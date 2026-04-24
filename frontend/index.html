@@ -181,8 +181,15 @@
               <option value="completed">completed</option>
               <option value="failed">failed</option>
             </select>
+            <select id="taskFilterAge" onchange="applyTaskFilter()" style="font-size:0.82em;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 4px">
+              <option value="">Any time</option>
+              <option value="20">Last 20 min</option>
+              <option value="60">Last hour</option>
+              <option value="360">Last 6 h</option>
+              <option value="1440">Today</option>
+            </select>
             <input id="taskFilterSearch" type="text" placeholder="search…" oninput="applyTaskFilter()"
-              style="font-size:0.82em;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 6px;width:90px;outline:none">
+              style="font-size:0.82em;background:#0d1117;color:#c9d1d9;border:1px solid #30363d;border-radius:4px;padding:2px 6px;width:80px;outline:none">
             <button class="btn-danger" onclick="clearAllTasks()">Clear All</button>
           </div>
           <div id="rightTaskList"><p class="empty">Loading…</p></div>
