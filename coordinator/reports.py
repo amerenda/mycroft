@@ -37,6 +37,11 @@ async def ensure_reports_table(pool: asyncpg.Pool) -> None:
                 updated_at TIMESTAMPTZ DEFAULT NOW()
             )
         """)
+        # Remove any corrupt records with empty IDs (produced by all-symbol titles like '```')
+        deleted = await conn.execute("DELETE FROM reports WHERE id = '' OR id IS NULL")
+        if deleted != "DELETE 0":
+            log.warning("Cleaned up corrupt report records with empty IDs: %s", deleted)
+
         # Migrate existing tables missing the newer columns
         for col_name, col_def in [
             ("workflow", "TEXT DEFAULT ''"),
@@ -55,12 +60,15 @@ async def ensure_reports_table(pool: asyncpg.Pool) -> None:
 
 
 def _slugify(text: str) -> str:
-    """Convert text to a URL-safe slug."""
+    """Convert text to a URL-safe slug. Falls back to a UUID fragment if the title
+    contains only symbols (e.g. '```') and would otherwise produce an empty string."""
+    import uuid
     slug = text.lower().strip()
     slug = re.sub(r'[^\w\s-]', '', slug)
     slug = re.sub(r'[\s_]+', '-', slug)
     slug = re.sub(r'-+', '-', slug)
-    return slug[:80].strip('-')
+    slug = slug[:80].strip('-')
+    return slug or uuid.uuid4().hex[:12]
 
 
 async def create_report(
@@ -114,13 +122,14 @@ async def list_reports(pool: asyncpg.Pool, limit: int = 50, source_task_id: str 
             rows = await conn.fetch(
                 "SELECT id, title, summary, tags, effort, workflow, models_used, commit_sha, "
                 "source_task_id, created_at, updated_at "
-                "FROM reports WHERE source_task_id = $1 ORDER BY created_at DESC LIMIT $2",
+                "FROM reports WHERE source_task_id = $1 AND id != '' "
+                "ORDER BY created_at DESC LIMIT $2",
                 source_task_id, limit)
         else:
             rows = await conn.fetch(
                 "SELECT id, title, summary, tags, effort, workflow, models_used, commit_sha, "
                 "source_task_id, created_at, updated_at "
-                "FROM reports ORDER BY created_at DESC LIMIT $1", limit)
+                "FROM reports WHERE id != '' ORDER BY created_at DESC LIMIT $1", limit)
     return [_row_to_dict(r) for r in rows]
 
 

@@ -665,7 +665,7 @@ async function viewReportTaskTrace(taskId) {
 }
 
 async function deleteCurrentReport() {
-  if (!_currentReport) return;
+  if (_currentReport === null || _currentReport === undefined) return;
   if (!confirm('Delete this report?')) return;
   try {
     await api('/api/reports/' + _currentReport, { method: 'DELETE' });
