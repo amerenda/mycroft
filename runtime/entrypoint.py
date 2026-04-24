@@ -53,29 +53,14 @@ def main():
             log.error("Either --instruction or TASK_ID + MYCROFT_AGENT_TYPE env vars required")
             sys.exit(1)
 
-    # Find manifest — agent directory name must match the manifest name: field (use hyphens).
-    # Convention: agents/web-search/ not agents/web_search/
+    # Find manifest. Agent directories use underscores (Python module constraint);
+    # agent_type strings use hyphens (k8s/manifest convention). Normalize here.
     repo_root = Path(__file__).resolve().parent.parent
-    manifest_path = repo_root / "agents" / agent_type / "manifest.yaml"
+    agent_dir = agent_type.replace("-", "_")
+    manifest_path = repo_root / "agents" / agent_dir / "manifest.yaml"
 
     if not manifest_path.exists():
-        # Warn loudly: directory should match agent_type exactly. Check common mistakes.
-        underscore_alt = repo_root / "agents" / agent_type.replace("-", "_") / "manifest.yaml"
-        hyphen_alt = repo_root / "agents" / agent_type.replace("_", "-") / "manifest.yaml"
-        if underscore_alt.exists():
-            log.error(
-                "Manifest not found at %s — found it at %s instead. "
-                "Rename the agent directory to match its manifest name: field.",
-                manifest_path, underscore_alt,
-            )
-        elif hyphen_alt.exists():
-            log.error(
-                "Manifest not found at %s — found it at %s instead. "
-                "Rename the agent directory to match its manifest name: field.",
-                manifest_path, hyphen_alt,
-            )
-        else:
-            log.error("Manifest not found: %s", manifest_path)
+        log.error("Manifest not found: %s", manifest_path)
         sys.exit(1)
 
     manifest = AgentManifest.from_yaml(manifest_path)
