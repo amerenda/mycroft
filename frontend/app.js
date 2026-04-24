@@ -1008,6 +1008,7 @@ async function testAgent() {
       body: JSON.stringify({
         agent_type: _currentAgent,
         instruction,
+        model: document.getElementById('agentModel').value || null,
         max_iterations: 6,
         notify: document.getElementById('notifyTest').checked,
       }),
