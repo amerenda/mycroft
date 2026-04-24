@@ -118,7 +118,7 @@ async def _discover_llm_key(manifest: AgentManifest, platform: PlatformConfig):
                 resp = await client.post(
                     f"{platform.llm_manager_url}/api/apps/discover",
                     json={
-                        "name": f"mycroft-{manifest.name}",
+                        "name": "mycroft-agents",
                         "base_url": "",
                         "registration_secret": platform.llm_registration_secret,
                     },
