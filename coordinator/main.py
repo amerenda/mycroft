@@ -1476,6 +1476,90 @@ async def delete_workflow(name: str):
 
 
 # ---------------------------------------------------------------------------
+# KB Explorer API
+# ---------------------------------------------------------------------------
+
+
+class KBUpsertRequest(BaseModel):
+    path: str
+    content: str
+    metadata: dict = {}
+    source: str = "ui"
+    needs_embedding: bool = True
+
+
+@app.get("/api/kb/children")
+async def kb_children(path: str = "/", since_minutes: int | None = None, limit: int = 500):
+    """List immediate children (dirs + entries) under a KB path prefix."""
+    children = await db.kb.list_children(path, since_minutes=since_minutes, limit=min(limit, 2000))
+    return children
+
+
+@app.get("/api/kb/count")
+async def kb_count(path: str = "/"):
+    """Count distinct scopes under a KB path prefix."""
+    count = await db.kb.count_by_prefix(path)
+    return {"path": path, "count": count}
+
+
+@app.get("/api/kb/entry")
+async def kb_get_entry(path: str):
+    """Get the most recent KB record at the exact scope."""
+    record = await db.kb.get_by_scope(path)
+    if not record:
+        raise HTTPException(404, f"No KB entry at {path!r}")
+    return record
+
+
+@app.put("/api/kb/entry")
+async def kb_put_entry(req: KBUpsertRequest):
+    """Write/replace a KB entry."""
+    record_id = await db.kb.upsert_by_scope(
+        req.path, req.content, req.source, req.metadata, req.needs_embedding
+    )
+    return {"status": "ok", "id": record_id, "path": req.path}
+
+
+@app.delete("/api/kb/entry")
+async def kb_delete_entry(path: str):
+    """Delete all records at the exact scope."""
+    count = await db.kb.delete_by_scope(path)
+    if count == 0:
+        raise HTTPException(404, f"No KB entry at {path!r}")
+    return {"status": "deleted", "path": path, "count": count}
+
+
+@app.delete("/api/kb/subtree")
+async def kb_delete_subtree(path: str):
+    """Delete all records under a path prefix."""
+    if path in ("/", ""):
+        raise HTTPException(400, "Cannot delete root")
+    count = await db.kb.delete_by_prefix(path)
+    return {"status": "deleted", "path": path, "count": count}
+
+
+@app.get("/api/kb/task/{task_id}")
+async def kb_for_task(task_id: str):
+    """Return all KB records associated with a task (direct + written during run)."""
+    task = await task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    records = await db.kb.list_records_for_task(
+        task_id,
+        agent_type=task.agent_type,
+        started_at=task.started_at,
+        completed_at=task.completed_at,
+    )
+    return {
+        "task_id": task_id,
+        "agent_type": task.agent_type,
+        "started_at": str(task.started_at) if task.started_at else None,
+        "completed_at": str(task.completed_at) if task.completed_at else None,
+        "records": records,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Debug UI
 # ---------------------------------------------------------------------------
 

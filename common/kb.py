@@ -438,6 +438,232 @@ class KBClient:
         return conn
 
 
+    # -----------------------------------------------------------------------
+    # KB Explorer — browse / CRUD
+    # -----------------------------------------------------------------------
+
+    async def list_children(
+        self,
+        prefix: str,
+        since_minutes: int | None = None,
+        limit: int = 500,
+    ) -> list[dict]:
+        """List immediate children (dirs + leaf entries) under a path prefix.
+
+        Returns items sorted dirs-first then entries, both alphabetically.
+        Each item: {type, name, path, count, last_updated, source?, description?}
+        """
+        norm = prefix.rstrip("/") + "/"
+        time_clause = (
+            f"AND created_at > NOW() - INTERVAL '{int(since_minutes)} minutes'"
+            if since_minutes is not None
+            else ""
+        )
+
+        rows = await self.pool.fetch(
+            f"""
+            SELECT DISTINCT ON (scope)
+                scope, source, created_at, metadata, needs_embedding
+            FROM memory_records
+            WHERE scope LIKE $1
+            {time_clause}
+            ORDER BY scope, created_at DESC
+            LIMIT $2
+            """,
+            norm + "%",
+            limit,
+        )
+
+        children: dict[str, dict] = {}
+        prefix_len = len(norm)
+
+        for row in rows:
+            scope = row["scope"]
+            relative = scope[prefix_len:]
+            if not relative:
+                continue
+            parts = relative.split("/")
+            child_name = parts[0]
+            is_leaf = len(parts) == 1
+            child_path = norm + child_name
+
+            if child_name not in children:
+                children[child_name] = {
+                    "type": "entry" if is_leaf else "dir",
+                    "name": child_name,
+                    "path": child_path,
+                    "count": 0,
+                    "last_updated": None,
+                    "source": None,
+                    "needs_embedding": None,
+                    "description": "",
+                }
+
+            if not is_leaf:
+                children[child_name]["type"] = "dir"
+
+            children[child_name]["count"] += 1
+
+            row_ts = str(row["created_at"]) if row["created_at"] else None
+            last = children[child_name]["last_updated"]
+            if row_ts and (not last or row_ts > last):
+                children[child_name]["last_updated"] = row_ts
+
+            if is_leaf and children[child_name]["source"] is None:
+                children[child_name]["source"] = row["source"]
+                children[child_name]["needs_embedding"] = row["needs_embedding"]
+                meta = _json(row["metadata"])
+                children[child_name]["description"] = meta.get("description", "")
+
+        return sorted(
+            children.values(),
+            key=lambda x: (x["type"] == "entry", x["name"]),
+        )
+
+    async def get_by_scope(self, scope: str) -> dict | None:
+        """Get the most recent KB record at the exact scope. Returns raw dict."""
+        row = await self.pool.fetchrow(
+            """
+            SELECT id, content, scope, source, created_at, metadata, needs_embedding
+            FROM memory_records
+            WHERE scope = $1
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            scope,
+        )
+        if not row:
+            return None
+        return {
+            "id": _str(row["id"]),
+            "scope": row["scope"],
+            "content": row["content"],
+            "source": row["source"],
+            "created_at": str(row["created_at"]) if row["created_at"] else None,
+            "metadata": _json(row["metadata"]),
+            "needs_embedding": row["needs_embedding"],
+        }
+
+    async def delete_by_scope(self, scope: str) -> int:
+        """Delete all records at the exact scope. Returns count deleted."""
+        result = await self.pool.execute(
+            "DELETE FROM memory_records WHERE scope = $1", scope
+        )
+        return int(result.split()[-1])
+
+    async def delete_by_prefix(self, prefix: str) -> int:
+        """Delete all records under a path prefix. Returns count deleted."""
+        if prefix in ("/", ""):
+            raise ValueError("Cannot delete root prefix")
+        norm = prefix.rstrip("/") + "/"
+        result = await self.pool.execute(
+            "DELETE FROM memory_records WHERE scope LIKE $1", norm + "%"
+        )
+        return int(result.split()[-1])
+
+    async def count_by_prefix(self, prefix: str) -> int:
+        """Count distinct scopes under a path prefix."""
+        norm = prefix.rstrip("/") + "/"
+        row = await self.pool.fetchrow(
+            "SELECT COUNT(DISTINCT scope) FROM memory_records WHERE scope LIKE $1",
+            norm + "%",
+        )
+        return row[0] if row else 0
+
+    async def upsert_by_scope(
+        self,
+        scope: str,
+        content: str,
+        source: str = "ui",
+        metadata: dict[str, Any] | None = None,
+        needs_embedding: bool = True,
+    ) -> str:
+        """Write/replace content at the given scope. Returns new record ID."""
+        record_id = str(uuid.uuid4())
+        await self.pool.execute("DELETE FROM memory_records WHERE scope = $1", scope)
+        await self.pool.execute(
+            """
+            INSERT INTO memory_records
+                (id, content, scope, categories, metadata, importance,
+                 source, needs_embedding, embedding)
+            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
+            """,
+            record_id,
+            content,
+            scope,
+            [],
+            json.dumps(metadata or {}),
+            0.5,
+            source,
+            needs_embedding,
+        )
+        log.debug("KB upsert: scope=%s id=%s", scope, record_id[:8])
+        return record_id
+
+    async def list_records_for_task(
+        self,
+        task_id: str,
+        agent_type: str | None = None,
+        started_at=None,
+        completed_at=None,
+    ) -> list[dict]:
+        """Return KB records associated with a task.
+
+        Two groups:
+        - "direct": scope contains the task_id (inbox, results, conversation)
+        - "during": records written while the task was running under the agent's paths
+        """
+        def _row_dict(row, group: str) -> dict:
+            return {
+                "scope": row["scope"],
+                "source": row["source"],
+                "created_at": str(row["created_at"]) if row["created_at"] else None,
+                "needs_embedding": row["needs_embedding"],
+                "content_preview": "",
+                "group": group,
+            }
+
+        # Direct — scope contains task_id
+        direct_rows = await self.pool.fetch(
+            """
+            SELECT DISTINCT ON (scope)
+                scope, source, created_at, needs_embedding
+            FROM memory_records
+            WHERE scope LIKE $1
+            ORDER BY scope, created_at DESC
+            """,
+            f"%{task_id}%",
+        )
+        results = [_row_dict(r, "direct") for r in direct_rows]
+        direct_scopes = {r["scope"] for r in results}
+
+        # During — records written while the task ran
+        if started_at and completed_at and agent_type:
+            agent_prefix = f"/agents/{agent_type}/%"
+            tasks_prefix = f"/tasks/%"
+            during_rows = await self.pool.fetch(
+                """
+                SELECT DISTINCT ON (scope)
+                    scope, source, created_at, needs_embedding
+                FROM memory_records
+                WHERE (scope LIKE $1 OR scope LIKE $2)
+                  AND created_at >= $3
+                  AND created_at <= $4
+                ORDER BY scope, created_at DESC
+                """,
+                agent_prefix,
+                tasks_prefix,
+                started_at,
+                completed_at,
+            )
+            for row in during_rows:
+                if row["scope"] not in direct_scopes:
+                    results.append(_row_dict(row, "during"))
+
+        results.sort(key=lambda x: x["created_at"] or "")
+        return results
+
+
 def _notify_adapter(callback, args):
     """Bridge asyncpg listener (sync) to async callback."""
     import asyncio
