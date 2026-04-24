@@ -1842,10 +1842,10 @@ function renderKBDetail(entry) {
   // Content
   const content = document.getElementById('kbDetailContent');
   const text = entry.content || '';
-  const looksMarkdown = /^#|\*\*|^\-\s|\[.*\]\(/.test(text);
-  if (looksMarkdown && window.markdownit) {
+  const looksMarkdown = /^#|\*\*|-\s|\[.*\]\(/m.test(text);
+  if (looksMarkdown && md) {
     content.className = 'kb-content kb-markdown report-body';
-    content.innerHTML = markdownit().render(text);
+    content.innerHTML = md.render(text);
   } else {
     content.className = 'kb-content';
     content.textContent = text || '(empty)';
