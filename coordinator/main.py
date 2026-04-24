@@ -185,6 +185,7 @@ async def _start_research_pipeline(
     gather_model: str | None = None,
     write_model: str | None = None,
     gather_tools: list[str] | None = None,
+    notify: bool = True,
 ) -> str:
     """Start the two-phase gather→write pipeline. Returns the gather task ID."""
     from coordinator.research_pipeline import WORKFLOW_CONFIG, GATHERER_PROMPT
@@ -203,6 +204,7 @@ async def _start_research_pipeline(
         "system_prompt_override": GATHERER_PROMPT,
         "phase": "gather",
         "workflow": workflow,
+        **({"notify": False} if not notify else {}),
     }
 
     gather_task_id = await task_manager.create_task(
@@ -228,7 +230,7 @@ async def _start_research_pipeline(
              gather_task_id[:8], resolved_gather_model, workflow)
 
     asyncio.create_task(
-        _pipeline_writer_phase(gather_task_id, instruction, workflow, write_model=write_model)
+        _pipeline_writer_phase(gather_task_id, instruction, workflow, write_model=write_model, notify=notify)
     )
 
     return gather_task_id
@@ -239,6 +241,7 @@ async def _pipeline_writer_phase(
     instruction: str,
     workflow: str,
     write_model: str | None = None,
+    notify: bool = True,
 ):
     """Background: wait for gatherer to finish, then launch the writer."""
     from coordinator.research_pipeline import WORKFLOW_CONFIG, WRITER_PROMPT, _wait_for_task
@@ -287,6 +290,7 @@ async def _pipeline_writer_phase(
             "phase": "write",
             "workflow": workflow,
             "parent_task_id": gather_task_id,
+            **({"notify": False} if not notify else {}),
         }
 
         write_task_id = await task_manager.create_task(
@@ -456,6 +460,7 @@ async def _handle_engineering_task(
     max_iterations: int | None = None, effort: str | None = None,
     tools_override: list[str] | None = None,
     workflow: str | None = None,
+    notify: bool = True,
 ) -> str:
     """Handle an engineering task from Telegram or API."""
     manifest = trigger_router.get_manifest(agent_type)
@@ -488,6 +493,8 @@ async def _handle_engineering_task(
         task_config["workflow"] = workflow
     if tools_override:
         task_config["tools_override"] = tools_override
+    if not notify:
+        task_config["notify"] = False
 
     # Create task
     task_id = await task_manager.create_task(
@@ -558,10 +565,11 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
         if task:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="completed").inc()
-        try:
-            await telegram_bot.send(f"Task {task_id[:8]} completed: {message}")
-        except Exception:
-            log.warning("Failed to send Telegram update for task %s", task_id[:8])
+        if telegram_bot and (not task or task.config.get("notify", True)):
+            try:
+                await telegram_bot.send(f"Task {task_id[:8]} completed: {message}")
+            except Exception:
+                log.warning("Failed to send Telegram update for task %s", task_id[:8])
 
 
 async def _handle_status_query(text: str) -> str:
@@ -609,7 +617,7 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
         # Researcher results → save locally, optionally post to Sazed, notify Telegram
         if is_researcher:
             await _handle_researcher_result(record, source)
-        elif telegram_bot:
+        elif telegram_bot and (not task_hint or task_hint.config.get("notify", True)):
             # Other agents (coder, etc.) → Telegram directly
             pr_url = ""
             if record.metadata:
@@ -745,7 +753,7 @@ async def _handle_researcher_result(record, source: str) -> None:
             log.error("Failed to post report to Sazed: %s", e)
 
     # Notify Telegram
-    if telegram_bot:
+    if telegram_bot and (not task or task.config.get("notify", True)):
         try:
             msg = f"{summary}"
             if report_url:
@@ -823,6 +831,7 @@ class CreateTaskRequest(BaseModel):
     tools_override: list[str] | None = None
     gather_model: str | None = None
     write_model: str | None = None
+    notify: bool = True
 
 
 @app.post("/api/tasks")
@@ -841,6 +850,7 @@ async def create_task(req: CreateTaskRequest):
                 gather_model=req.gather_model or req.model,
                 write_model=req.write_model,
                 gather_tools=req.tools_override or None,
+                notify=req.notify,
             )
             return {"task_id": gather_task_id}
 
@@ -857,6 +867,7 @@ async def create_task(req: CreateTaskRequest):
                 effort=None,
                 tools_override=req.tools_override or ["web_search", "wiki_read", "web_read"],
                 workflow="research-quick",
+                notify=req.notify,
             )
             return {"task_id": task_id}
 
@@ -889,6 +900,7 @@ async def create_task(req: CreateTaskRequest):
             effort=None,
             tools_override=req.tools_override,
             workflow=workflow,
+            notify=req.notify,
         )
         return {"task_id": task_id}
     except ValueError as e:

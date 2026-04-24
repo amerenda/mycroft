@@ -223,6 +223,7 @@ async function runMycroft(instruction) {
     repo: document.getElementById('repo').value.trim(),
     model: model || null,
     system_prompt: systemPrompt || null,
+    notify: document.getElementById('notifyRun').checked,
   };
   if (maxTokens) body.max_tokens = parseInt(maxTokens);
   if (temperature) body.temperature = parseFloat(temperature);
@@ -674,6 +675,25 @@ function _updateYamlField(yaml, field, value) {
   return re.test(yaml) ? yaml.replace(re, `$1${value}`) : yaml + `\n${field}: ${value}`;
 }
 
+function _extractPerms(yaml, type) {
+  const re = new RegExp(`^  ${type}:\\s*\\n((?:    - .+\\n?)*)`, 'm');
+  const m = yaml.match(re);
+  if (!m || !m[1].trim()) return '';
+  return m[1].replace(/^    - /gm, '').trim();
+}
+
+function _setPerms(yaml, readLines, writeLines) {
+  const mkList = lines => lines.trim().split('\n').map(l => l.trim()).filter(Boolean);
+  const readPaths = mkList(readLines);
+  const writePaths = mkList(writeLines);
+  const sections = [];
+  if (readPaths.length) sections.push('  read:\n' + readPaths.map(p => `    - ${p}`).join('\n'));
+  if (writePaths.length) sections.push('  write:\n' + writePaths.map(p => `    - ${p}`).join('\n'));
+  const permsBlock = sections.length ? 'permissions:\n' + sections.join('\n') + '\n' : '';
+  const stripped = yaml.replace(/^permissions:(?:\n(?:[ \t].*))*\n?/m, '').trimEnd();
+  return stripped + '\n' + permsBlock;
+}
+
 function _extractSystemPrompt(prompts) {
   const m = prompts.match(/SYSTEM_SUPPLEMENT\s*=\s*"""\s*([\s\S]*?)\s*"""/);
   return m ? m[1].trim() : '';
@@ -723,6 +743,9 @@ async function selectAgent(name) {
     document.getElementById('agentMaxIterations').value = _extractYamlField(a.manifest, 'max_iterations');
     document.getElementById('agentSystemPrompt').value = _extractSystemPrompt(a.prompts || '');
 
+    document.getElementById('agentPermsRead').value = _extractPerms(a.manifest, 'read');
+    document.getElementById('agentPermsWrite').value = _extractPerms(a.manifest, 'write');
+
     document.getElementById('agentTestInstruction').value = '';
     document.getElementById('agentTestContext').value = '';
     document.getElementById('agentTestStatus').style.display = 'none';
@@ -743,6 +766,8 @@ function newAgent() {
   document.getElementById('agentModel').value = 'qwen3:14b';
   document.getElementById('agentMaxIterations').value = '10';
   document.getElementById('agentSystemPrompt').value = '';
+  document.getElementById('agentPermsRead').value = '';
+  document.getElementById('agentPermsWrite').value = '';
   document.getElementById('agentTestStatus').style.display = 'none';
   document.getElementById('agentTestResult').style.display = 'none';
   document.getElementById('agentEditor').style.display = '';
@@ -766,6 +791,13 @@ async function saveAgent() {
   const prompts = sysPrompt
     ? _wrapSystemPrompt(name, sysPrompt)
     : document.getElementById('agentPrompts').value;
+
+  // Sync permissions textareas → manifest YAML
+  const readLines = document.getElementById('agentPermsRead').value;
+  const writeLines = document.getElementById('agentPermsWrite').value;
+  if (readLines.trim() || writeLines.trim()) {
+    manifest = _setPerms(manifest, readLines, writeLines);
+  }
 
   document.getElementById('agentManifest').value = manifest;
   document.getElementById('agentPrompts').value = prompts;
@@ -831,7 +863,12 @@ async function testAgent() {
     const r = await api('/api/tasks', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ agent_type: _currentAgent, instruction, max_iterations: 6 }),
+      body: JSON.stringify({
+        agent_type: _currentAgent,
+        instruction,
+        max_iterations: 6,
+        notify: document.getElementById('notifyTest').checked,
+      }),
     });
     if (r.task_id) _pollAgentTest(r.task_id);
   } catch (e) {

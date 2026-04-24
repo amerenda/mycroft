@@ -149,6 +149,7 @@
         <div class="actions">
           <button class="btn-primary" id="runBtn" onclick="runTask()">Run Task</button>
           <button class="btn-secondary" onclick="previewPrompt()" id="previewBtn">Preview Prompt</button>
+          <label class="notify-label"><input type="checkbox" id="notifyRun" checked> Notify</label>
         </div>
 
         <!-- Prompt Preview (inline) -->
@@ -237,6 +238,19 @@
           <textarea id="agentSystemPrompt" class="editor-textarea" rows="12" spellcheck="false" placeholder="System prompt for this agent..."></textarea>
         </div>
 
+        <!-- Permissions -->
+        <div class="editor-section">
+          <details>
+            <summary>Permissions</summary>
+            <div style="margin-top:10px">
+              <div class="editor-file-label">Read paths <span class="editor-file-hint">— one per line</span></div>
+              <textarea id="agentPermsRead" class="editor-textarea" rows="3" spellcheck="false" placeholder="/tasks"></textarea>
+              <div class="editor-file-label" style="margin-top:8px">Write paths <span class="editor-file-hint">— one per line</span></div>
+              <textarea id="agentPermsWrite" class="editor-textarea" rows="4" spellcheck="false" placeholder="/agents/my-agent/results&#10;/tasks&#10;/notifications/alex"></textarea>
+            </div>
+          </details>
+        </div>
+
         <!-- Raw files (advanced) -->
         <div class="editor-section">
           <details>
@@ -260,6 +274,7 @@
           <textarea id="agentTestContext" class="editor-textarea" rows="3" placeholder="(optional) paste known-good research output here..."></textarea>
           <div class="actions" style="margin-top:8px">
             <button class="btn-secondary" onclick="testAgent()">Run Agent</button>
+            <label class="notify-label"><input type="checkbox" id="notifyTest" checked> Notify</label>
             <span id="agentTestStatus" class="status-badge" style="display:none"></span>
           </div>
           <div id="agentTestResult" style="display:none; margin-top:10px">
