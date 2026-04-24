@@ -1457,18 +1457,40 @@ async function viewPipelineChain(taskId) {
       const dur = t.completed_at && t.created_at
         ? Math.round((new Date(t.completed_at) - new Date(t.created_at)) / 1000) + 's'
         : '';
+      const done = t.status === 'completed';
       return `
-        <div class="pipeline-chain-step" onclick="viewRightConversation('${t.id}')">
-          <span class="pipeline-chain-num">Step ${i + 1}</span>
-          <span class="pipeline-chain-info">
+        <div class="pipeline-chain-step">
+          <span class="pipeline-chain-num" onclick="viewRightConversation('${t.id}')">Step ${i + 1}</span>
+          <span class="pipeline-chain-info" onclick="viewRightConversation('${t.id}')">
             <span class="pipeline-chain-agent">${esc(t.agent_type)}</span>
             <span class="pipeline-chain-phase"> · ${esc(phase)}${dur ? ' · ' + dur : ''}</span>
           </span>
           <span class="status-badge status-${t.status}">${t.status}</span>
+          ${done ? `<button class="btn-tool-ctrl" style="font-size:0.75em;padding:2px 6px" onclick="viewStepOutput('${t.id}', this)" title="View KB output">Output</button>` : ''}
         </div>`;
     }).join('');
   } catch (e) {
     content.innerHTML = `<p class="empty" style="padding:12px">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+async function viewStepOutput(taskId, btn) {
+  const step = btn.closest('.pipeline-chain-step');
+  let outputEl = step.querySelector('.step-output');
+  if (outputEl) { outputEl.remove(); return; }
+
+  btn.textContent = '…';
+  try {
+    const r = await api('/api/tasks/' + taskId + '/kb-result');
+    outputEl = document.createElement('div');
+    outputEl.className = 'step-output';
+    outputEl.style.cssText = 'grid-column:1/-1;padding:8px 12px;background:#0d1117;border-top:1px solid #21262d;font-size:0.8em;white-space:pre-wrap;max-height:200px;overflow-y:auto;color:#c9d1d9';
+    outputEl.textContent = r.content || '(empty)';
+    step.insertAdjacentElement('afterend', outputEl);
+    btn.textContent = 'Hide';
+  } catch (e) {
+    btn.textContent = 'Output';
+    showToast('No KB output for this step', 'info');
   }
 }
 

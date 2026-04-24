@@ -1024,6 +1024,21 @@ async def get_pipeline_chain(task_id: str):
     return [t.model_dump() for t in chain]
 
 
+@app.get("/api/tasks/{task_id}/kb-result")
+async def get_task_kb_result(task_id: str):
+    """Fetch the KB record written by an agent upon task completion."""
+    task = await task_manager.get_task(task_id)
+    if not task:
+        raise HTTPException(404, "Task not found")
+    agent_type = task.agent_type.replace("_", "-")
+    scope = f"/agents/{agent_type}/results/{task_id}"
+    record = await db.kb.get(scope)
+    if not record:
+        raise HTTPException(404, f"No KB result at {scope}")
+    return {"scope": scope, "content": record.content,
+            "created_at": str(record.created_at) if record.created_at else None}
+
+
 @app.delete("/api/tasks/{task_id}")
 async def delete_task(task_id: str):
     task = await task_manager.get_task(task_id)
