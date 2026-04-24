@@ -1546,6 +1546,99 @@ async function cancelTask(taskId) {
   }
 }
 
+// ── Logs tab ──────────────────────────────────────────────────────────────────
+
+let _logAutoRefreshTimer = null;
+let _logSince = null;
+let _allLogLines = [];
+
+async function loadLogs(append = false) {
+  const level = document.getElementById('logLevel').value;
+  const logger = document.getElementById('logLogger').value.trim();
+  const q = document.getElementById('logSearch').value.trim();
+
+  const params = new URLSearchParams({ limit: 500 });
+  if (level) params.set('level', level);
+  if (logger) params.set('logger', logger);
+  if (q) params.set('q', q);
+  if (append && _logSince != null) params.set('since', _logSince);
+
+  try {
+    const records = await api('/api/logs?' + params.toString());
+    if (!append) {
+      _allLogLines = records;
+    } else {
+      _allLogLines = _allLogLines.concat(records);
+      if (_allLogLines.length > 2000) _allLogLines = _allLogLines.slice(-2000);
+    }
+    if (records.length) _logSince = records[records.length - 1].ts;
+    _renderLogs(_allLogLines);
+  } catch (e) {
+    console.warn('Failed to load logs:', e);
+  }
+}
+
+function _renderLogs(records) {
+  const el = document.getElementById('logLines');
+  if (!records.length) {
+    el.innerHTML = '<p class="empty" style="padding:12px">No log records match the current filters.</p>';
+    return;
+  }
+
+  el.innerHTML = records.map(r => {
+    const ts = new Date(r.ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    const lvl = r.level || 'INFO';
+    return `<div class="log-line">
+      <span class="log-ts">${ts}</span>
+      <span class="log-lvl log-lvl-${lvl}">${lvl}</span>
+      <span class="log-src" title="${esc(r.logger)}">${esc(r.logger)}</span>
+      <span class="log-msg">${esc(r.msg)}</span>
+    </div>`;
+  }).join('');
+
+  if (document.getElementById('logAutoScroll').checked) {
+    el.scrollTop = el.scrollHeight;
+  }
+}
+
+function applyLogFilters() {
+  _logSince = null;
+  loadLogs(false);
+}
+
+function clearLogView() {
+  _allLogLines = [];
+  _logSince = null;
+  document.getElementById('logLines').innerHTML = '';
+}
+
+function toggleLogAutoRefresh() {
+  const enabled = document.getElementById('logAutoRefresh').checked;
+  if (enabled) {
+    _logAutoRefreshTimer = setInterval(() => loadLogs(true), 3000);
+  } else {
+    if (_logAutoRefreshTimer) clearInterval(_logAutoRefreshTimer);
+    _logAutoRefreshTimer = null;
+  }
+}
+
+// Start auto-refresh when logs tab is activated
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    if (btn.dataset.tab === 'logs') {
+      loadLogs(false);
+      if (document.getElementById('logAutoRefresh').checked && !_logAutoRefreshTimer) {
+        _logAutoRefreshTimer = setInterval(() => loadLogs(true), 3000);
+      }
+    } else {
+      if (_logAutoRefreshTimer) {
+        clearInterval(_logAutoRefreshTimer);
+        _logAutoRefreshTimer = null;
+      }
+    }
+  });
+});
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 loadModels();

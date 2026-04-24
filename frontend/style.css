@@ -907,6 +907,55 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
 .wf-run-agent { color: #c9d1d9; }
 .wf-run-phase { color: #484f58; font-size: 0.85em; }
 
+/* ── Logs tab ────────────────────────────────────────────────────────────── */
+.logs-toolbar {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+  flex-wrap: wrap;
+}
+
+.logs-toolbar input, .logs-toolbar select {
+  flex: 1;
+  min-width: 80px;
+  padding: 5px 8px;
+  font-size: 0.82em;
+}
+
+.log-lines {
+  background: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  overflow-y: auto;
+  max-height: calc(100vh - 180px);
+  font-family: 'SF Mono', 'Fira Code', monospace;
+  font-size: 0.78em;
+  line-height: 1.5;
+  padding: 8px 0;
+}
+
+.log-line {
+  display: flex;
+  gap: 10px;
+  padding: 2px 12px;
+  border-bottom: 1px solid #21262d22;
+  word-break: break-all;
+}
+.log-line:last-child { border-bottom: none; }
+.log-line:hover { background: #161b2244; }
+
+.log-ts  { color: #484f58; min-width: 82px; flex-shrink: 0; }
+.log-lvl { min-width: 52px; flex-shrink: 0; font-weight: 700; }
+.log-src { color: #58a6ff; min-width: 100px; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+.log-msg { color: #c9d1d9; flex: 1; }
+
+.log-lvl-DEBUG   { color: #484f58; }
+.log-lvl-INFO    { color: #3fb950; }
+.log-lvl-WARNING { color: #d29922; }
+.log-lvl-ERROR   { color: #da3633; }
+.log-lvl-CRITICAL { color: #f85149; }
+
 /* ── Schema history ──────────────────────────────────────────────────────── */
 .schema-history-row {
   display: flex;

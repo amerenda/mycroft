@@ -16,6 +16,7 @@
     <button class="tab" data-tab="workflows">Workflows</button>
     <button class="tab" data-tab="tools">Tools</button>
     <button class="tab" data-tab="reports">Reports</button>
+    <button class="tab" data-tab="logs">Logs</button>
   </nav>
 </header>
 
@@ -482,6 +483,31 @@
       </div>
 
     </div>
+  </section>
+
+  <!-- LOGS TAB -->
+  <section id="tab-logs" class="tab-content">
+    <div class="logs-toolbar">
+      <select id="logLevel" onchange="applyLogFilters()" style="max-width:100px">
+        <option value="">All levels</option>
+        <option value="DEBUG">DEBUG</option>
+        <option value="INFO" selected>INFO</option>
+        <option value="WARNING">WARNING</option>
+        <option value="ERROR">ERROR</option>
+      </select>
+      <input id="logLogger" type="text" placeholder="logger prefix…" oninput="applyLogFilters()"
+        style="max-width:160px">
+      <input id="logSearch" type="text" placeholder="search…" oninput="applyLogFilters()">
+      <label class="notify-label">
+        <input type="checkbox" id="logAutoRefresh" checked onchange="toggleLogAutoRefresh()"> Auto-refresh
+      </label>
+      <label class="notify-label">
+        <input type="checkbox" id="logAutoScroll" checked> Auto-scroll
+      </label>
+      <button class="btn-tool-ctrl" onclick="loadLogs()">↺ Refresh</button>
+      <button class="btn-tool-ctrl" onclick="clearLogView()">Clear view</button>
+    </div>
+    <div id="logLines" class="log-lines"></div>
   </section>
 
 </main>
