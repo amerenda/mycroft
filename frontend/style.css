@@ -10,10 +10,11 @@ body {
 header {
   background: #161b22;
   border-bottom: 1px solid #30363d;
-  padding: 12px 24px;
+  padding: 10px 16px;
   display: flex;
   align-items: center;
-  gap: 24px;
+  gap: 16px;
+  flex-wrap: wrap;
 }
 
 header h1 {
@@ -22,22 +23,44 @@ header h1 {
   white-space: nowrap;
 }
 
-nav { display: flex; gap: 4px; }
+nav {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+  flex: 1;
+  min-width: 0;
+  scrollbar-width: none;
+}
+nav::-webkit-scrollbar { display: none; }
+
+@media (max-width: 600px) {
+  header { padding: 8px 12px; gap: 8px; }
+  header h1 { font-size: 1em; }
+  nav { flex: 1 1 100%; order: 2; }
+  header h1 { order: 1; }
+}
 
 .tab {
-  padding: 6px 16px;
+  padding: 6px 12px;
   border-radius: 6px;
   border: 1px solid transparent;
   background: none;
   color: #8b949e;
   cursor: pointer;
   font-size: 0.9em;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .tab:hover { color: #c9d1d9; background: #21262d; }
 .tab.active { color: #c9d1d9; background: #21262d; border-color: #30363d; }
 
 main { padding: 16px 24px; max-width: 1400px; margin: 0 auto; }
+
+@media (max-width: 600px) {
+  main { padding: 10px 10px; }
+}
 
 .tab-content { display: none; }
 .tab-content.active { display: block; }
@@ -286,8 +309,53 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
   align-items: start;
 }
 
+/* Mobile report toggle bar — only shown on small screens */
+.report-mobile-bar {
+  display: none;
+}
+
 @media (max-width: 700px) {
   .reports-split { grid-template-columns: 1fr; }
+
+  .report-mobile-bar {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 10px;
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-radius: 8px;
+    padding: 6px;
+  }
+  .report-mobile-bar button {
+    flex: 1;
+    padding: 7px;
+    border-radius: 5px;
+    border: none;
+    background: none;
+    color: #8b949e;
+    font-size: 0.88em;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .report-mobile-bar button.active {
+    background: #21262d;
+    color: #c9d1d9;
+  }
+
+  /* On mobile: hide whichever panel is not active */
+  .reports-split.show-list .editor-list-panel { display: block; }
+  .reports-split.show-list .report-detail,
+  .reports-split.show-list .editor-empty { display: none !important; }
+
+  .reports-split.show-detail .editor-list-panel { display: none; }
+  .reports-split.show-detail .report-detail,
+  .reports-split.show-detail .editor-empty { display: block !important; }
+
+  /* Make sure detail doesn't overflow */
+  .report-detail {
+    min-height: 300px;
+    max-height: calc(100vh - 160px);
+  }
 }
 
 .report-list-item {
@@ -347,6 +415,7 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
   border-bottom: 1px solid #21262d;
   font-size: 0.78em;
   color: #8b949e;
+  flex-wrap: wrap;
 }
 
 .meta-sep { opacity: 0.4; }

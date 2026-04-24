@@ -526,6 +526,15 @@ function toggleReportList() {
   document.getElementById('reportListChevron').textContent = _reportListCollapsed ? '▸' : '▾';
 }
 
+function setReportMobileView(view) {
+  const split = document.getElementById('reportsSplit');
+  if (!split) return;
+  split.classList.toggle('show-list', view === 'list');
+  split.classList.toggle('show-detail', view === 'detail');
+  document.getElementById('reportMobileList').classList.toggle('active', view === 'list');
+  document.getElementById('reportMobileDetail').classList.toggle('active', view === 'detail');
+}
+
 async function loadReports() {
   try {
     const reports = await api('/api/reports?limit=50');
@@ -559,6 +568,7 @@ async function selectReport(id) {
   document.getElementById('reportRawToggle').textContent = 'Raw';
   document.getElementById('reportDetail').style.display = '';
   document.getElementById('reportEmpty').style.display = 'none';
+  setReportMobileView('detail');
   document.getElementById('reportDetailRendered').style.display = '';
   document.getElementById('reportDetailRaw').style.display = 'none';
   document.getElementById('reportDetailTitle').textContent = 'Loading…';

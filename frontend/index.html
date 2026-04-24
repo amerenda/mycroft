@@ -445,7 +445,11 @@
 
   <!-- REPORTS TAB -->
   <section id="tab-reports" class="tab-content">
-    <div class="reports-split">
+    <div class="report-mobile-bar">
+      <button id="reportMobileList" class="active" onclick="setReportMobileView('list')">☰ List</button>
+      <button id="reportMobileDetail" onclick="setReportMobileView('detail')">📄 Report</button>
+    </div>
+    <div class="reports-split show-list" id="reportsSplit">
 
       <!-- Left: report list -->
       <div class="editor-list-panel">
