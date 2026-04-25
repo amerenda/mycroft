@@ -107,7 +107,7 @@ class ArgoSubmitter:
                 "arguments": arguments,
                 "templates": [{
                     "name": template_name,
-                    "activeDeadlineSeconds": 1800,
+                    "activeDeadlineSeconds": 3600,
                     "retryStrategy": {"limit": 3, "backoff": {"duration": "30s", "factor": 2}},
                     "container": {
                         "image": image,

@@ -345,7 +345,7 @@ async def _pipeline_writer_phase(
     from coordinator.research_pipeline import WORKFLOW_CONFIG, WRITER_PROMPT, _wait_for_task
 
     try:
-        status_hint = await _wait_for_task(gather_task_id, db, timeout=600)
+        status_hint = await _wait_for_task(gather_task_id, db, timeout=3600)
 
         # Abort writer if gather was cancelled
         if not status_hint or status_hint.startswith("("):
@@ -532,7 +532,7 @@ async def _run_dynamic_pipeline_steps(
     import uuid as _uuid
 
     try:
-        await _wait_for_task(prev_task_id, db, timeout=600)
+        await _wait_for_task(prev_task_id, db, timeout=3600)
 
         # Mirror the previous step's full output into /runs/ (short-term, 7d TTL) so the
         # next agent reads it directly from KB — no coordinator truncation.
