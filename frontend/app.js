@@ -430,6 +430,7 @@ function renderTrace(messages, task) {
     if (c.classList.contains('expanded')) expanded.add(i);
   });
 
+  const prevScrollTop = el.scrollTop;
   const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   el.innerHTML = newHtml;
 
@@ -441,7 +442,11 @@ function renderTrace(messages, task) {
   }
 
   const autoScroll = document.getElementById('traceAutoScroll');
-  if (autoScroll && autoScroll.checked && wasAtBottom) el.scrollTop = el.scrollHeight;
+  if (autoScroll && autoScroll.checked && wasAtBottom) {
+    el.scrollTop = el.scrollHeight;
+  } else {
+    el.scrollTop = prevScrollTop;
+  }
 }
 
 // ── Prompt preview ────────────────────────────────────────────────────────────
