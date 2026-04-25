@@ -13,6 +13,20 @@ from common.models import AgentManifest
 log = logging.getLogger(__name__)
 
 
+def _extract_system_supplement(text: str) -> str:
+    """If text is a Python prompts.py file, extract the SYSTEM_SUPPLEMENT value.
+    Otherwise return the text as-is (already plain prompt text)."""
+    if "SYSTEM_SUPPLEMENT" not in text:
+        return text
+    try:
+        ns: dict = {}
+        exec(compile(text, "<prompts>", "exec"), ns)  # noqa: S102
+        val = ns.get("SYSTEM_SUPPLEMENT") or ns.get("SYSTEM_PROMPT") or ""
+        return val.strip() if val else text
+    except Exception:
+        return text
+
+
 class TriggerRouter:
     """Matches incoming events to agent types based on manifests."""
 
@@ -38,7 +52,7 @@ class TriggerRouter:
             manifest = AgentManifest(**data)
             self.manifests[manifest.name] = manifest
             if prompts_text:
-                self.prompts[manifest.name] = prompts_text
+                self.prompts[manifest.name] = _extract_system_supplement(prompts_text)
             log.info("Registered agent from DB: %s", manifest.name)
             return manifest
         except Exception as e:
