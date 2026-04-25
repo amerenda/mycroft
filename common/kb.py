@@ -89,6 +89,9 @@ class KBClient:
         """Raise if the agent doesn't have permission for this scope."""
         if self.permissions is None:
             return  # coordinator has full access
+        # /runs/ is always accessible — pipeline agents need shared run data
+        if scope.startswith("/runs/"):
+            return
         allowed = self.permissions.read if mode == "read" else self.permissions.write
         for prefix in allowed:
             if scope.startswith(prefix):

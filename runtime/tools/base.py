@@ -68,8 +68,17 @@ class ToolRegistry:
             return f"Error executing {name}: {e}"
 
 
-def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegistry:
-    """Load tools by name and return a registry."""
+def load_tools(
+    tool_names: list[str],
+    workspace: str = "/workspace",
+    kb_dsn: str | None = None,
+    scratch_scope: str | None = None,
+) -> ToolRegistry:
+    """Load tools by name and return a registry.
+
+    kb_dsn + scratch_scope: when both are provided, scratch_read and scratch_write
+    are automatically injected for all agents in a pipeline run.
+    """
     from runtime.tools.files import ReadFile, WriteFile, PatchFile, SearchFiles, ListFiles
     from runtime.tools.git import GitClone, GitCheckoutBranch, GitAdd, GitCommit, GitPush, GitDiff
     from runtime.tools.github import GhCreatePr, GhComment
@@ -119,5 +128,11 @@ def load_tools(tool_names: list[str], workspace: str = "/workspace") -> ToolRegi
             selected.add(name)
 
     tools = [all_tools[n] for n in selected if n in all_tools]
+
+    # Inject scratch tools for all pipeline agents that have a shared scratch scope.
+    if kb_dsn and scratch_scope:
+        from runtime.tools.kb import ScratchRead, ScratchWrite
+        tools += [ScratchRead(kb_dsn, scratch_scope), ScratchWrite(kb_dsn, scratch_scope)]
+
     log.info("Loaded %d tools: %s", len(tools), [t.name for t in tools])
     return ToolRegistry(tools)

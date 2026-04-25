@@ -271,6 +271,17 @@ async def _start_research_pipeline(
         str(_uuid.uuid4()), instruction, original_scope, [], "{}", 0.5, "coordinator",
     )
 
+    scratch_scope = f"/runs/{run_id}/scratch"
+    await db.kb.pool.execute(
+        """
+        INSERT INTO memory_records
+            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
+        VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+                NOW() + INTERVAL '7 days')
+        """,
+        str(_uuid.uuid4()), "", scratch_scope, [], "{}", 0.5, "coordinator",
+    )
+
     gather_config = {
         "instruction": instruction,
         "model_override": resolved_gather_model,
@@ -278,6 +289,7 @@ async def _start_research_pipeline(
         "tools_override": resolved_gather_tools,
         "system_prompt_override": GATHERER_PROMPT,
         "context_injection": [original_scope],
+        "scratch_scope": scratch_scope,
         "phase": "gather",
         "workflow": workflow,
         "run_id": run_id,
@@ -309,7 +321,8 @@ async def _start_research_pipeline(
     asyncio.create_task(
         _pipeline_writer_phase(gather_task_id, instruction, workflow,
                                write_model=write_model, notify=notify,
-                               run_id=run_id, original_scope=original_scope)
+                               run_id=run_id, original_scope=original_scope,
+                               scratch_scope=scratch_scope)
     )
 
     return gather_task_id
@@ -324,6 +337,7 @@ async def _pipeline_writer_phase(
     *,
     run_id: str,
     original_scope: str,
+    scratch_scope: str,
 ):
     """Background: wait for gatherer to finish, then launch the writer."""
     import uuid as _uuid
@@ -377,6 +391,7 @@ async def _pipeline_writer_phase(
             "tools_override": write_cfg["tools"],
             "system_prompt_override": WRITER_PROMPT,
             "context_injection": [original_scope, findings_scope],
+            "scratch_scope": scratch_scope,
             "phase": "write",
             "workflow": workflow,
             "run_id": run_id,
@@ -436,6 +451,17 @@ async def _start_dynamic_pipeline(
         str(_uuid.uuid4()), instruction, original_scope, [], "{}", 0.5, "coordinator",
     )
 
+    scratch_scope = f"/runs/{run_id}/scratch"
+    await db.kb.pool.execute(
+        """
+        INSERT INTO memory_records
+            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
+        VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+                NOW() + INTERVAL '7 days')
+        """,
+        str(_uuid.uuid4()), "", scratch_scope, [], "{}", 0.5, "coordinator",
+    )
+
     step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
     task_config = {
         "instruction": step_prompt or instruction,
@@ -444,6 +470,7 @@ async def _start_dynamic_pipeline(
         "tools_override": step.get("tools") or None,
         "system_prompt_override": step_prompt,
         "context_injection": [original_scope],
+        "scratch_scope": scratch_scope,
         "phase": "pipeline-step-0",
         "is_last_step": is_last,
         "workflow": workflow_name,
@@ -477,7 +504,8 @@ async def _start_dynamic_pipeline(
     if not is_last:
         asyncio.create_task(
             _run_dynamic_pipeline_steps(task_id, agent_type, instruction, workflow_name, steps, 1,
-                                        run_id=run_id, original_scope=original_scope)
+                                        run_id=run_id, original_scope=original_scope,
+                                        scratch_scope=scratch_scope)
         )
 
     return task_id
@@ -493,6 +521,7 @@ async def _run_dynamic_pipeline_steps(
     *,
     run_id: str,
     original_scope: str,
+    scratch_scope: str,
 ) -> None:
     """Background: wait for previous step to finish, then launch the next step."""
     from coordinator.research_pipeline import _wait_for_task
@@ -528,6 +557,7 @@ async def _run_dynamic_pipeline_steps(
             "tools_override": step.get("tools") or None,
             "system_prompt_override": step_prompt,
             "context_injection": [original_scope, prev_scope],
+            "scratch_scope": scratch_scope,
             "phase": f"pipeline-step-{step_index}",
             "is_last_step": is_last,
             "workflow": workflow_name,
@@ -563,7 +593,8 @@ async def _run_dynamic_pipeline_steps(
             asyncio.create_task(
                 _run_dynamic_pipeline_steps(task_id, agent_type, original_instruction, workflow_name,
                                             steps, step_index + 1,
-                                            run_id=run_id, original_scope=original_scope)
+                                            run_id=run_id, original_scope=original_scope,
+                                            scratch_scope=scratch_scope)
             )
 
     except Exception:
