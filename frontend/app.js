@@ -486,12 +486,31 @@ async function previewPrompt() {
 // ── Tasks sub-tab ─────────────────────────────────────────────────────────────
 
 let _allTasks = [];
+let _taskListRefreshTimer = null;
 
 async function loadRightTasks() {
   try {
     _allTasks = await api('/api/tasks?limit=100');
     applyTaskFilter();
     populateTraceDropdown(_allTasks);
+
+    // Auto-refresh while any tasks are active
+    const hasActive = _allTasks.some(t => t.status === 'running' || t.status === 'pending');
+    if (hasActive && !_taskListRefreshTimer) {
+      _taskListRefreshTimer = setInterval(async () => {
+        _allTasks = await api('/api/tasks?limit=100').catch(() => _allTasks);
+        applyTaskFilter();
+        populateTraceDropdown(_allTasks);
+        const stillActive = _allTasks.some(t => t.status === 'running' || t.status === 'pending');
+        if (!stillActive) {
+          clearInterval(_taskListRefreshTimer);
+          _taskListRefreshTimer = null;
+        }
+      }, 5000);
+    } else if (!hasActive && _taskListRefreshTimer) {
+      clearInterval(_taskListRefreshTimer);
+      _taskListRefreshTimer = null;
+    }
   } catch (e) {
     document.getElementById('rightTaskList').innerHTML = '<p class="empty">Error loading tasks</p>';
   }
