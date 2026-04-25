@@ -276,9 +276,18 @@
         <!-- Permissions -->
         <div class="editor-section">
           <details>
-            <summary>Permissions</summary>
+            <summary>Permissions &amp; Tools</summary>
             <div style="margin-top:10px">
-              <div class="editor-file-label">Read paths <span class="editor-file-hint">— one per line</span></div>
+              <div class="editor-file-label">Tools</div>
+              <div class="agent-tool-groups">
+                <label><input type="checkbox" class="agent-tool-cb" value="web"> web</label>
+                <label><input type="checkbox" class="agent-tool-cb" value="files"> files</label>
+                <label><input type="checkbox" class="agent-tool-cb" value="git"> git</label>
+                <label><input type="checkbox" class="agent-tool-cb" value="github"> github</label>
+                <label><input type="checkbox" class="agent-tool-cb" value="shell"> shell</label>
+              </div>
+              <textarea id="agentToolsExtra" class="editor-textarea" rows="2" spellcheck="false" placeholder="individual tools, one per line (e.g. web_search, run_command)"></textarea>
+              <div class="editor-file-label" style="margin-top:12px">Read paths <span class="editor-file-hint">— one per line</span></div>
               <textarea id="agentPermsRead" class="editor-textarea" rows="3" spellcheck="false" placeholder="/tasks"></textarea>
               <div class="editor-file-label" style="margin-top:8px">Write paths <span class="editor-file-hint">— one per line</span></div>
               <textarea id="agentPermsWrite" class="editor-textarea" rows="4" spellcheck="false" placeholder="/agents/my-agent/results&#10;/tasks&#10;/notifications/alex"></textarea>

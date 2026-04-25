@@ -772,6 +772,22 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
 }
 .editor-textarea:focus { outline: none; border-color: #58a6ff; }
 
+.agent-tool-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin: 6px 0 8px;
+}
+.agent-tool-groups label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.85em;
+  color: #c9d1d9;
+  cursor: pointer;
+}
+.agent-tool-groups input[type="checkbox"] { accent-color: #58a6ff; }
+
 .editor-empty {
   display: flex;
   align-items: center;

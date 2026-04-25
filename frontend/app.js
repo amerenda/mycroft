@@ -790,6 +790,28 @@ function _setResources(yaml, memory, cpu) {
   return block ? stripped + '\n' + block + '\n' : stripped + '\n';
 }
 
+const _TOOL_GROUPS = ['web', 'files', 'git', 'github', 'shell'];
+
+function _extractTools(yaml) {
+  // Handle both "tools:\n  - x" and "tools: []" forms
+  const inline = yaml.match(/^tools:\s*\[([^\]]*)\]/m);
+  if (inline) return inline[1].split(',').map(s => s.trim()).filter(Boolean);
+  const block = yaml.match(/^tools:\s*\n((?:  - .+\n?)*)/m);
+  if (!block) return [];
+  return block[1].replace(/^  - /gm, '').trim().split('\n').map(s => s.trim()).filter(Boolean);
+}
+
+function _setTools(yaml, tools) {
+  const block = tools.length
+    ? 'tools:\n' + tools.map(t => `  - ${t}`).join('\n') + '\n'
+    : 'tools: []\n';
+  const stripped = yaml
+    .replace(/^tools:\s*\[.*\]\s*\n?/m, '')
+    .replace(/^tools:\s*\n((?:[ \t].+\n?)*)?\n?/m, '')
+    .trimEnd();
+  return stripped + '\n' + block;
+}
+
 function _extractPerms(yaml, type) {
   const re = new RegExp(`^  ${type}:\\s*\\n((?:    - .+\\n?)*)`, 'm');
   const m = yaml.match(re);
@@ -860,6 +882,11 @@ async function selectAgent(name) {
     document.getElementById('agentCpu').value = _extractResourceField(a.manifest, 'cpu');
     document.getElementById('agentSystemPrompt').value = _extractSystemPrompt(a.prompts || '');
 
+    const tools = _extractTools(a.manifest);
+    document.querySelectorAll('.agent-tool-cb').forEach(cb => { cb.checked = tools.includes(cb.value); });
+    document.getElementById('agentToolsExtra').value =
+      tools.filter(t => !_TOOL_GROUPS.includes(t)).join('\n');
+
     document.getElementById('agentPermsRead').value = _extractPerms(a.manifest, 'read');
     document.getElementById('agentPermsWrite').value = _extractPerms(a.manifest, 'write');
 
@@ -885,6 +912,8 @@ function newAgent() {
   document.getElementById('agentMemory').value = '';
   document.getElementById('agentCpu').value = '';
   document.getElementById('agentSystemPrompt').value = '';
+  document.querySelectorAll('.agent-tool-cb').forEach(cb => { cb.checked = false; });
+  document.getElementById('agentToolsExtra').value = '';
   document.getElementById('agentPermsRead').value = '';
   document.getElementById('agentPermsWrite').value = '';
   document.getElementById('agentTestStatus').style.display = 'none';
@@ -908,6 +937,12 @@ async function saveAgent() {
   const memory = document.getElementById('agentMemory').value.trim();
   const cpu = document.getElementById('agentCpu').value.trim();
   if (memory || cpu) manifest = _setResources(manifest, memory, cpu);
+
+  const groupTools = [...document.querySelectorAll('.agent-tool-cb')]
+    .filter(cb => cb.checked).map(cb => cb.value);
+  const extraTools = document.getElementById('agentToolsExtra').value
+    .split('\n').map(s => s.trim()).filter(Boolean);
+  manifest = _setTools(manifest, [...groupTools, ...extraTools]);
 
   const sysPrompt = document.getElementById('agentSystemPrompt').value.trim();
   const prompts = sysPrompt
