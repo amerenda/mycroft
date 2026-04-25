@@ -33,6 +33,42 @@ logging.basicConfig(
 log = logging.getLogger("agent")
 
 
+def _load_manifest_from_db(agent_type: str) -> "AgentManifest | None":
+    """Load agent manifest from the DB (agent_definitions table) as a fallback."""
+    import asyncio
+    import asyncpg
+    import yaml
+    import os
+
+    kb_dsn = os.environ.get("KB_DSN")
+    if not kb_dsn:
+        return None
+
+    async def _fetch():
+        conn = await asyncpg.connect(kb_dsn)
+        try:
+            row = await conn.fetchrow(
+                "SELECT manifest FROM agent_definitions WHERE name = $1", agent_type
+            )
+            return row["manifest"] if row else None
+        finally:
+            await conn.close()
+
+    manifest_yaml = asyncio.run(_fetch())
+    if not manifest_yaml:
+        return None
+
+    try:
+        data = yaml.safe_load(manifest_yaml)
+        data.setdefault("name", agent_type)
+        manifest = AgentManifest(**data)
+        log.info("Loaded manifest for '%s' from DB", agent_type)
+        return manifest
+    except Exception as e:
+        log.error("Failed to parse DB manifest for '%s': %s", agent_type, e)
+        return None
+
+
 def main():
     parser = argparse.ArgumentParser(description="Mycroft agent runtime")
     parser.add_argument("--agent", "-a", help="Agent type (e.g. coder)")
@@ -59,11 +95,13 @@ def main():
     agent_dir = agent_type.replace("-", "_")
     manifest_path = repo_root / "agents" / agent_dir / "manifest.yaml"
 
-    if not manifest_path.exists():
-        log.error("Manifest not found: %s", manifest_path)
-        sys.exit(1)
-
-    manifest = AgentManifest.from_yaml(manifest_path)
+    if manifest_path.exists():
+        manifest = AgentManifest.from_yaml(manifest_path)
+    else:
+        manifest = _load_manifest_from_db(agent_type)
+        if manifest is None:
+            log.error("Manifest not found on disk (%s) and not in DB", manifest_path)
+            sys.exit(1)
     # Model override: CLI flag > env var > manifest default
     model_override = args.model or os.environ.get("MODEL_OVERRIDE")
     if model_override:
