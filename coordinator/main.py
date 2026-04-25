@@ -466,7 +466,7 @@ async def _start_dynamic_pipeline(
 
     step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
     task_config = {
-        "instruction": step_prompt or instruction,
+        "instruction": instruction,
         "model_override": step.get("model") or None,
         "max_iterations_override": step.get("max_iterations") or None,
         "tools_override": step.get("tools") or None,
@@ -483,7 +483,7 @@ async def _start_dynamic_pipeline(
 
     task_id = await task_manager.create_task(
         agent_type=agent_type,
-        instruction=step_prompt or instruction,
+        instruction=instruction,
         trigger="pipeline",
         repo="",
         config=task_config,
@@ -492,7 +492,7 @@ async def _start_dynamic_pipeline(
     tasks_active.labels(agent_type=agent_type).inc()
 
     model = step.get("model") or None
-    params: dict = {"instruction": step_prompt or instruction}
+    params: dict = {"instruction": instruction}
     if model:
         params["model_override"] = model
     wf_name = await argo.submit(
@@ -555,7 +555,7 @@ async def _run_dynamic_pipeline_steps(
         step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
 
         task_config = {
-            "instruction": step_prompt or original_instruction,
+            "instruction": original_instruction,
             "model_override": step.get("model") or None,
             "max_iterations_override": step.get("max_iterations") or None,
             "tools_override": step.get("tools") or None,
@@ -573,7 +573,7 @@ async def _run_dynamic_pipeline_steps(
 
         task_id = await task_manager.create_task(
             agent_type=agent_type,
-            instruction=step_prompt or original_instruction,
+            instruction=original_instruction,
             trigger="pipeline",
             repo="",
             config=task_config,
@@ -582,7 +582,7 @@ async def _run_dynamic_pipeline_steps(
         tasks_active.labels(agent_type=agent_type).inc()
 
         model = step.get("model") or None
-        params: dict = {"instruction": step_prompt or original_instruction}
+        params: dict = {"instruction": original_instruction}
         if model:
             params["model_override"] = model
         wf_name = await argo.submit(
