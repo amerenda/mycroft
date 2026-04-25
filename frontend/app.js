@@ -1114,6 +1114,12 @@ function _renderPipelineSteps() {
         </div>
       </div>
       <div class="pipeline-step-body">
+        <div class="form-group" style="margin-bottom:8px">
+          <label>Step Description <span class="tip" data-tip="Why this step exists — injected into the agent prompt so it knows its role in the pipeline.">ⓘ</span></label>
+          <input type="text" placeholder="e.g. Gather web research on the topic"
+            value="${esc(step.description || '')}"
+            onchange="updatePipelineStep(${i},'description',this.value)">
+        </div>
         <div class="form-row" style="margin-bottom:8px">
           <div class="form-group" style="margin-bottom:0">
             <label>Agent</label>
@@ -1148,7 +1154,7 @@ function _renderPipelineSteps() {
 }
 
 function addPipelineStep() {
-  _pipelineSteps.push({ agent: '', model: '', prompt_override: '', max_iterations: '', tools: [] });
+  _pipelineSteps.push({ agent: '', model: '', description: '', prompt_override: '', max_iterations: '', tools: [] });
   _renderPipelineSteps();
 }
 
@@ -1224,6 +1230,7 @@ async function selectWorkflow(name) {
     _pipelineSteps = ((w.pipeline_json && w.pipeline_json.steps) || []).map(s => ({
       agent: s.agent || '',
       model: s.model || '',
+      description: s.description || '',
       prompt_override: s.prompt_override || '',
       max_iterations: s.max_iterations || '',
       tools: s.tools || [],
@@ -1241,7 +1248,7 @@ async function selectWorkflow(name) {
 
 function newWorkflow() {
   _currentWorkflow = null;
-  _pipelineSteps = [{ agent: '', model: '', prompt_override: '', max_iterations: '', tools: [] }];
+  _pipelineSteps = [{ agent: '', model: '', description: '', prompt_override: '', max_iterations: '', tools: [] }];
   document.getElementById('workflowName').value = '';
   document.getElementById('workflowDescription').value = '';
   document.getElementById('workflowContent').value = '';
@@ -1262,6 +1269,7 @@ async function saveWorkflow() {
     steps: _pipelineSteps.map(s => ({
       agent: s.agent,
       model: s.model || '',
+      ...(s.description ? { description: s.description } : {}),
       prompt_override: s.prompt_override || '',
       ...(s.max_iterations ? { max_iterations: parseInt(s.max_iterations) } : {}),
       ...(s.tools && s.tools.length ? { tools: s.tools } : {}),
@@ -1291,7 +1299,9 @@ async function cloneWorkflow() {
   const pipeline_json = {
     description: document.getElementById('workflowDescription').value.trim(),
     steps: _pipelineSteps.map(s => ({
-      agent: s.agent, model: s.model || '', prompt_override: s.prompt_override || '',
+      agent: s.agent, model: s.model || '',
+      ...(s.description ? { description: s.description } : {}),
+      prompt_override: s.prompt_override || '',
       ...(s.max_iterations ? { max_iterations: parseInt(s.max_iterations) } : {}),
       ...(s.tools && s.tools.length ? { tools: s.tools } : {}),
     })),

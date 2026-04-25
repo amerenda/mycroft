@@ -157,20 +157,37 @@ class AgentRunner:
 
             # Inject pipeline context (original brief + previous step outputs).
             # Scopes are coordinator-written /runs/ paths; read without permission checks.
-            injected_sections: list[str] = []
+            original_brief: str | None = None
+            prior_sections: list[str] = []
             for scope in self.task.context_injection:
                 record = await self.kb.get_unchecked(scope)
                 if record:
                     if scope.endswith("/original"):
-                        label = "ORIGINAL BRIEF"
+                        original_brief = record.content
                     else:
-                        step = scope.rstrip("/").rsplit("/", 1)[-1]
-                        label = f"CONTEXT: {step.upper()}"
-                    injected_sections.append(f"[{label}]\n{record.content}")
+                        step_label = scope.rstrip("/").rsplit("/", 1)[-1]
+                        prior_sections.append(f"[CONTEXT: {step_label.upper()}]\n{record.content}")
 
             user_content = build_user_message(self.task.instruction, context)
-            if injected_sections:
-                user_content = "\n\n---\n\n".join(injected_sections) + "\n\n---\n\n" + user_content
+            if self.task.context_injection:
+                workflow_name = self.task.config.get("workflow", "")
+                step_desc = self.task.config.get("step_description", "")
+
+                header = "You are one step in a multi-step pipeline."
+                if workflow_name:
+                    header += f" Workflow: {workflow_name}."
+                if step_desc:
+                    header += f"\nYour role in this step: {step_desc}"
+
+                parts = [header]
+                if original_brief:
+                    parts.append(
+                        "The original user request — stay aligned with this throughout:\n"
+                        f"{original_brief}"
+                    )
+                parts.extend(prior_sections)
+                parts.append(user_content)
+                user_content = "\n\n---\n\n".join(parts)
 
             self.messages.append({"role": "user", "content": user_content})
 
