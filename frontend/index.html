@@ -17,6 +17,7 @@
     <button class="tab" data-tab="tools">Tools</button>
     <button class="tab" data-tab="kb">KB</button>
     <button class="tab" data-tab="reports">Reports</button>
+    <button class="tab" data-tab="trace">Trace</button>
     <button class="tab" data-tab="logs">Logs</button>
   </nav>
 </header>
@@ -162,16 +163,8 @@
         </div>
       </div>
 
-      <!-- RIGHT: tabbed panel — Tasks / Trace -->
+      <!-- RIGHT: Tasks panel -->
       <div class="panel right">
-        <div class="right-tab-bar">
-          <button class="rtab active" data-rtab="tasks" onclick="setRightTab('tasks')">Tasks</button>
-          <button class="rtab" data-rtab="trace" onclick="setRightTab('trace')">
-            Trace <span id="traceStatus" class="status-badge"></span>
-          </button>
-        </div>
-
-        <!-- Tasks sub-tab -->
         <div id="rtab-tasks" class="rtab-content active">
           <div class="rtab-toolbar">
             <button class="btn-tool-ctrl" onclick="loadRightTasks()">↺ Refresh</button>
@@ -208,14 +201,6 @@
             </div>
             <div id="rightConvContent" class="conv-body"></div>
           </div>
-        </div>
-
-        <!-- Trace sub-tab -->
-        <div id="rtab-trace" class="rtab-content">
-          <div id="traceContent" class="trace">
-            <p class="empty">Run a task to see the tool call trace here.</p>
-          </div>
-          <div id="queueStats" class="queue-stats" style="display:none"></div>
         </div>
       </div>
 
@@ -560,6 +545,26 @@
         <p>Select a report to read it.</p>
       </div>
 
+    </div>
+  </section>
+
+  <!-- TRACE TAB -->
+  <section id="tab-trace" class="tab-content">
+    <div class="trace-tab-layout">
+      <div class="trace-tab-toolbar">
+        <select id="traceTaskSelect" onchange="onTraceTaskSelect()">
+          <option value="">— select task —</option>
+        </select>
+        <button class="btn-tool-ctrl" onclick="refreshTraceTab()">↺ Refresh</button>
+        <span id="traceStatus" class="status-badge"></span>
+        <label class="notify-label" style="margin-left:auto">
+          <input type="checkbox" id="traceAutoScroll" checked> Auto-scroll
+        </label>
+      </div>
+      <div id="traceContent" class="trace trace-full">
+        <p class="empty">Select a task above to view its trace.</p>
+      </div>
+      <div id="queueStats" class="queue-stats" style="display:none"></div>
     </div>
   </section>
 

@@ -80,9 +80,10 @@ async function runTask() {
   statusEl.className = 'status-badge status-pending';
 
   document.getElementById('queueStats').style.display = 'none';
+  _stopTracePoll();
 
-  // Switch to Trace so live output is visible
-  setRightTab('trace');
+  // Switch to Trace tab so live output is visible
+  switchTab('trace');
 
   try {
     if (activeRunner === 'forge') {
@@ -126,6 +127,7 @@ async function runForge(instruction) {
 }
 
 function pollForgeRun(runId) {
+  _stopTracePoll();
   if (pollTimer) clearInterval(pollTimer);
   pollTimer = setInterval(async () => {
     try {
@@ -244,34 +246,101 @@ async function runMycroft(instruction) {
   });
 
   if (r.task_id) {
-    const statusEl = document.getElementById('traceStatus');
-    statusEl.textContent = 'running';
-    statusEl.className = 'status-badge status-running';
+    document.getElementById('traceStatus').textContent = 'running';
+    document.getElementById('traceStatus').className = 'status-badge status-running';
     loadRightTasks();
-    pollMycroftTask(r.task_id);
+    document.getElementById('traceTaskSelect').value = r.task_id;
+    _startTracePoll(r.task_id);
   }
 }
 
-function pollMycroftTask(taskId) {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
+let _tracePollTimer = null;
+let _tracePollTaskId = null;
+
+function _startTracePoll(taskId) {
+  if (_tracePollTimer && _tracePollTaskId === taskId) return;
+  _stopTracePoll();
+  _tracePollTaskId = taskId;
+  _tracePollTimer = setInterval(async () => {
     try {
       const task = await api('/api/tasks/' + taskId);
       const conv = await api('/api/tasks/' + taskId + '/conversation').catch(() => null);
       renderTrace(conv ? conv.messages : [], task);
-
-      if (task.status === 'completed' || task.status === 'failed') {
-        clearInterval(pollTimer);
-        pollTimer = null;
+      document.getElementById('traceStatus').textContent = task.status;
+      document.getElementById('traceStatus').className = 'status-badge status-' + task.status;
+      if (task.status !== 'running' && task.status !== 'pending') {
+        _stopTracePoll();
         loadRightTasks();
         if (task.status === 'completed') loadReports();
-
-        const statusEl = document.getElementById('traceStatus');
-        statusEl.textContent = task.status;
-        statusEl.className = 'status-badge status-' + task.status;
       }
     } catch (e) { /* task may not have conversation yet */ }
   }, 3000);
+}
+
+function _stopTracePoll() {
+  if (_tracePollTimer) { clearInterval(_tracePollTimer); _tracePollTimer = null; }
+  _tracePollTaskId = null;
+}
+
+async function _loadTraceForTask(taskId) {
+  if (!taskId) return;
+  _stopTracePoll();
+  document.getElementById('traceStatus').textContent = '';
+  document.getElementById('traceStatus').className = 'status-badge';
+  document.getElementById('traceContent').innerHTML = '<p class="empty">Loading trace…</p>';
+  try {
+    const [task, conv] = await Promise.all([
+      api('/api/tasks/' + taskId),
+      api('/api/tasks/' + taskId + '/conversation').catch(() => null),
+    ]);
+    renderTrace(conv ? conv.messages : [], task);
+    document.getElementById('traceStatus').textContent = task.status;
+    document.getElementById('traceStatus').className = 'status-badge status-' + task.status;
+    if (task.status === 'running' || task.status === 'pending') _startTracePoll(taskId);
+  } catch (e) {
+    document.getElementById('traceContent').innerHTML =
+      `<p class="empty">Could not load trace: ${esc(e.message)}</p>`;
+  }
+}
+
+async function setTraceTask(taskId) {
+  if (!taskId) return;
+  const sel = document.getElementById('traceTaskSelect');
+  if (!Array.from(sel.options).some(o => o.value === taskId)) {
+    try {
+      _allTasks = await api('/api/tasks?limit=100');
+      populateTraceDropdown(_allTasks);
+      applyTaskFilter();
+    } catch (e) {}
+  }
+  sel.value = taskId;
+  await _loadTraceForTask(taskId);
+}
+
+async function onTraceTaskSelect() {
+  const taskId = document.getElementById('traceTaskSelect').value;
+  if (taskId) await _loadTraceForTask(taskId);
+  else _stopTracePoll();
+}
+
+async function refreshTraceTab() {
+  await loadRightTasks();
+  const taskId = document.getElementById('traceTaskSelect').value;
+  if (taskId) await _loadTraceForTask(taskId);
+}
+
+function populateTraceDropdown(tasks) {
+  const sel = document.getElementById('traceTaskSelect');
+  const current = sel.value;
+  sel.innerHTML = '<option value="">— select task —</option>';
+  (tasks || _allTasks || []).forEach(t => {
+    const opt = document.createElement('option');
+    opt.value = t.id;
+    const preview = (t.config?.instruction || '').slice(0, 60);
+    opt.textContent = `${t.id.slice(0, 8)} [${t.agent_type}] ${t.status}${preview ? ' — ' + preview : ''}`;
+    sel.appendChild(opt);
+  });
+  if (current) sel.value = current;
 }
 
 function renderTrace(messages, task) {
@@ -360,6 +429,7 @@ function renderTrace(messages, task) {
     if (c.classList.contains('expanded')) expanded.add(i);
   });
 
+  const wasAtBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 60;
   el.innerHTML = newHtml;
 
   // Restore expanded state
@@ -368,6 +438,9 @@ function renderTrace(messages, task) {
       if (expanded.has(i)) c.classList.add('expanded');
     });
   }
+
+  const autoScroll = document.getElementById('traceAutoScroll');
+  if (autoScroll && autoScroll.checked && wasAtBottom) el.scrollTop = el.scrollHeight;
 }
 
 // ── Prompt preview ────────────────────────────────────────────────────────────
@@ -418,6 +491,7 @@ async function loadRightTasks() {
   try {
     _allTasks = await api('/api/tasks?limit=100');
     applyTaskFilter();
+    populateTraceDropdown(_allTasks);
   } catch (e) {
     document.getElementById('rightTaskList').innerHTML = '<p class="empty">Error loading tasks</p>';
   }
@@ -665,27 +739,8 @@ function toggleReportRaw() {
 }
 
 async function viewReportTaskTrace(taskId) {
-  switchTab('runner');
-  setRightTab('trace');
-
-  const statusEl = document.getElementById('traceStatus');
-  statusEl.textContent = '';
-  statusEl.className = 'status-badge';
-  document.getElementById('traceContent').innerHTML = '<p class="empty">Loading trace…</p>';
-
-  try {
-    const [task, conv] = await Promise.all([
-      api('/api/tasks/' + taskId),
-      api('/api/tasks/' + taskId + '/conversation').catch(() => null),
-    ]);
-    const messages = conv ? conv.messages : [];
-    renderTrace(messages, task);
-    statusEl.textContent = task.status;
-    statusEl.className = 'status-badge status-' + task.status;
-  } catch (e) {
-    document.getElementById('traceContent').innerHTML =
-      `<p class="empty">Could not load trace: ${esc(e.message)}</p>`;
-  }
+  switchTab('trace');
+  await setTraceTask(taskId);
 }
 
 async function deleteCurrentReport() {
