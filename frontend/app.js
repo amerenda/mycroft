@@ -82,9 +82,6 @@ async function runTask() {
   document.getElementById('queueStats').style.display = 'none';
   _stopTracePoll();
 
-  // Switch to Trace tab so live output is visible
-  switchTab('trace');
-
   try {
     if (activeRunner === 'forge') {
       await runForge(instruction);
