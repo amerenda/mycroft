@@ -275,14 +275,22 @@ class KBClient:
                 WHERE table_name = 'memory_records' AND column_name = 'expires_at'
             """)
             if not col_exists:
-                await conn.execute(
-                    "ALTER TABLE memory_records ADD COLUMN expires_at TIMESTAMPTZ"
-                )
-                await conn.execute(
-                    "CREATE INDEX memory_records_expires_at ON memory_records(expires_at) "
-                    "WHERE expires_at IS NOT NULL"
-                )
-                log.info("Added expires_at column to memory_records")
+                try:
+                    await conn.execute(
+                        "ALTER TABLE memory_records ADD COLUMN expires_at TIMESTAMPTZ"
+                    )
+                    await conn.execute(
+                        "CREATE INDEX memory_records_expires_at ON memory_records(expires_at) "
+                        "WHERE expires_at IS NOT NULL"
+                    )
+                    log.info("Added expires_at column to memory_records")
+                except Exception as e:
+                    log.warning(
+                        "Could not add expires_at column (insufficient privileges?): %s. "
+                        "Run manually: ALTER TABLE memory_records ADD COLUMN expires_at TIMESTAMPTZ; "
+                        "CREATE INDEX memory_records_expires_at ON memory_records(expires_at) WHERE expires_at IS NOT NULL;",
+                        e,
+                    )
 
     async def cleanup_expired(self) -> int:
         """Delete records past their TTL. Returns count deleted."""
