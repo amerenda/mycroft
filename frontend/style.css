@@ -906,7 +906,7 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
 .toast-info    { border-left: 3px solid #58a6ff; }
 @keyframes toast-in { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
 
-/* ── Pipeline chain panel ────────────────────────────────────────────────── */
+/* ── Pipeline chain panel (legacy, kept for step-output) ─────────────────── */
 .pipeline-chain-step {
   padding: 8px 12px;
   border-bottom: 1px solid #21262d;
@@ -921,6 +921,75 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
 .pipeline-chain-info { flex: 1; font-size: 0.82em; }
 .pipeline-chain-agent { color: #c9d1d9; }
 .pipeline-chain-phase { color: #8b949e; font-size: 0.85em; }
+
+/* ── Run Monitor ─────────────────────────────────────────────────────────── */
+.rm-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #21262d;
+  font-size: 0.82em;
+}
+.rm-run-id { color: #8b949e; font-family: monospace; }
+.rm-refresh-btn { margin-left: auto; }
+
+.rm-section, .rm-step { border-bottom: 1px solid #21262d; }
+
+.rm-label, .rm-step-summary {
+  padding: 7px 12px;
+  cursor: pointer;
+  font-size: 0.82em;
+  list-style: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  user-select: none;
+  color: #c9d1d9;
+}
+.rm-label:hover, .rm-step-summary:hover { background: #161b22; }
+.rm-label::before { content: '▸'; color: #6e7681; font-size: 0.75em; margin-right: 2px; }
+.rm-section[open] > .rm-label::before { content: '▾'; }
+
+.rm-step-n { font-size: 0.82em; color: #8b949e; flex-shrink: 0; }
+.rm-step-agent { color: #58a6ff; flex-shrink: 0; }
+.rm-dur { color: #6e7681; font-size: 0.82em; margin-left: auto; }
+.rm-step-summary::before { content: '▸'; color: #6e7681; font-size: 0.75em; margin-right: 2px; }
+.rm-step[open] > .rm-step-summary::before { content: '▾'; }
+
+.rm-step-body { padding: 4px 12px 8px 24px; }
+
+.rm-subsection { margin: 2px 0; }
+.rm-sublabel {
+  padding: 3px 4px;
+  cursor: pointer;
+  font-size: 0.76em;
+  color: #6e7681;
+  list-style: none;
+  user-select: none;
+}
+.rm-sublabel:hover { color: #8b949e; }
+.rm-sublabel::before { content: '▸ '; }
+.rm-subsection[open] > .rm-sublabel::before { content: '▾ '; }
+
+.rm-actions { padding: 4px 0 2px; display: flex; gap: 6px; }
+
+.rm-pre {
+  padding: 6px 8px;
+  background: #0d1117;
+  border: 1px solid #21262d;
+  border-radius: 4px;
+  font-size: 0.76em;
+  overflow-y: auto;
+  max-height: 220px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  margin: 3px 0;
+  color: #c9d1d9;
+  font-family: monospace;
+}
+
+.rm-pending { color: #6e7681; font-size: 0.8em; padding: 4px; font-style: italic; }
 
 /* ── Cancel button ───────────────────────────────────────────────────────── */
 .btn-cancel {

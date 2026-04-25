@@ -201,7 +201,7 @@ class ArgoSubmitter:
                 namespace=self.namespace,
                 plural="workflows",
                 name=wf_name,
-                body={"spec": {"shutdown": "Stop"}},
+                body={"spec": {"shutdown": "Terminate"}},
             )
             log.info("Stopped Argo Workflow: %s", wf_name)
             return True

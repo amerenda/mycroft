@@ -1595,39 +1595,113 @@ function connectSSE() {
   };
 }
 
-// ── Pipeline chain ────────────────────────────────────────────────────────────
+// ── Run Monitor ───────────────────────────────────────────────────────────────
+
+let _runMonitorInterval = null;
+let _runMonitorTaskId = null;
+
+function closeRunMonitor() {
+  if (_runMonitorInterval) { clearInterval(_runMonitorInterval); _runMonitorInterval = null; }
+  _runMonitorTaskId = null;
+  document.getElementById('rightPipelinePanel').style.display = 'none';
+}
 
 async function viewPipelineChain(taskId) {
-  const panel = document.getElementById('rightPipelinePanel');
+  _runMonitorTaskId = taskId;
+  document.getElementById('rightPipelinePanel').style.display = '';
+  document.getElementById('rightPipelineContent').innerHTML =
+    '<p class="empty" style="padding:12px">Loading…</p>';
+  await _refreshRunMonitor();
+}
+
+async function _refreshRunMonitor() {
+  const taskId = _runMonitorTaskId;
+  if (!taskId) return;
   const content = document.getElementById('rightPipelineContent');
-  panel.style.display = '';
-  content.innerHTML = '<p class="empty" style="padding:12px">Loading…</p>';
 
   try {
     const chain = await api('/api/tasks/' + taskId + '/pipeline');
-    if (chain.length <= 1) {
-      panel.style.display = 'none';
-      viewRightConversation(taskId);
+    if (!chain || chain.length <= 1) {
+      closeRunMonitor();
+      if (chain && chain.length === 1) viewRightConversation(taskId);
       return;
     }
-    content.innerHTML = chain.map((t, i) => {
-      const phase = t.config?.phase || `step ${i}`;
+
+    const runId = chain.find(t => t.config?.run_id)?.config?.run_id;
+
+    const [originalEntry, scratchEntry, ...stepOutputs] = await Promise.all([
+      runId
+        ? api('/api/kb/entry?path=' + encodeURIComponent(`/runs/${runId}/original`)).catch(() => null)
+        : Promise.resolve(null),
+      runId
+        ? api('/api/kb/entry?path=' + encodeURIComponent(`/runs/${runId}/scratch`)).catch(() => null)
+        : Promise.resolve(null),
+      ...chain.map(t => api('/api/tasks/' + t.id + '/kb-result').catch(() => null)),
+    ]);
+
+    const anyActive = chain.some(t => t.status === 'running' || t.status === 'pending');
+    if (anyActive && !_runMonitorInterval) {
+      _runMonitorInterval = setInterval(_refreshRunMonitor, 5000);
+    } else if (!anyActive) {
+      clearInterval(_runMonitorInterval);
+      _runMonitorInterval = null;
+    }
+
+    const overallStatus = chain.every(t => t.status === 'completed') ? 'completed'
+      : chain.some(t => t.status === 'failed') ? 'failed'
+      : anyActive ? 'running' : 'mixed';
+
+    let html = `<div class="rm-header">
+      <span class="rm-run-id">run: ${runId ? runId.slice(0, 8) : 'n/a'}</span>
+      <span class="status-badge status-${overallStatus}">${overallStatus}</span>
+      <button class="btn-tool-ctrl rm-refresh-btn" onclick="_refreshRunMonitor()" title="Refresh">↺</button>
+    </div>`;
+
+    html += `<details class="rm-section" open>
+      <summary class="rm-label">Original Brief</summary>
+      <pre class="rm-pre">${esc(originalEntry?.content || '(not available)')}</pre>
+    </details>`;
+
+    chain.forEach((t, i) => {
       const dur = t.completed_at && t.created_at
-        ? Math.round((new Date(t.completed_at) - new Date(t.created_at)) / 1000) + 's'
-        : '';
-      const done = t.status === 'completed';
-      return `
-        <div class="pipeline-chain-step">
-          <span class="pipeline-chain-num" onclick="viewRightConversation('${t.id}')">Step ${i + 1}</span>
-          <span class="pipeline-chain-info" onclick="viewRightConversation('${t.id}')">
-            <span class="pipeline-chain-agent">${esc(t.agent_type)}</span>
-            <span class="pipeline-chain-phase"> · ${esc(phase)}${dur ? ' · ' + dur : ''}</span>
-          </span>
+        ? Math.round((new Date(t.completed_at) - new Date(t.created_at)) / 1000) + 's' : '';
+      const output = stepOutputs[i];
+      const instruction = t.config?.instruction || '';
+      const isActive = t.status === 'running' || t.status === 'pending';
+
+      html += `<details class="rm-step"${isActive ? ' open' : ''}>
+        <summary class="rm-step-summary">
+          <span class="rm-step-n">Step ${i + 1}</span>
+          <span class="rm-step-agent">${esc(t.agent_type)}</span>
           <span class="status-badge status-${t.status}">${t.status}</span>
-          ${done ? `<button class="btn-tool-ctrl" style="font-size:0.75em;padding:2px 6px" onclick="viewStepOutput('${t.id}', this)" title="View KB output">Output</button>` : ''}
-        </div>`;
-    }).join('');
-  } catch (e) {
+          ${dur ? `<span class="rm-dur">${dur}</span>` : ''}
+        </summary>
+        <div class="rm-step-body">
+          <details class="rm-subsection">
+            <summary class="rm-sublabel">Instruction</summary>
+            <pre class="rm-pre">${esc(instruction.slice(0, 4000))}${instruction.length > 4000 ? '\n…' : ''}</pre>
+          </details>
+          <div class="rm-actions">
+            <button class="btn-tool-ctrl" onclick="viewReportTaskTrace('${t.id}')">Trace ↗</button>
+          </div>
+          <details class="rm-subsection"${output ? ' open' : ''}>
+            <summary class="rm-sublabel">Output</summary>
+            ${output
+              ? `<pre class="rm-pre">${esc((output.content || '(empty)').slice(0, 4000))}${(output.content || '').length > 4000 ? '\n…' : ''}</pre>`
+              : `<p class="rm-pending">${isActive ? 'In progress…' : '(none yet)'}</p>`}
+          </details>
+        </div>
+      </details>`;
+    });
+
+    html += `<details class="rm-section">
+      <summary class="rm-label">Scratch</summary>
+      <pre class="rm-pre">${esc(scratchEntry?.content || '(empty)')}</pre>
+    </details>`;
+
+    content.innerHTML = html;
+
+  } catch(e) {
     content.innerHTML = `<p class="empty" style="padding:12px">Error: ${esc(e.message)}</p>`;
   }
 }
