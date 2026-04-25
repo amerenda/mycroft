@@ -229,27 +229,56 @@ button {
   margin-bottom: 10px;
 }
 
-.task-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  padding: 8px 0;
+.task-card {
   border-bottom: 1px solid #21262d;
   font-size: 0.85em;
 }
 
-.task-row:hover { background: #161b22; }
-
-.task-info {
+.task-card-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 4px;
   cursor: pointer;
-  flex: 1;
-  min-width: 0;
+  user-select: none;
+}
+
+.task-card-header:hover { background: #161b22; }
+
+.task-card-id {
+  font-family: monospace;
+  color: #8b949e;
+  flex-shrink: 0;
+}
+
+.task-card-agent {
+  color: #58a6ff;
+  flex-shrink: 0;
+}
+
+.task-card-age {
+  margin-left: auto;
+  color: #6e7681;
+  font-size: 0.9em;
+  flex-shrink: 0;
+}
+
+.task-card-preview {
+  padding: 0 4px 6px;
+  color: #8b949e;
+  font-size: 0.9em;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.task-actions { display: flex; align-items: center; gap: 8px; flex-shrink: 0; }
+.task-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 8px;
+  flex-wrap: wrap;
+}
 
 .btn-delete {
   background: none;

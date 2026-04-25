@@ -423,6 +423,19 @@ async function loadRightTasks() {
   }
 }
 
+function _relativeTime(date) {
+  const diff = Math.floor((Date.now() - date) / 1000);
+  if (diff < 60) return diff + 's ago';
+  if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+  if (diff < 86400) return Math.floor(diff / 3600) + 'h ago';
+  return Math.floor(diff / 86400) + 'd ago';
+}
+
+function toggleTaskCard(taskId) {
+  const actions = document.getElementById('tca-' + taskId);
+  if (actions) actions.style.display = actions.style.display === 'none' ? '' : 'none';
+}
+
 function _renderTaskList(tasks) {
   const el = document.getElementById('rightTaskList');
   if (!tasks.length) {
@@ -432,17 +445,23 @@ function _renderTaskList(tasks) {
   el.innerHTML = tasks.map(t => {
     const hasChain = t.config?.phase || t.config?.parent_task_id;
     const isActive = t.status === 'running' || t.status === 'pending';
+    const age = t.created_at ? _relativeTime(new Date(t.created_at)) : '';
+    const preview = esc((t.config?.instruction || '').slice(0, 100));
     return `
-    <div class="task-row">
-      <span class="task-info" onclick="viewRightConversation('${t.id}')">
-        ${t.id.slice(0, 8)} &mdash; ${t.agent_type} &mdash; ${esc((t.config?.instruction || '').slice(0, 50))}
-      </span>
-      <div class="task-actions">
+    <div class="task-card" id="tc-${t.id}">
+      <div class="task-card-header" onclick="toggleTaskCard('${t.id}')">
+        <span class="task-card-id">${t.id.slice(0, 8)}</span>
+        <span class="task-card-agent">${esc(t.agent_type)}</span>
         <span class="status-badge status-${t.status}">${t.status}</span>
-        ${hasChain ? `<button class="btn-tool-ctrl" onclick="viewPipelineChain('${t.id}')" title="View pipeline chain">⛓</button>` : ''}
-        <button class="btn-tool-ctrl" onclick="viewKBForTask('${t.id}')" title="View KB data for this run" style="font-size:0.72em">KB</button>
-        ${isActive ? `<button class="btn-cancel" onclick="cancelTask('${t.id}')" title="Cancel">⊘</button>` : ''}
-        <button class="btn-delete" onclick="deleteTask('${t.id}')" title="Delete">&#10005;</button>
+        <span class="task-card-age">${age}</span>
+      </div>
+      ${preview ? `<div class="task-card-preview">${preview}</div>` : ''}
+      <div class="task-card-actions" id="tca-${t.id}" style="display:none">
+        <button class="btn-tool-ctrl" onclick="viewReportTaskTrace('${t.id}')">Trace</button>
+        <button class="btn-tool-ctrl" onclick="viewKBForTask('${t.id}')">KB</button>
+        ${hasChain ? `<button class="btn-tool-ctrl" onclick="viewPipelineChain('${t.id}')">Pipeline</button>` : ''}
+        ${isActive ? `<button class="btn-cancel" onclick="cancelTask('${t.id}')">Cancel</button>` : ''}
+        <button class="btn-delete" onclick="deleteTask('${t.id}')">Delete</button>
       </div>
     </div>`;
   }).join('');

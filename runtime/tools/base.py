@@ -79,38 +79,6 @@ def load_tools(
     kb_dsn + scratch_scope: when both are provided, scratch_read and scratch_write
     are automatically injected for all agents in a pipeline run.
     """
-    from runtime.tools.files import ReadFile, WriteFile, PatchFile, SearchFiles, ListFiles
-    from runtime.tools.git import GitClone, GitCheckoutBranch, GitAdd, GitCommit, GitPush, GitDiff
-    from runtime.tools.github import GhCreatePr, GhComment
-    from runtime.tools.shell import RunCommand
-    from runtime.tools.vikunja import TodoListProjects, TodoGetTasks, TodoCreateTask, TodoUpdateTask
-    from runtime.tools.web import WebRead, WebSearch, WikiRead
-
-    all_tools: dict[str, Tool] = {
-        "read_file": ReadFile(workspace),
-        "write_file": WriteFile(workspace),
-        "patch_file": PatchFile(workspace),
-        "search_files": SearchFiles(workspace),
-        "list_files": ListFiles(workspace),
-        "git_clone": GitClone(workspace),
-        "git_checkout_branch": GitCheckoutBranch(workspace),
-        "git_add": GitAdd(workspace),
-        "git_commit": GitCommit(workspace),
-        "git_push": GitPush(workspace),
-        "git_diff": GitDiff(workspace),
-        "gh_create_pr": GhCreatePr(workspace),
-        "gh_comment": GhComment(workspace),
-        "run_command": RunCommand(workspace),
-        "web_read": WebRead(),
-        "web_search": WebSearch(),
-        "wiki_read": WikiRead(),
-        "todo_list_projects": TodoListProjects(),
-        "todo_get_tasks": TodoGetTasks(),
-        "todo_create_task": TodoCreateTask(),
-        "todo_update_task": TodoUpdateTask(),
-    }
-
-    # Map manifest tool groups to individual tools
     tool_groups = {
         "files": ["read_file", "write_file", "patch_file", "search_files", "list_files"],
         "web": ["web_read", "web_search", "wiki_read"],
@@ -120,16 +88,66 @@ def load_tools(
         "todo": ["todo_list_projects", "todo_get_tasks", "todo_create_task", "todo_update_task"],
     }
 
-    selected = set()
+    selected: set[str] = set()
     for name in tool_names:
         if name in tool_groups:
             selected.update(tool_groups[name])
-        elif name in all_tools:
+        else:
             selected.add(name)
+
+    all_tools: dict[str, Tool] = {}
+
+    if selected & {"read_file", "write_file", "patch_file", "search_files", "list_files"}:
+        from runtime.tools.files import ReadFile, WriteFile, PatchFile, SearchFiles, ListFiles
+        all_tools.update({
+            "read_file": ReadFile(workspace),
+            "write_file": WriteFile(workspace),
+            "patch_file": PatchFile(workspace),
+            "search_files": SearchFiles(workspace),
+            "list_files": ListFiles(workspace),
+        })
+
+    if selected & {"git_clone", "git_checkout_branch", "git_add", "git_commit", "git_push", "git_diff"}:
+        from runtime.tools.git import GitClone, GitCheckoutBranch, GitAdd, GitCommit, GitPush, GitDiff
+        all_tools.update({
+            "git_clone": GitClone(workspace),
+            "git_checkout_branch": GitCheckoutBranch(workspace),
+            "git_add": GitAdd(workspace),
+            "git_commit": GitCommit(workspace),
+            "git_push": GitPush(workspace),
+            "git_diff": GitDiff(workspace),
+        })
+
+    if selected & {"gh_create_pr", "gh_comment"}:
+        from runtime.tools.github import GhCreatePr, GhComment
+        all_tools.update({
+            "gh_create_pr": GhCreatePr(workspace),
+            "gh_comment": GhComment(workspace),
+        })
+
+    if "run_command" in selected:
+        from runtime.tools.shell import RunCommand
+        all_tools["run_command"] = RunCommand(workspace)
+
+    if selected & {"web_read", "web_search", "wiki_read"}:
+        from runtime.tools.web import WebRead, WebSearch, WikiRead
+        all_tools.update({
+            "web_read": WebRead(),
+            "web_search": WebSearch(),
+            "wiki_read": WikiRead(),
+        })
+
+    if selected & {"todo_list_projects", "todo_get_tasks", "todo_create_task", "todo_update_task"}:
+        from runtime.tools.vikunja import TodoListProjects, TodoGetTasks, TodoCreateTask, TodoUpdateTask
+        all_tools.update({
+            "todo_list_projects": TodoListProjects(),
+            "todo_get_tasks": TodoGetTasks(),
+            "todo_create_task": TodoCreateTask(),
+            "todo_update_task": TodoUpdateTask(),
+        })
 
     tools = [all_tools[n] for n in selected if n in all_tools]
 
-    # Inject scratch tools for all pipeline agents that have a shared scratch scope.
     if kb_dsn and scratch_scope:
         from runtime.tools.kb import ScratchRead, ScratchWrite
         tools += [ScratchRead(kb_dsn, scratch_scope), ScratchWrite(kb_dsn, scratch_scope)]

@@ -122,6 +122,7 @@ class ArgoSubmitter:
                                 "name": self.credentials_secret, "key": "llm-registration-secret"}}},
                             {"name": "MODEL_OVERRIDE",
                              "value": "{{workflow.parameters.model-override}}"},
+                            {"name": "TRANSFORMERS_OFFLINE", "value": "1"},
                         ],
                         "resources": {
                             "limits": {
