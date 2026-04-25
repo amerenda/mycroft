@@ -265,7 +265,7 @@ async def _start_research_pipeline(
         """
         INSERT INTO memory_records
             (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-        VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, false,
                 NOW() + INTERVAL '7 days')
         """,
         str(_uuid.uuid4()), instruction, original_scope, [], "{}", 0.5, "coordinator",
@@ -276,7 +276,7 @@ async def _start_research_pipeline(
         """
         INSERT INTO memory_records
             (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-        VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, false,
                 NOW() + INTERVAL '7 days')
         """,
         str(_uuid.uuid4()), "", scratch_scope, [], "{}", 0.5, "coordinator",
@@ -372,7 +372,7 @@ async def _pipeline_writer_phase(
             """
             INSERT INTO memory_records
                 (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-            VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+            VALUES ($1, $2, $3, $4, $5, $6, $7, false,
                     NOW() + INTERVAL '7 days')
             """,
             str(_uuid.uuid4()), findings, findings_scope, [], "{}", 0.5, "coordinator",
@@ -447,7 +447,7 @@ async def _start_dynamic_pipeline(
         """
         INSERT INTO memory_records
             (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-        VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, false,
                 NOW() + INTERVAL '7 days')
         """,
         str(_uuid.uuid4()), instruction, original_scope, [], "{}", 0.5, "coordinator",
@@ -458,7 +458,7 @@ async def _start_dynamic_pipeline(
         """
         INSERT INTO memory_records
             (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-        VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+        VALUES ($1, $2, $3, $4, $5, $6, $7, false,
                 NOW() + INTERVAL '7 days')
         """,
         str(_uuid.uuid4()), "", scratch_scope, [], "{}", 0.5, "coordinator",
@@ -543,7 +543,7 @@ async def _run_dynamic_pipeline_steps(
             """
             INSERT INTO memory_records
                 (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-            VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+            VALUES ($1, $2, $3, $4, $5, $6, $7, false,
                     NOW() + INTERVAL '7 days')
             """,
             str(_uuid.uuid4()), prev_content, prev_scope, [], "{}", 0.5, "coordinator",
