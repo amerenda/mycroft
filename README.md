@@ -74,14 +74,63 @@ Served at the coordinator root. Tabs:
 
 PostgreSQL + pgvector, running on the Mac Mini. All persistent state lives here.
 
-Key paths:
+### Memory Tiers
+
+| Tier | TTL | Namespace | Purpose |
+|------|-----|-----------|---------|
+| **Short-term** | 7 days | `/runs/{run_id}/` | Pipeline run data — expires automatically |
+| **Long-term** | Permanent | `/agents/*/results/`, `/tasks/`, `/research/` | Results, history, shared knowledge |
+
+Short-term records carry an `expires_at` timestamp. The coordinator runs hourly cleanup. `ensure_schema()` at startup adds the column idempotently if it doesn't exist.
+
+### Key Paths
+
 ```
-/tasks/{task_id}          task records
-/agents/{name}/inbox/     pending instructions
-/agents/{name}/results/   agent outputs
-/notifications/{user}     Telegram notification queue
-/skills/                  (planned) shared skill knowledge blocks
+/agents/{name}/inbox/{task_id}      task instructions
+/tasks/{task_id}/conversation       full conversation history (JSON)
+/agents/{name}/results/{task_id}    final agent output (permanent)
+/notifications/{user}/{task_id}     errors / alerts
+/runs/{run_id}/original             original user request for a pipeline run (7d TTL)
+/runs/{run_id}/step-{n}/output      full output of pipeline step N (7d TTL)
+/runs/{run_id}/scratch              shared notepad for all agents in the run (7d TTL)
+/research, /wiki                    shared read-only reference context
+/skills/                            (planned) shared skill knowledge blocks
 ```
+
+### Pipeline Context Flow
+
+Context between pipeline steps flows through KB — not Argo args. Before the first LLM call, the runner reads each scope listed in `context_injection` and prepends a structured framing block to the user message:
+
+```
+You are one step in a multi-step pipeline. Workflow: <name>.
+Your role in this step: <step description from workflow editor>
+---
+The original user request — stay aligned with this throughout:
+<content of /runs/{id}/original>
+---
+[CONTEXT: STEP-0/OUTPUT]
+<content of /runs/{id}/step-0/output>
+---
+<current step instruction>
+```
+
+Every agent sees the original brief verbatim — no telephone effect, no coordinator-side truncation.
+
+### Scratch Space
+
+All agents in a pipeline share a scratch record at `/runs/{run_id}/scratch`. Two tools are auto-injected for pipeline agents:
+
+- **`scratch_read`** — read current scratch content
+- **`scratch_write`** — overwrite scratch entirely (last write wins)
+
+Scratch is for mid-run coordination flags and notes. Full step outputs live in `/runs/{run_id}/step-{n}/output` and are never overwritten.
+
+### Permissions
+
+Agents declare `read`/`write` path prefix lists in `manifest.yaml`. The KB client enforces these per-call. Two rules override manifest config:
+
+- **`/runs/`** is always allowed for all agents — no manifest entry needed
+- **Coordinator** has full access (`permissions=None`)
 
 ---
 
