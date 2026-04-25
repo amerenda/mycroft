@@ -191,6 +191,9 @@ async def lifespan(app: FastAPI):
     await ensure_editor_tables(db.kb.pool)
     await seed_from_filesystem(db.kb.pool, _AGENTS_DIR, _WORKFLOWS_DIR)
 
+    # Ensure KB schema extensions (expires_at for short-term memory)
+    await db.kb.ensure_schema()
+
     # Register all DB-stored agents into trigger_router so UI-created agents work
     for row in await _list_agents(db.kb.pool):
         trigger_router.register(row["name"], row.get("manifest", ""), row.get("prompts", ""))
@@ -203,10 +206,24 @@ async def lifespan(app: FastAPI):
     if llm_api_key:
         _heartbeat_task = asyncio.create_task(_llm_heartbeat_loop(config.llm_manager_url, llm_api_key))
 
+    # Periodic cleanup of expired short-term KB records (every hour)
+    async def _kb_cleanup_loop():
+        while True:
+            try:
+                await asyncio.sleep(3600)
+                await db.kb.cleanup_expired()
+            except asyncio.CancelledError:
+                return
+            except Exception as e:
+                log.warning("KB cleanup failed: %s", e)
+
+    _cleanup_task = asyncio.create_task(_kb_cleanup_loop())
+
     log.info("Coordinator started")
     yield
 
     # Shutdown
+    _cleanup_task.cancel()
     if _heartbeat_task:
         _heartbeat_task.cancel()
     if config.telegram_bot_token:
@@ -232,6 +249,7 @@ async def _start_research_pipeline(
     notify: bool = True,
 ) -> str:
     """Start the two-phase gather→write pipeline. Returns the gather task ID."""
+    import uuid as _uuid
     from coordinator.research_pipeline import WORKFLOW_CONFIG, GATHERER_PROMPT
 
     wf_config = WORKFLOW_CONFIG.get(workflow, WORKFLOW_CONFIG["research-regular"])
@@ -240,14 +258,29 @@ async def _start_research_pipeline(
     resolved_gather_model = gather_model or gather_cfg["model"]
     resolved_gather_tools = gather_tools or gather_cfg["tools"]
 
+    # Write the original brief for the writer phase to reference directly.
+    run_id = str(_uuid.uuid4())
+    original_scope = f"/runs/{run_id}/original"
+    await db.kb.pool.execute(
+        """
+        INSERT INTO memory_records
+            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
+        VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+                NOW() + INTERVAL '7 days')
+        """,
+        str(_uuid.uuid4()), instruction, original_scope, [], "{}", 0.5, "coordinator",
+    )
+
     gather_config = {
         "instruction": instruction,
         "model_override": resolved_gather_model,
         "max_iterations_override": gather_cfg["max_iterations"],
         "tools_override": resolved_gather_tools,
         "system_prompt_override": GATHERER_PROMPT,
+        "context_injection": [original_scope],
         "phase": "gather",
         "workflow": workflow,
+        "run_id": run_id,
         **({"notify": False} if not notify else {}),
     }
 
@@ -270,11 +303,13 @@ async def _start_research_pipeline(
     )
     await db.kb.update_task(gather_task_id, argo_workflow_name=gather_wf_name)
 
-    log.info("Research pipeline started: gather=%s model=%s workflow=%s",
-             gather_task_id[:8], resolved_gather_model, workflow)
+    log.info("Research pipeline started: gather=%s model=%s workflow=%s run=%s",
+             gather_task_id[:8], resolved_gather_model, workflow, run_id[:8])
 
     asyncio.create_task(
-        _pipeline_writer_phase(gather_task_id, instruction, workflow, write_model=write_model, notify=notify)
+        _pipeline_writer_phase(gather_task_id, instruction, workflow,
+                               write_model=write_model, notify=notify,
+                               run_id=run_id, original_scope=original_scope)
     )
 
     return gather_task_id
@@ -286,8 +321,12 @@ async def _pipeline_writer_phase(
     workflow: str,
     write_model: str | None = None,
     notify: bool = True,
+    *,
+    run_id: str,
+    original_scope: str,
 ):
     """Background: wait for gatherer to finish, then launch the writer."""
+    import uuid as _uuid
     from coordinator.research_pipeline import WORKFLOW_CONFIG, WRITER_PROMPT, _wait_for_task
 
     try:
@@ -305,12 +344,24 @@ async def _pipeline_writer_phase(
                 log.info("Pipeline writer phase aborted — gather task %s was cancelled", gather_task_id[:8])
                 return
 
-        # Read full findings from KB — task.result["summary"] is truncated to 1000 chars
+        # Mirror the gatherer's full output into /runs/ (short-term, 7d TTL) so the
+        # writer reads it from KB directly — no truncation in the coordinator.
         gather_record = await db.kb.get(f"/agents/researcher/results/{gather_task_id}")
         findings = (gather_record.content if gather_record else None) or status_hint
         if not findings:
             log.warning("Pipeline gatherer %s produced no usable findings, proceeding anyway", gather_task_id[:8])
             findings = f"(Limited findings for: {instruction})"
+
+        findings_scope = f"/runs/{run_id}/gather/output"
+        await db.kb.pool.execute(
+            """
+            INSERT INTO memory_records
+                (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
+            VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+                    NOW() + INTERVAL '7 days')
+            """,
+            str(_uuid.uuid4()), findings, findings_scope, [], "{}", 0.5, "coordinator",
+        )
 
         log.info("Pipeline gatherer %s done (%d chars). Launching writer.", gather_task_id[:8], len(findings))
 
@@ -319,27 +370,23 @@ async def _pipeline_writer_phase(
 
         resolved_write_model = write_model or write_cfg["model"]
 
-        writer_instruction = (
-            f"Write a research report based on these findings.\n\n"
-            f"Original question: {instruction}\n\n"
-            f"Research findings:\n{findings[:15000]}"
-        )
-
         write_config = {
-            "instruction": writer_instruction,
+            "instruction": "Write a research report based on the gathered findings.",
             "model_override": resolved_write_model,
             "max_iterations_override": write_cfg["max_iterations"],
             "tools_override": write_cfg["tools"],
             "system_prompt_override": WRITER_PROMPT,
+            "context_injection": [original_scope, findings_scope],
             "phase": "write",
             "workflow": workflow,
+            "run_id": run_id,
             "parent_task_id": gather_task_id,
             **({"notify": False} if not notify else {}),
         }
 
         write_task_id = await task_manager.create_task(
             agent_type="researcher",
-            instruction=writer_instruction,
+            instruction="Write a research report based on the gathered findings.",
             trigger="pipeline",
             repo="",
             config=write_config,
@@ -348,7 +395,7 @@ async def _pipeline_writer_phase(
         write_wf_name = await argo.submit(
             agent_type="researcher",
             task_id=write_task_id,
-            params={"instruction": writer_instruction, "model_override": resolved_write_model},
+            params={"instruction": "Write a research report based on the gathered findings.", "model_override": resolved_write_model},
             manifest=trigger_router.get_manifest("researcher"),
             on_update=_on_workflow_update,
         )
@@ -374,22 +421,38 @@ async def _start_dynamic_pipeline(
     is_last = len(steps) == 1
     agent_type = step.get("agent", "researcher")
 
+    # Write the original brief to KB so every step can reference it directly (no telephone effect).
+    # Use first task_id as the run anchor — generated here so we can write before creating task.
+    import uuid as _uuid
+    run_id = str(_uuid.uuid4())
+    original_scope = f"/runs/{run_id}/original"
+    await db.kb.pool.execute(
+        """
+        INSERT INTO memory_records
+            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
+        VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+                NOW() + INTERVAL '7 days')
+        """,
+        str(_uuid.uuid4()), instruction, original_scope, [], "{}", 0.5, "coordinator",
+    )
+
     step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
     task_config = {
-        "instruction": instruction,
+        "instruction": step_prompt or instruction,
         "model_override": step.get("model") or None,
         "max_iterations_override": step.get("max_iterations") or None,
         "tools_override": step.get("tools") or None,
         "system_prompt_override": step_prompt,
+        "context_injection": [original_scope],
         "phase": "pipeline-step-0",
         "is_last_step": is_last,
         "workflow": workflow_name,
-        "pipeline_original_instruction": instruction,
+        "run_id": run_id,
     }
 
     task_id = await task_manager.create_task(
         agent_type=agent_type,
-        instruction=instruction,
+        instruction=step_prompt or instruction,
         trigger="pipeline",
         repo="",
         config=task_config,
@@ -398,7 +461,7 @@ async def _start_dynamic_pipeline(
     tasks_active.labels(agent_type=agent_type).inc()
 
     model = step.get("model") or None
-    params: dict = {"instruction": instruction}
+    params: dict = {"instruction": step_prompt or instruction}
     if model:
         params["model_override"] = model
     wf_name = await argo.submit(
@@ -408,12 +471,13 @@ async def _start_dynamic_pipeline(
     )
     await db.kb.update_task(task_id, argo_workflow_name=wf_name)
 
-    log.info("Dynamic pipeline started: step=1/%d agent=%s workflow=%s task=%s",
-             len(steps), agent_type, workflow_name, task_id[:8])
+    log.info("Dynamic pipeline started: step=1/%d agent=%s workflow=%s task=%s run=%s",
+             len(steps), agent_type, workflow_name, task_id[:8], run_id[:8])
 
     if not is_last:
         asyncio.create_task(
-            _run_dynamic_pipeline_steps(task_id, agent_type, instruction, workflow_name, steps, 1)
+            _run_dynamic_pipeline_steps(task_id, agent_type, instruction, workflow_name, steps, 1,
+                                        run_id=run_id, original_scope=original_scope)
         )
 
     return task_id
@@ -426,43 +490,54 @@ async def _run_dynamic_pipeline_steps(
     workflow_name: str,
     steps: list[dict],
     step_index: int,
+    *,
+    run_id: str,
+    original_scope: str,
 ) -> None:
     """Background: wait for previous step to finish, then launch the next step."""
     from coordinator.research_pipeline import _wait_for_task
+    import uuid as _uuid
 
     try:
         await _wait_for_task(prev_task_id, db, timeout=600)
 
-        # Read full output from KB — task.result["summary"] is truncated to 1000 chars
-        record = await db.kb.get(f"/agents/{prev_agent_type}/results/{prev_task_id}")
-        prev_output = (record.content if record else None) or f"(No output from step {step_index - 1})"
+        # Mirror the previous step's full output into /runs/ (short-term, 7d TTL) so the
+        # next agent reads it directly from KB — no coordinator truncation.
+        result_record = await db.kb.get(f"/agents/{prev_agent_type}/results/{prev_task_id}")
+        prev_content = (result_record.content if result_record else None) or f"(No output from step {step_index - 1})"
+        prev_scope = f"/runs/{run_id}/step-{step_index - 1}/output"
+        await db.kb.pool.execute(
+            """
+            INSERT INTO memory_records
+                (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
+            VALUES ($1, $2, NULL, $3, $4, $5, $6, false,
+                    NOW() + INTERVAL '7 days')
+            """,
+            str(_uuid.uuid4()), prev_content, prev_scope, [], "{}", 0.5, "coordinator",
+        )
 
         step = steps[step_index]
         is_last = step_index == len(steps) - 1
         agent_type = step.get("agent", "researcher")
-
-        step_instruction = (
-            f"Original question: {original_instruction}\n\n"
-            f"Previous step output:\n{prev_output[:15000]}"
-        )
-
         step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
+
         task_config = {
-            "instruction": step_instruction,
+            "instruction": step_prompt or original_instruction,
             "model_override": step.get("model") or None,
             "max_iterations_override": step.get("max_iterations") or None,
             "tools_override": step.get("tools") or None,
             "system_prompt_override": step_prompt,
+            "context_injection": [original_scope, prev_scope],
             "phase": f"pipeline-step-{step_index}",
             "is_last_step": is_last,
             "workflow": workflow_name,
-            "pipeline_original_instruction": original_instruction,
+            "run_id": run_id,
             "parent_task_id": prev_task_id,
         }
 
         task_id = await task_manager.create_task(
             agent_type=agent_type,
-            instruction=step_instruction,
+            instruction=step_prompt or original_instruction,
             trigger="pipeline",
             repo="",
             config=task_config,
@@ -471,7 +546,7 @@ async def _run_dynamic_pipeline_steps(
         tasks_active.labels(agent_type=agent_type).inc()
 
         model = step.get("model") or None
-        params: dict = {"instruction": step_instruction}
+        params: dict = {"instruction": step_prompt or original_instruction}
         if model:
             params["model_override"] = model
         wf_name = await argo.submit(
@@ -481,12 +556,14 @@ async def _run_dynamic_pipeline_steps(
         )
         await db.kb.update_task(task_id, argo_workflow_name=wf_name)
 
-        log.info("Dynamic pipeline step %d/%d: agent=%s workflow=%s task=%s",
-                 step_index + 1, len(steps), agent_type, workflow_name, task_id[:8])
+        log.info("Dynamic pipeline step %d/%d: agent=%s workflow=%s task=%s run=%s",
+                 step_index + 1, len(steps), agent_type, workflow_name, task_id[:8], run_id[:8])
 
         if not is_last:
             asyncio.create_task(
-                _run_dynamic_pipeline_steps(task_id, agent_type, original_instruction, workflow_name, steps, step_index + 1)
+                _run_dynamic_pipeline_steps(task_id, agent_type, original_instruction, workflow_name,
+                                            steps, step_index + 1,
+                                            run_id=run_id, original_scope=original_scope)
             )
 
     except Exception:

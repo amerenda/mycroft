@@ -165,6 +165,8 @@ def _apply_config(task: TaskConfig, cfg: dict):
         task.system_prompt_override = cfg["system_prompt_override"]
     if cfg.get("max_iterations_override"):
         task.max_iterations_override = cfg["max_iterations_override"]
+    if cfg.get("context_injection"):
+        task.context_injection = cfg["context_injection"]
     # tools_override and other pipeline config stay in task.config
     # and are read by the runner directly
 

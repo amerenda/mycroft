@@ -112,8 +112,12 @@ class KBClient:
         importance: float = 0.5,
         source: str | None = None,
         needs_embedding: bool = True,
+        ttl_days: int | None = None,
     ) -> str:
-        """Write a record to the KB. Returns the record ID."""
+        """Write a record to the KB. Returns the record ID.
+
+        ttl_days: if set, the record expires after this many days (short-term memory).
+        """
         self._check_permission(scope, "write")
 
         record_id = str(uuid.uuid4())
@@ -121,11 +125,17 @@ class KBClient:
         if needs_embedding and self.use_embeddings:
             embedding = embed(content)
 
+        expires_at = None
+        if ttl_days is not None:
+            from datetime import timedelta
+            expires_at = datetime.now(timezone.utc) + timedelta(days=ttl_days)
+
         await self.pool.execute(
             """
             INSERT INTO memory_records
-                (id, content, embedding, scope, categories, metadata, importance, source, needs_embedding)
-            VALUES ($1, $2, $3::vector, $4, $5, $6, $7, $8, $9)
+                (id, content, embedding, scope, categories, metadata, importance, source,
+                 needs_embedding, expires_at)
+            VALUES ($1, $2, $3::vector, $4, $5, $6, $7, $8, $9, $10)
             """,
             record_id,
             content,
@@ -136,13 +146,15 @@ class KBClient:
             importance,
             source,
             needs_embedding,
+            expires_at,
         )
 
         # Notify listeners
         event = json.dumps({"scope": scope, "record_id": record_id, "source": source})
         await self.pool.execute("SELECT pg_notify('agent_events', $1)", event)
 
-        log.debug("KB write: scope=%s id=%s embed=%s", scope, record_id[:8], embedding is not None)
+        log.debug("KB write: scope=%s id=%s embed=%s ttl=%s", scope, record_id[:8],
+                  embedding is not None, ttl_days)
         return record_id
 
     async def get(self, scope: str) -> MemoryRecord | None:
@@ -155,6 +167,7 @@ class KBClient:
                    needs_embedding, created_at
             FROM memory_records
             WHERE scope = $1
+              AND (expires_at IS NULL OR expires_at > NOW())
             ORDER BY created_at DESC
             LIMIT 1
             """,
@@ -249,6 +262,60 @@ class KBClient:
     # -----------------------------------------------------------------------
     # Task records (coordinator operations)
     # -----------------------------------------------------------------------
+
+    async def ensure_schema(self) -> None:
+        """Ensure all schema extensions are applied (safe to call repeatedly)."""
+        async with self.pool.acquire() as conn:
+            # expires_at for short-term memory (TTL records)
+            col_exists = await conn.fetchval("""
+                SELECT 1 FROM information_schema.columns
+                WHERE table_name = 'memory_records' AND column_name = 'expires_at'
+            """)
+            if not col_exists:
+                await conn.execute(
+                    "ALTER TABLE memory_records ADD COLUMN expires_at TIMESTAMPTZ"
+                )
+                await conn.execute(
+                    "CREATE INDEX memory_records_expires_at ON memory_records(expires_at) "
+                    "WHERE expires_at IS NOT NULL"
+                )
+                log.info("Added expires_at column to memory_records")
+
+    async def cleanup_expired(self) -> int:
+        """Delete records past their TTL. Returns count deleted."""
+        result = await self.pool.execute(
+            "DELETE FROM memory_records WHERE expires_at IS NOT NULL AND expires_at < NOW()"
+        )
+        count = int(result.split()[-1])
+        if count:
+            log.info("Cleaned up %d expired KB records", count)
+        return count
+
+    async def get_unchecked(self, scope: str) -> MemoryRecord | None:
+        """Get a record by scope, bypassing permission checks (for coordinator-injected context)."""
+        row = await self.pool.fetchrow(
+            """
+            SELECT id, content, scope, categories, metadata, importance, source,
+                   needs_embedding, created_at
+            FROM memory_records
+            WHERE scope = $1
+              AND (expires_at IS NULL OR expires_at > NOW())
+            ORDER BY created_at DESC
+            LIMIT 1
+            """,
+            scope,
+        )
+        if not row:
+            return None
+        return MemoryRecord(
+            id=_str(row["id"]),
+            content=row["content"],
+            scope=row["scope"],
+            categories=list(row["categories"] or []),
+            metadata=_json(row["metadata"]),
+            importance=row["importance"],
+            source=row["source"],
+        )
 
     async def ensure_tasks_table(self) -> None:
         """Create agent_tasks if absent and add any missing columns (safe to call repeatedly)."""

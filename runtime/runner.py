@@ -149,10 +149,25 @@ class AgentRunner:
                 "role": "system",
                 "content": system_prompt,
             })
-            self.messages.append({
-                "role": "user",
-                "content": build_user_message(self.task.instruction, context),
-            })
+
+            # Inject pipeline context (original brief + previous step outputs).
+            # Scopes are coordinator-written /runs/ paths; read without permission checks.
+            injected_sections: list[str] = []
+            for scope in self.task.context_injection:
+                record = await self.kb.get_unchecked(scope)
+                if record:
+                    if scope.endswith("/original"):
+                        label = "ORIGINAL BRIEF"
+                    else:
+                        step = scope.rstrip("/").rsplit("/", 1)[-1]
+                        label = f"CONTEXT: {step.upper()}"
+                    injected_sections.append(f"[{label}]\n{record.content}")
+
+            user_content = build_user_message(self.task.instruction, context)
+            if injected_sections:
+                user_content = "\n\n---\n\n".join(injected_sections) + "\n\n---\n\n" + user_content
+
+            self.messages.append({"role": "user", "content": user_content})
 
         while self.iteration < self.max_iterations:
             model_name = self.llm.model
