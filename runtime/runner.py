@@ -150,6 +150,9 @@ class AgentRunner:
 
             system_prompt = self.task.system_prompt_override or build_system_prompt(
                 self.manifest, self.tools.schemas(), effort=self._effort)
+            system_suffix = self.task.config.get("system_suffix")
+            if system_suffix:
+                system_prompt = system_prompt.rstrip() + "\n\n" + system_suffix
             self.messages.append({
                 "role": "system",
                 "content": system_prompt,

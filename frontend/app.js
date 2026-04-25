@@ -1143,8 +1143,14 @@ function _renderPipelineSteps() {
             value="${esc((step.tools || []).join(', '))}"
             onchange="updatePipelineStep(${i},'tools',this.value.split(',').map(s=>s.trim()).filter(Boolean))">
         </details>
+        <details${step.system_suffix ? ' open' : ''} style="margin-top:6px">
+          <summary style="font-size:0.82em;color:#8b949e;cursor:pointer">System Prompt Suffix <span class="tip" data-tip="Appended to the agent's default system prompt. Use this to add constraints or output format rules for this step without replacing the agent's core behavior.">ⓘ</span></summary>
+          <textarea class="editor-textarea" rows="3" style="margin-top:6px"
+            onchange="updatePipelineStep(${i},'system_suffix',this.value)"
+            placeholder="e.g. Always format your output as a JSON object.">${esc(step.system_suffix || '')}</textarea>
+        </details>
         <details${step.prompt_override ? ' open' : ''} style="margin-top:6px">
-          <summary style="font-size:0.82em;color:#8b949e;cursor:pointer">Prompt Override</summary>
+          <summary style="font-size:0.82em;color:#e3b341;cursor:pointer">⚠ System Prompt Override <span class="tip" data-tip="Replaces the agent's entire system prompt. Use sparingly — the agent loses all its default behavior and tools context. Prefer 'System Prompt Suffix' for most cases.">ⓘ</span></summary>
           <textarea class="editor-textarea" rows="4" style="margin-top:6px"
             onchange="updatePipelineStep(${i},'prompt_override',this.value)"
             placeholder="Leave empty to use agent default">${esc(step.prompt_override || '')}</textarea>
@@ -1154,7 +1160,7 @@ function _renderPipelineSteps() {
 }
 
 function addPipelineStep() {
-  _pipelineSteps.push({ agent: '', model: '', description: '', prompt_override: '', max_iterations: '', tools: [] });
+  _pipelineSteps.push({ agent: '', model: '', description: '', system_suffix: '', prompt_override: '', max_iterations: '', tools: [] });
   _renderPipelineSteps();
 }
 
@@ -1231,6 +1237,7 @@ async function selectWorkflow(name) {
       agent: s.agent || '',
       model: s.model || '',
       description: s.description || '',
+      system_suffix: s.system_suffix || '',
       prompt_override: s.prompt_override || '',
       max_iterations: s.max_iterations || '',
       tools: s.tools || [],
@@ -1248,7 +1255,7 @@ async function selectWorkflow(name) {
 
 function newWorkflow() {
   _currentWorkflow = null;
-  _pipelineSteps = [{ agent: '', model: '', description: '', prompt_override: '', max_iterations: '', tools: [] }];
+  _pipelineSteps = [{ agent: '', model: '', description: '', system_suffix: '', prompt_override: '', max_iterations: '', tools: [] }];
   document.getElementById('workflowName').value = '';
   document.getElementById('workflowDescription').value = '';
   document.getElementById('workflowContent').value = '';
@@ -1270,6 +1277,7 @@ async function saveWorkflow() {
       agent: s.agent,
       model: s.model || '',
       ...(s.description ? { description: s.description } : {}),
+      ...(s.system_suffix ? { system_suffix: s.system_suffix } : {}),
       prompt_override: s.prompt_override || '',
       ...(s.max_iterations ? { max_iterations: parseInt(s.max_iterations) } : {}),
       ...(s.tools && s.tools.length ? { tools: s.tools } : {}),
@@ -1301,6 +1309,7 @@ async function cloneWorkflow() {
     steps: _pipelineSteps.map(s => ({
       agent: s.agent, model: s.model || '',
       ...(s.description ? { description: s.description } : {}),
+      ...(s.system_suffix ? { system_suffix: s.system_suffix } : {}),
       prompt_override: s.prompt_override || '',
       ...(s.max_iterations ? { max_iterations: parseInt(s.max_iterations) } : {}),
       ...(s.tools && s.tools.length ? { tools: s.tools } : {}),
