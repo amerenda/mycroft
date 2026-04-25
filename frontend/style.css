@@ -285,6 +285,16 @@ button {
   flex-shrink: 0;
 }
 
+.task-card-workflow {
+  color: #8b949e;
+  font-size: 0.78em;
+  background: #21262d;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 1px 6px;
+  flex-shrink: 0;
+}
+
 .task-card-age {
   margin-left: auto;
   color: #6e7681;

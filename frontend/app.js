@@ -355,10 +355,11 @@ function renderTrace(messages, task) {
 
   for (const msg of messages) {
     if (msg.role === 'system') {
+      // Collapsed by default — system prompt is rarely useful to read inline
       cards.push(`
-        <div class="trace-card planning" onclick="this.classList.toggle('expanded')">
+        <div class="trace-card planning trace-system-prompt" onclick="this.classList.toggle('expanded')">
           <div class="trace-card-header">
-            <span><span class="trace-tool-name">system prompt</span></span>
+            <span class="trace-meta">system prompt — click to expand</span>
             <span class="trace-meta">${(msg.content || '').length} chars</span>
           </div>
           <div class="trace-card-body">${esc(msg.content || '')}</div>
@@ -540,11 +541,13 @@ function _renderTaskList(tasks) {
     const isActive = t.status === 'running' || t.status === 'pending';
     const age = t.created_at ? _relativeTime(new Date(t.created_at)) : '';
     const preview = esc((t.config?.instruction || '').slice(0, 100));
+    const workflow = esc(t.config?.workflow || '');
     return `
     <div class="task-card" id="tc-${t.id}">
       <div class="task-card-header" onclick="toggleTaskCard('${t.id}')">
         <span class="task-card-id">${t.id.slice(0, 8)}</span>
         <span class="task-card-agent">${esc(t.agent_type)}</span>
+        ${workflow ? `<span class="task-card-workflow">${workflow}</span>` : ''}
         <span class="status-badge status-${t.status}">${t.status}</span>
         <span class="task-card-age">${age}</span>
       </div>
