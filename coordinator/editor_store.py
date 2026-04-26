@@ -76,16 +76,29 @@ async def seed_from_filesystem(pool: asyncpg.Pool, agents_dir: Path, workflows_d
             manifest_text = manifest_file.read_text()
             data = yaml.safe_load(manifest_text) or {}
             agent_name = data.get("name") or d.name
-            exists = await conn.fetchval(
-                "SELECT 1 FROM agent_definitions WHERE name = $1", agent_name
+            existing = await conn.fetchrow(
+                "SELECT manifest, prompts FROM agent_definitions WHERE name = $1", agent_name
             )
-            if not exists:
-                prompts = (d / "prompts.py").read_text() if (d / "prompts.py").exists() else ""
+            fs_prompts = (d / "prompts.py").read_text() if (d / "prompts.py").exists() else ""
+            if not existing:
                 await conn.execute(
                     "INSERT INTO agent_definitions (name, manifest, prompts) VALUES ($1, $2, $3)",
-                    agent_name, manifest_text, prompts,
+                    agent_name, manifest_text, fs_prompts,
                 )
                 log.info("Seeded agent '%s' from filesystem (dir: %s)", agent_name, d.name)
+            else:
+                # Always apply filesystem manifest changes (model, memory etc. committed to git).
+                # Restore filesystem prompts only when the DB copy is empty — this recovers
+                # agents that were created in the DB before their prompts.py was committed,
+                # without overwriting prompts the user has deliberately edited via the UI.
+                update_prompts = not existing["prompts"].strip() and fs_prompts
+                if existing["manifest"] != manifest_text or update_prompts:
+                    await conn.execute(
+                        "UPDATE agent_definitions SET manifest=$1, prompts=CASE WHEN $3 THEN $2 ELSE prompts END, updated_at=NOW() WHERE name=$4",
+                        manifest_text, fs_prompts, update_prompts, agent_name,
+                    )
+                    log.info("Updated agent '%s' from filesystem (manifest_changed=%s, prompts_restored=%s)",
+                             agent_name, existing["manifest"] != manifest_text, update_prompts)
 
         # Workflows
         if workflows_dir.exists():
