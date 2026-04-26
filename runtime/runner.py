@@ -92,20 +92,20 @@ class AgentRunner:
 
             result = await self._loop()
 
-            # Mark task as completed
-            await self.kb.update_task(
-                self.task.id,
-                status=TaskStatus.completed,
-                completed_at=datetime.now(timezone.utc),
-                result={"summary": result[:1000]},
-            )
-
-            # Write result to agent results scope
+            # Write result before marking completed — the coordinator polls for
+            # completed status and immediately reads the result, so it must exist first.
             await self.kb.write(
                 scope=f"/agents/{self.manifest.name}/results/{self.task.id}",
                 content=result,
                 metadata=self.task.config,
                 source=f"{self.manifest.name}/{self.task.id}",
+            )
+
+            await self.kb.update_task(
+                self.task.id,
+                status=TaskStatus.completed,
+                completed_at=datetime.now(timezone.utc),
+                result={"summary": result[:1000]},
             )
 
             return result
