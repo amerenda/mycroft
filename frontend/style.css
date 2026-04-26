@@ -776,6 +776,15 @@ a.btn-tool-ctrl { text-decoration: none; display: inline-block; }
 .editor-list-item:last-child { border-bottom: none; }
 .editor-list-item:hover { background: #21262d; }
 .editor-list-item.active { background: #1f6feb22; color: #58a6ff; }
+.schema-group-badge {
+  font-size: 0.68em;
+  font-weight: 600;
+  color: #58a6ff;
+  background: #1f6feb22;
+  border: 1px solid #1f6feb44;
+  border-radius: 3px;
+  padding: 1px 5px;
+}
 .schema-group-header {
   padding: 5px 12px 3px;
   font-size: 0.72em;

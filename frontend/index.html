@@ -409,8 +409,9 @@
               <input id="schemaDbVersion" type="text" disabled style="color:#8b949e;max-width:80px">
             </div>
             <div class="form-group" style="margin-bottom:0;flex:1">
-              <label>Group <span class="tip" data-tip="Assign this tool to a group (e.g. 'web', 'files'). Agents can then use @group-name in their tools list to include all tools in the group.">ⓘ</span></label>
-              <input id="schemaGroup" type="text" placeholder="e.g. web" style="max-width:140px">
+              <label>Group <span class="tip" data-tip="Assign this tool to a group. Agents use @group-name in their tools list to include all tools in that group. Type a new name to create a group.">ⓘ</span></label>
+              <input id="schemaGroup" type="text" placeholder="e.g. web" style="max-width:140px" list="schemaGroupList">
+              <datalist id="schemaGroupList"></datalist>
             </div>
             <div class="form-group" style="margin-bottom:0;flex:1">
               <label>Changelog</label>

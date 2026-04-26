@@ -908,6 +908,12 @@ let _dbGroups = {};  // group -> [tool names], from /api/tools/groups
 
 async function loadToolGroups() {
   try { _dbGroups = await api('/api/tools/groups'); } catch (_) {}
+  // Populate the group autocomplete datalist with all known group names
+  const dl = document.getElementById('schemaGroupList');
+  if (dl) {
+    const all = _allGroupNames();
+    dl.innerHTML = [...all].sort().map(g => `<option value="${esc(g)}">`).join('');
+  }
 }
 
 function _allGroupNames() {
@@ -1537,10 +1543,11 @@ async function deleteWorkflow() {
 let _currentSchema = null;
 
 function _schemaListItem(s) {
+  const badge = s.group ? `<span class="schema-group-badge">@${esc(s.group)}</span>` : '';
   return `<div class="editor-list-item${_currentSchema === s.name ? ' active' : ''}"
        onclick="selectSchema('${s.name}')">
     <span>${esc(s.name)}</span>
-    <span style="font-size:0.7em;color:#484f58">v${s.version}</span>
+    <span style="display:flex;gap:6px;align-items:center">${badge}<span style="font-size:0.7em;color:#484f58">v${s.version}</span></span>
   </div>`;
 }
 
@@ -1669,6 +1676,7 @@ async function saveSchema() {
     document.getElementById('schemaEditorName').readOnly = true;
     document.getElementById('schemaDbVersion').value = 'v' + r.version;
     document.getElementById('schemaChangelog').value = '';
+    loadToolGroups();
     loadSchemas();
     loadSchemaHistory(name);
   } catch (e) {
