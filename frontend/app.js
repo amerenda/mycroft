@@ -926,12 +926,13 @@ function _extractTools(yaml) {
   if (inline) return inline[1].split(',').map(s => s.trim()).filter(Boolean);
   const block = yaml.match(/^tools:\s*\n((?:  - .+\n?)*)/m);
   if (!block) return [];
-  return block[1].replace(/^  - /gm, '').trim().split('\n').map(s => s.trim()).filter(Boolean);
+  return block[1].replace(/^  - /gm, '').trim().split('\n').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
 }
 
 function _setTools(yaml, tools) {
+  // @ is a reserved YAML indicator — must quote tool names that start with it
   const block = tools.length
-    ? 'tools:\n' + tools.map(t => `  - ${t}`).join('\n') + '\n'
+    ? 'tools:\n' + tools.map(t => `  - ${t.startsWith('@') ? `"${t}"` : t}`).join('\n') + '\n'
     : 'tools: []\n';
   const stripped = yaml
     .replace(/^tools:\s*\[.*\]\s*\n?/m, '')
