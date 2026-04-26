@@ -776,6 +776,18 @@ a.btn-tool-ctrl { text-decoration: none; display: inline-block; }
 .editor-list-item:last-child { border-bottom: none; }
 .editor-list-item:hover { background: #21262d; }
 .editor-list-item.active { background: #1f6feb22; color: #58a6ff; }
+.schema-group-header {
+  padding: 5px 12px 3px;
+  font-size: 0.72em;
+  font-weight: 600;
+  color: #58a6ff;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  background: #161b22;
+  border-bottom: 1px solid #21262d;
+  position: sticky;
+  top: 0;
+}
 
 .editor-pane {
   background: #161b22;

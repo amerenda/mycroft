@@ -43,10 +43,12 @@ class AgentRunner:
         # Tools: task config can override the manifest tool list (for pipeline phases)
         tools_override = task.config.get("tools_override")
         scratch_scope = task.config.get("scratch_scope")
+        extra_groups = task.config.get("_tool_groups")  # DB-resolved groups from entrypoint
         self.tools = load_tools(
             tools_override or manifest.tools,
             kb_dsn=platform.kb_dsn if scratch_scope else None,
             scratch_scope=scratch_scope,
+            extra_groups=extra_groups,
         )
 
         # LLM call params from task config (overridable via API/UI)

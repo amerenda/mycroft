@@ -259,15 +259,8 @@
           <details>
             <summary>Permissions &amp; Tools</summary>
             <div style="margin-top:10px">
-              <div class="editor-file-label">Tools</div>
-              <div class="agent-tool-groups">
-                <label><input type="checkbox" class="agent-tool-cb" value="web"> web</label>
-                <label><input type="checkbox" class="agent-tool-cb" value="files"> files</label>
-                <label><input type="checkbox" class="agent-tool-cb" value="git"> git</label>
-                <label><input type="checkbox" class="agent-tool-cb" value="github"> github</label>
-                <label><input type="checkbox" class="agent-tool-cb" value="shell"> shell</label>
-              </div>
-              <textarea id="agentToolsExtra" class="editor-textarea" rows="2" spellcheck="false" placeholder="individual tools, one per line (e.g. web_search, run_command)"></textarea>
+              <div class="editor-file-label">Tools <span class="editor-file-hint">— one per line · <code>@group-name</code> for groups · individual tool names as-is</span></div>
+              <textarea id="agentToolsList" class="editor-textarea" rows="5" spellcheck="false" placeholder="@web&#10;@files&#10;run_command"></textarea>
               <div class="editor-file-label" style="margin-top:12px">Read paths <span class="editor-file-hint">— one per line</span></div>
               <textarea id="agentPermsRead" class="editor-textarea" rows="3" spellcheck="false" placeholder="/tasks"></textarea>
               <div class="editor-file-label" style="margin-top:8px">Write paths <span class="editor-file-hint">— one per line</span></div>
@@ -406,7 +399,7 @@
         </div>
 
         <div class="editor-section">
-          <div class="form-row" style="margin-bottom:0">
+          <div class="form-row" style="margin-bottom:8px">
             <div class="form-group" style="margin-bottom:0">
               <label>Semver <span class="tip" data-tip="Cosmetic label for this version. The DB auto-increments an integer version on each save.">ⓘ</span></label>
               <input id="schemaVersion" type="text" placeholder="1.0.0" style="max-width:120px">
@@ -414,6 +407,10 @@
             <div class="form-group" style="margin-bottom:0">
               <label>DB version</label>
               <input id="schemaDbVersion" type="text" disabled style="color:#8b949e;max-width:80px">
+            </div>
+            <div class="form-group" style="margin-bottom:0;flex:1">
+              <label>Group <span class="tip" data-tip="Assign this tool to a group (e.g. 'web', 'files'). Agents can then use @group-name in their tools list to include all tools in the group.">ⓘ</span></label>
+              <input id="schemaGroup" type="text" placeholder="e.g. web" style="max-width:140px">
             </div>
             <div class="form-group" style="margin-bottom:0;flex:1">
               <label>Changelog</label>

@@ -1417,6 +1417,7 @@ async def api_delete_all_reports():
 
 from coordinator.tool_schemas import (
     get_schema, list_schemas, get_schema_history, upsert_schema, delete_schema,
+    fetch_tool_groups,
 )
 
 
@@ -1443,14 +1444,22 @@ class UpsertSchemaRequest(BaseModel):
     schema_version: str = "1.0.0"
     changelog: str = ""
     updated_by: str = "ui"
+    group: str = ""
 
 
 @app.put("/api/tools/schemas/{name}")
 async def api_upsert_schema(name: str, req: UpsertSchemaRequest):
     new_version = await upsert_schema(
         db.kb.pool, name, req.schema, req.schema_version, req.changelog, req.updated_by,
+        group=req.group,
     )
     return {"name": name, "version": new_version}
+
+
+@app.get("/api/tools/groups")
+async def api_tool_groups():
+    """Return group_name -> [tool_names] map derived from tool schema group assignments."""
+    return await fetch_tool_groups(db.kb.pool)
 
 
 @app.delete("/api/tools/schemas/{name}")

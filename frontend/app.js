@@ -902,7 +902,17 @@ function _setResources(yaml, memory, cpu) {
   return block ? stripped + '\n' + block + '\n' : stripped + '\n';
 }
 
-const _TOOL_GROUPS = ['web', 'files', 'git', 'github', 'shell'];
+// Known built-in group names — used to auto-prefix when loading old manifests
+const _BUILTIN_GROUPS = new Set(['web', 'files', 'git', 'github', 'shell', 'todo']);
+let _dbGroups = {};  // group -> [tool names], from /api/tools/groups
+
+async function loadToolGroups() {
+  try { _dbGroups = await api('/api/tools/groups'); } catch (_) {}
+}
+
+function _allGroupNames() {
+  return new Set([..._BUILTIN_GROUPS, ...Object.keys(_dbGroups)]);
+}
 
 function _extractTools(yaml) {
   // Handle both "tools:\n  - x" and "tools: []" forms
@@ -1000,9 +1010,10 @@ async function selectAgent(name) {
     document.getElementById('agentSystemPrompt').value = _extractSystemPrompt(a.prompts || '');
 
     const tools = _extractTools(a.manifest);
-    document.querySelectorAll('.agent-tool-cb').forEach(cb => { cb.checked = tools.includes(cb.value); });
-    document.getElementById('agentToolsExtra').value =
-      tools.filter(t => !_TOOL_GROUPS.includes(t)).join('\n');
+    const allGroups = _allGroupNames();
+    // Display group names with @ prefix; individual tools as-is
+    document.getElementById('agentToolsList').value =
+      tools.map(t => allGroups.has(t) ? `@${t}` : t).join('\n');
 
     document.getElementById('agentPermsRead').value = _extractPerms(a.manifest, 'read');
     document.getElementById('agentPermsWrite').value = _extractPerms(a.manifest, 'write');
@@ -1029,8 +1040,7 @@ function newAgent() {
   document.getElementById('agentMemory').value = '';
   document.getElementById('agentCpu').value = '';
   document.getElementById('agentSystemPrompt').value = '';
-  document.querySelectorAll('.agent-tool-cb').forEach(cb => { cb.checked = false; });
-  document.getElementById('agentToolsExtra').value = '';
+  document.getElementById('agentToolsList').value = '';
   document.getElementById('agentPermsRead').value = '';
   document.getElementById('agentPermsWrite').value = '';
   document.getElementById('agentTestStatus').style.display = 'none';
@@ -1055,11 +1065,11 @@ async function saveAgent() {
   const cpu = document.getElementById('agentCpu').value.trim();
   if (memory || cpu) manifest = _setResources(manifest, memory, cpu);
 
-  const groupTools = [...document.querySelectorAll('.agent-tool-cb')]
-    .filter(cb => cb.checked).map(cb => cb.value);
-  const extraTools = document.getElementById('agentToolsExtra').value
-    .split('\n').map(s => s.trim()).filter(Boolean);
-  manifest = _setTools(manifest, [...groupTools, ...extraTools]);
+  const toolEntries = document.getElementById('agentToolsList').value
+    .split('\n').map(s => s.trim()).filter(Boolean)
+    // Normalize: @web stays as @web; old bare "web" style preserved if user types it
+    .map(t => t);
+  manifest = _setTools(manifest, toolEntries);
 
   const sysPrompt = document.getElementById('agentSystemPrompt').value.trim();
   const prompts = sysPrompt
@@ -1526,6 +1536,14 @@ async function deleteWorkflow() {
 
 let _currentSchema = null;
 
+function _schemaListItem(s) {
+  return `<div class="editor-list-item${_currentSchema === s.name ? ' active' : ''}"
+       onclick="selectSchema('${s.name}')">
+    <span>${esc(s.name)}</span>
+    <span style="font-size:0.7em;color:#484f58">v${s.version}</span>
+  </div>`;
+}
+
 async function loadSchemas() {
   try {
     const schemas = await api('/api/tools/schemas');
@@ -1534,12 +1552,23 @@ async function loadSchemas() {
       el.innerHTML = '<p class="empty" style="padding:12px">No schemas yet</p>';
       return;
     }
-    el.innerHTML = schemas.map(s => `
-      <div class="editor-list-item${_currentSchema === s.name ? ' active' : ''}"
-           onclick="selectSchema('${s.name}')">
-        <span>${s.name}</span>
-        <span style="font-size:0.7em;color:#484f58">v${s.version}</span>
-      </div>`).join('');
+    // Group schemas by their tool_group, ungrouped last
+    const grouped = {};
+    const ungrouped = [];
+    for (const s of schemas) {
+      if (s.group) { (grouped[s.group] = grouped[s.group] || []).push(s); }
+      else { ungrouped.push(s); }
+    }
+    const sections = [];
+    for (const [grp, items] of Object.entries(grouped).sort()) {
+      sections.push(`<div class="schema-group-header">@${esc(grp)}</div>`);
+      sections.push(...items.map(s => _schemaListItem(s)));
+    }
+    if (ungrouped.length) {
+      if (sections.length) sections.push(`<div class="schema-group-header">ungrouped</div>`);
+      sections.push(...ungrouped.map(s => _schemaListItem(s)));
+    }
+    el.innerHTML = sections.join('');
   } catch (e) {
     document.getElementById('schemaList').innerHTML =
       '<p class="empty" style="padding:12px">Error loading schemas</p>';
@@ -1569,6 +1598,7 @@ function newSchema() {
   document.getElementById('schemaVersion').value = '1.0.0';
   document.getElementById('schemaDbVersion').value = '—';
   document.getElementById('schemaChangelog').value = '';
+  document.getElementById('schemaGroup').value = '';
   document.getElementById('schemaContent').value = JSON.stringify(SCHEMA_TEMPLATE, null, 2);
   document.getElementById('schemaHistory').innerHTML = '';
   document.getElementById('schemaEditor').style.display = '';
@@ -1587,6 +1617,7 @@ async function selectSchema(name) {
     document.getElementById('schemaVersion').value = s.schema_version || '1.0.0';
     document.getElementById('schemaDbVersion').value = 'v' + s.version;
     document.getElementById('schemaChangelog').value = '';
+    document.getElementById('schemaGroup').value = s.group || '';
     document.getElementById('schemaContent').value = JSON.stringify(s.schema, null, 2);
     document.getElementById('schemaEditor').style.display = '';
     document.getElementById('schemaEmpty').style.display = 'none';
@@ -1632,7 +1663,7 @@ async function saveSchema() {
     const r = await api('/api/tools/schemas/' + name, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ schema, schema_version, changelog, updated_by: 'ui' }),
+      body: JSON.stringify({ schema, schema_version, changelog, updated_by: 'ui', group: document.getElementById('schemaGroup').value.trim() }),
     });
     _currentSchema = name;
     document.getElementById('schemaEditorName').readOnly = true;
@@ -2373,6 +2404,7 @@ document.querySelectorAll('.tab').forEach(btn => {
 
 _loadConfig();
 loadModels();
+loadToolGroups();
 loadRightTasks();
 loadReports();
 loadAgents();

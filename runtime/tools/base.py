@@ -68,32 +68,41 @@ class ToolRegistry:
             return f"Error executing {name}: {e}"
 
 
+_BUILTIN_GROUPS = {
+    "files": ["read_file", "write_file", "patch_file", "search_files", "list_files"],
+    "web": ["web_read", "web_search", "wiki_read"],
+    "git": ["git_clone", "git_checkout_branch", "git_add", "git_commit", "git_push", "git_diff"],
+    "github": ["gh_create_pr", "gh_comment"],
+    "shell": ["run_command"],
+    "todo": ["todo_list_projects", "todo_get_tasks", "todo_create_task", "todo_update_task"],
+}
+
+
 def load_tools(
     tool_names: list[str],
     workspace: str = "/workspace",
     kb_dsn: str | None = None,
     scratch_scope: str | None = None,
+    extra_groups: dict[str, list[str]] | None = None,
 ) -> ToolRegistry:
     """Load tools by name and return a registry.
+
+    tool_names may include bare group names ("web"), @-prefixed group names ("@web"),
+    or individual tool names ("web_search"). extra_groups overrides/extends the
+    built-in group map with DB-defined groups.
 
     kb_dsn + scratch_scope: when both are provided, scratch_read and scratch_write
     are automatically injected for all agents in a pipeline run.
     """
-    tool_groups = {
-        "files": ["read_file", "write_file", "patch_file", "search_files", "list_files"],
-        "web": ["web_read", "web_search", "wiki_read"],
-        "git": ["git_clone", "git_checkout_branch", "git_add", "git_commit", "git_push", "git_diff"],
-        "github": ["gh_create_pr", "gh_comment"],
-        "shell": ["run_command"],
-        "todo": ["todo_list_projects", "todo_get_tasks", "todo_create_task", "todo_update_task"],
-    }
+    groups = {**_BUILTIN_GROUPS, **(extra_groups or {})}
 
     selected: set[str] = set()
     for name in tool_names:
-        if name in tool_groups:
-            selected.update(tool_groups[name])
+        key = name.lstrip("@")   # strip @ prefix for group lookup
+        if key in groups:
+            selected.update(groups[key])
         else:
-            selected.add(name)
+            selected.add(name)   # individual tool name, use as-is
 
     all_tools: dict[str, Tool] = {}
 

@@ -149,6 +149,27 @@ def _dry_run(manifest: AgentManifest, task: TaskConfig, platform: PlatformConfig
     print("=" * 60)
 
 
+async def _fetch_tool_groups(kb_dsn: str) -> dict:
+    """Fetch DB-defined tool groups. Returns {} on failure (built-in groups still apply)."""
+    try:
+        import asyncpg
+        conn = await asyncpg.connect(kb_dsn)
+        try:
+            rows = await conn.fetch(
+                "SELECT DISTINCT ON (name) name, tool_group FROM tool_schemas "
+                "WHERE tool_group != '' ORDER BY name, version DESC"
+            )
+            groups: dict = {}
+            for r in rows:
+                groups.setdefault(r["tool_group"], []).append(r["name"])
+            return groups
+        finally:
+            await conn.close()
+    except Exception as e:
+        log.warning("Could not fetch tool groups from DB: %s", e)
+        return {}
+
+
 async def _discover_llm_key(manifest: AgentManifest, platform: PlatformConfig):
     """Auto-discover LLM API key from llm-manager."""
     if platform.llm_registration_secret and not platform.llm_manager_api_key:
@@ -181,6 +202,9 @@ async def _run_cli(manifest: AgentManifest, task: TaskConfig, platform: Platform
         os.environ["LLM_MANAGER_API_KEY"] = platform.llm_manager_api_key
     if platform.llm_manager_url:
         os.environ["LLM_MANAGER_URL"] = platform.llm_manager_url
+
+    # Inject DB tool groups so @group refs in manifest.tools resolve correctly
+    task.config["_tool_groups"] = await _fetch_tool_groups(platform.kb_dsn)
 
     log.info("CLI mode: type=%s model=%s instruction='%s'",
              manifest.name, manifest.model, task.instruction[:100])
@@ -247,6 +271,9 @@ async def _run_argo(manifest: AgentManifest, task: TaskConfig, platform: Platfor
         os.environ["LLM_MANAGER_API_KEY"] = platform.llm_manager_api_key
     if platform.llm_manager_url:
         os.environ["LLM_MANAGER_URL"] = platform.llm_manager_url
+
+    # Inject DB tool groups so @group refs resolve correctly
+    task.config["_tool_groups"] = await _fetch_tool_groups(platform.kb_dsn)
 
     runner = AgentRunner(manifest, task, platform)
     result = await runner.run()
