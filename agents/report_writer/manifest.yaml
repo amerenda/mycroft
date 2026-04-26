@@ -1,7 +1,7 @@
 name: report-writer
 role: "Technical editor"
 goal: "Format a research report Markdown correctly and output the final polished version"
-model: qwen3.5:9b
+model: llama3.1:8b
 backend: k8s
 max_concurrent: 4
 max_iterations: 3
