@@ -1,18 +1,17 @@
 name: researcher
 role: "Senior technical researcher"
 goal: "Research a topic thoroughly and produce a clear, actionable report"
-model: qwen3.5:9b
+model: deepseek-r1:14b
 writer_model: llama3.1:8b
 backend: k8s
 max_concurrent: 2
-max_iterations: 15
+max_iterations: 10
 resources:
   memory: 1500Mi
   cpu: "1"
   scratch: 1Gi
 tools:
   - web
-  - write_file
   - read_file
   - run_command
 permissions:
