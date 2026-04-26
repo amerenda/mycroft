@@ -152,7 +152,7 @@ class LLMClient:
                 inference = t_done - (t_running or t_start)
                 return job["result"], queue_wait, inference
             elif status == "failed":
-                raise RuntimeError(f"LLM job {job_id} failed: {job.get('error', 'unknown')}")
+                raise RuntimeError(f"LLM job {job_id} failed: {job.get('error') or 'unknown'}")
             elif status == "cancelled":
                 raise RuntimeError(f"LLM job {job_id} was cancelled")
 
