@@ -723,8 +723,11 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="failed").inc()
         log.warning("Task %s failed (Argo): %s", task_id[:8], message)
-        await _broadcast_sse("task_update", {"task_id": task_id, "status": "failed",
-                                             "agent_type": task.agent_type if task else ""})
+        await _broadcast_sse("task_update", {
+            "task_id": task_id, "status": "failed",
+            "agent_type": task.agent_type if task else "",
+            "error": message[:200] if message else "",
+        })
 
     elif status == "succeeded":
         if current and current.status in (TaskStatus.completed, TaskStatus.failed):
@@ -1759,6 +1762,15 @@ from fastapi.responses import HTMLResponse
 async def debug_page():
     """Simple debug UI for testing agents."""
     return DEBUG_HTML
+
+
+@app.get("/api/config")
+async def get_config():
+    """Public runtime config for the frontend."""
+    return {
+        "argo_ui_url": config.argo_ui_url,
+        "argo_namespace": config.argo_namespace,
+    }
 
 
 @app.get("/health")

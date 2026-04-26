@@ -311,6 +311,15 @@ button {
   white-space: nowrap;
 }
 
+.task-card-error {
+  padding: 2px 4px 6px;
+  color: #f85149;
+  font-size: 0.82em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .task-card-actions {
   display: flex;
   align-items: center;
@@ -669,6 +678,7 @@ code { font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.9em; }
   font-weight: 500;
 }
 .btn-tool-ctrl:hover { color: #c9d1d9; background: #30363d; }
+a.btn-tool-ctrl { text-decoration: none; display: inline-block; }
 
 /* Inline conversation/report panels */
 .conv-panel {

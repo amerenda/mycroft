@@ -2,6 +2,16 @@ const API = '';
 
 let activeRunner = 'mycroft';
 
+// Runtime config fetched from /api/config at startup
+let _cfg = { argo_ui_url: '', argo_namespace: 'mycroft' };
+async function _loadConfig() {
+  try { _cfg = await api('/api/config'); } catch (_) {}
+}
+function _argoLink(wfName) {
+  if (!_cfg.argo_ui_url || !wfName) return '';
+  return `${_cfg.argo_ui_url}/workflows/${_cfg.argo_namespace}/${wfName}`;
+}
+
 // ── Top-level tab navigation ─────────────────────────────────────────────────
 
 document.querySelectorAll('.tab').forEach(btn => {
@@ -541,9 +551,12 @@ function _renderTaskList(tasks) {
   el.innerHTML = tasks.map(t => {
     const hasChain = t.config?.phase || t.config?.parent_task_id;
     const isActive = t.status === 'running' || t.status === 'pending';
+    const isFailed = t.status === 'failed';
     const age = t.created_at ? _relativeTime(new Date(t.created_at)) : '';
     const preview = esc((t.config?.instruction || '').slice(0, 100));
     const workflow = esc(t.config?.workflow || '');
+    const errMsg = isFailed ? esc((t.result?.error || '').slice(0, 120)) : '';
+    const argoUrl = _argoLink(t.argo_workflow_name);
     return `
     <div class="task-card" id="tc-${t.id}">
       <div class="task-card-header" onclick="toggleTaskCard('${t.id}')">
@@ -554,10 +567,12 @@ function _renderTaskList(tasks) {
         <span class="task-card-age">${age}</span>
       </div>
       ${preview ? `<div class="task-card-preview">${preview}</div>` : ''}
+      ${errMsg ? `<div class="task-card-error">${errMsg}</div>` : ''}
       <div class="task-card-actions" id="tca-${t.id}" style="display:none">
         <button class="btn-tool-ctrl" onclick="viewReportTaskTrace('${t.id}')">Trace</button>
         <button class="btn-tool-ctrl" onclick="viewKBForTask('${t.id}')">KB</button>
         ${hasChain ? `<button class="btn-tool-ctrl" onclick="viewPipelineChain('${t.id}')">Pipeline</button>` : ''}
+        ${argoUrl ? `<a class="btn-tool-ctrl" href="${argoUrl}" target="_blank" rel="noopener">Argo ↗</a>` : ''}
         ${isActive ? `<button class="btn-cancel" onclick="cancelTask('${t.id}')">Cancel</button>` : ''}
         <button class="btn-delete" onclick="deleteTask('${t.id}')">Delete</button>
       </div>
@@ -1657,7 +1672,8 @@ function connectSSE() {
     if (d.status === 'completed') {
       showToast(`Task ${id8} completed`, 'success');
     } else if (d.status === 'failed') {
-      showToast(`Task ${id8} failed`, 'error');
+      const hint = d.error ? `: ${d.error.slice(0, 80)}` : '';
+      showToast(`Task ${id8} failed${hint}`, 'error', 8000);
     }
     loadRightTasks();
   });
@@ -2346,6 +2362,7 @@ document.querySelectorAll('.tab').forEach(btn => {
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 
+_loadConfig();
 loadModels();
 loadRightTasks();
 loadReports();

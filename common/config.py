@@ -17,6 +17,7 @@ class PlatformConfig(BaseSettings):
     agent_image_tag: str = "latest"
     agent_image_repo: str = "amerenda/mycroft"
     argo_namespace: str = "mycroft"
+    argo_ui_url: str = "https://argo.amer.dev"
     github_token: str = ""
     sazed_url: str = ""  # e.g. http://sazed.sazed.svc:8000 — empty = reports disabled
 
