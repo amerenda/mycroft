@@ -6,7 +6,7 @@ backend: k8s
 max_concurrent: 4
 max_iterations: 3
 resources:
-  memory: 256Mi
+  memory: 512Mi
   cpu: "500m"
   scratch: 256Mi
 tools: []
