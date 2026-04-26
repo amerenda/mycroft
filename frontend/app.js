@@ -841,7 +841,7 @@ async function loadModels() {
       .filter(m => m.downloaded !== false)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
 
-    ['gatherModel', 'writeModel', 'agentModel'].forEach(selId => {
+    ['gatherModel', 'writeModel', 'agentModel', 'agentWriterModel'].forEach(selId => {
       const el = document.getElementById(selId);
       _modelList.forEach(m => {
         const opt = document.createElement('option');
@@ -893,10 +893,11 @@ function _extractResourceField(yaml, field) {
   return m ? m[1].trim() : '';
 }
 
-function _setResources(yaml, memory, cpu) {
+function _setResources(yaml, memory, cpu, scratch) {
   const parts = [];
   if (memory) parts.push(`  memory: ${memory}`);
   if (cpu) parts.push(`  cpu: "${cpu}"`);
+  if (scratch) parts.push(`  scratch: ${scratch}`);
   const block = parts.length ? `resources:\n${parts.join('\n')}` : '';
   const stripped = yaml.replace(/^resources:(?:\n(?:[ \t].*))*\n?/m, '').trimEnd();
   return block ? stripped + '\n' + block + '\n' : stripped + '\n';
@@ -1012,8 +1013,18 @@ async function selectAgent(name) {
     }
     agentModelEl.value = model;
     document.getElementById('agentMaxIterations').value = _extractYamlField(a.manifest, 'max_iterations');
+    document.getElementById('agentMaxConcurrent').value = _extractYamlField(a.manifest, 'max_concurrent');
     document.getElementById('agentMemory').value = _extractResourceField(a.manifest, 'memory');
     document.getElementById('agentCpu').value = _extractResourceField(a.manifest, 'cpu');
+    document.getElementById('agentScratch').value = _extractResourceField(a.manifest, 'scratch');
+    const writerModel = _extractYamlField(a.manifest, 'writer_model');
+    const agentWriterEl = document.getElementById('agentWriterModel');
+    if (writerModel && !agentWriterEl.querySelector(`option[value="${CSS.escape(writerModel)}"]`)) {
+      const opt = document.createElement('option');
+      opt.value = writerModel; opt.textContent = writerModel;
+      agentWriterEl.insertBefore(opt, agentWriterEl.options[1] || null);
+    }
+    agentWriterEl.value = writerModel || '';
     document.getElementById('agentSystemPrompt').value = _extractSystemPrompt(a.prompts || '');
 
     const tools = _extractTools(a.manifest);
@@ -1044,8 +1055,11 @@ function newAgent() {
   document.getElementById('agentPrompts').value = '';
   document.getElementById('agentModel').value = 'qwen3:14b';
   document.getElementById('agentMaxIterations').value = '10';
+  document.getElementById('agentMaxConcurrent').value = '';
   document.getElementById('agentMemory').value = '';
   document.getElementById('agentCpu').value = '';
+  document.getElementById('agentScratch').value = '';
+  document.getElementById('agentWriterModel').value = '';
   document.getElementById('agentSystemPrompt').value = '';
   document.getElementById('agentToolsList').value = '';
   document.getElementById('agentPermsRead').value = '';
@@ -1068,9 +1082,14 @@ async function saveAgent() {
   const maxIter = document.getElementById('agentMaxIterations').value;
   if (model) manifest = _updateYamlField(manifest, 'model', model);
   if (maxIter) manifest = _updateYamlField(manifest, 'max_iterations', maxIter);
+  const maxConcurrent = document.getElementById('agentMaxConcurrent').value;
+  if (maxConcurrent) manifest = _updateYamlField(manifest, 'max_concurrent', maxConcurrent);
+  const writerModel = document.getElementById('agentWriterModel').value;
+  manifest = _updateYamlField(manifest, 'writer_model', writerModel || '');
   const memory = document.getElementById('agentMemory').value.trim();
   const cpu = document.getElementById('agentCpu').value.trim();
-  if (memory || cpu) manifest = _setResources(manifest, memory, cpu);
+  const scratch = document.getElementById('agentScratch').value.trim();
+  if (memory || cpu || scratch) manifest = _setResources(manifest, memory, cpu, scratch);
 
   const toolEntries = document.getElementById('agentToolsList').value
     .split('\n').map(s => s.trim()).filter(Boolean)
