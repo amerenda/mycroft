@@ -38,10 +38,6 @@
               <option value="forge">Forge</option>
             </select>
           </div>
-          <div class="form-group">
-            <label>Model <span class="tip" data-tip="Primary LLM for this task. 'loaded' = warm in VRAM, faster first call. For the research pipeline, sets the Gather model unless overridden in Advanced Options.">ⓘ</span></label>
-            <select id="model"><option value="">Default</option></select>
-          </div>
         </div>
 
         <div class="form-row">
@@ -88,12 +84,12 @@
             <div class="adv-section-label">Pipeline Models <span class="tip" data-tip="regular/deep runs two agents: Gather searches + reads; Write turns findings into a report. Assign different models to each phase for best results.">ⓘ</span></div>
             <div class="form-row">
               <div class="form-group">
-                <label>Gather model <span class="tip" data-tip="Model for Phase 1 (search + read). Default: qwen3.5:9b. The top-level Model dropdown also sets this if left blank. Try qwen3.6:27b for larger context window.">ⓘ</span></label>
-                <select id="gatherModel"><option value="">Default (qwen3.5:9b)</option></select>
+                <label>Gather model override <span class="tip" data-tip="Override the gather agent's model for this run. Leave blank to use the model set in the agent's config.">ⓘ</span></label>
+                <select id="gatherModel"><option value="">Agent config (default)</option></select>
               </div>
               <div class="form-group">
-                <label>Write model <span class="tip" data-tip="Model for Phase 2 (write report from findings). Default: llama3.1:8b — follows format instructions well. Try qwen3:14b for better prose quality.">ⓘ</span></label>
-                <select id="writeModel"><option value="">Default (llama3.1:8b)</option></select>
+                <label>Write model override <span class="tip" data-tip="Override the write agent's model for this run. Leave blank to use the model set in the agent's config.">ⓘ</span></label>
+                <select id="writeModel"><option value="">Agent config (default)</option></select>
               </div>
             </div>
           </div>

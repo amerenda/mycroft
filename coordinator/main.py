@@ -255,7 +255,7 @@ async def _start_research_pipeline(
     wf_config = WORKFLOW_CONFIG.get(workflow, WORKFLOW_CONFIG["research-regular"])
     gather_cfg = wf_config["gather"]
 
-    resolved_gather_model = gather_model or gather_cfg["model"]
+    resolved_gather_model = gather_model  # None = use agent manifest model
     resolved_gather_tools = gather_tools or gather_cfg["tools"]
 
     # Write the original brief for the writer phase to reference directly.
@@ -284,7 +284,7 @@ async def _start_research_pipeline(
 
     gather_config = {
         "instruction": instruction,
-        "model_override": resolved_gather_model,
+        **({"model_override": resolved_gather_model} if resolved_gather_model else {}),
         "max_iterations_override": gather_cfg["max_iterations"],
         "tools_override": resolved_gather_tools,
         "system_prompt_override": GATHERER_PROMPT,
@@ -383,11 +383,11 @@ async def _pipeline_writer_phase(
         wf_config = WORKFLOW_CONFIG.get(workflow, WORKFLOW_CONFIG["research-regular"])
         write_cfg = wf_config["write"]
 
-        resolved_write_model = write_model or write_cfg["model"]
+        resolved_write_model = write_model  # None = use agent manifest model
 
         write_config = {
             "instruction": "Write a research report based on the gathered findings.",
-            "model_override": resolved_write_model,
+            **({"model_override": resolved_write_model} if resolved_write_model else {}),
             "max_iterations_override": write_cfg["max_iterations"],
             "tools_override": write_cfg["tools"],
             "system_prompt_override": WRITER_PROMPT,
@@ -412,7 +412,8 @@ async def _pipeline_writer_phase(
         write_wf_name = await argo.submit(
             agent_type="researcher",
             task_id=write_task_id,
-            params={"instruction": "Write a research report based on the gathered findings.", "model_override": resolved_write_model},
+            params={"instruction": "Write a research report based on the gathered findings.",
+                    **({"model_override": resolved_write_model} if resolved_write_model else {})},
             manifest=trigger_router.get_manifest("researcher"),
             on_update=_on_workflow_update,
         )
@@ -1023,8 +1024,8 @@ async def create_task(req: CreateTaskRequest):
             gather_task_id = await _start_research_pipeline(
                 req.instruction,
                 workflow,
-                gather_model=req.gather_model or req.model,
-                write_model=req.write_model,
+                gather_model=req.gather_model or None,
+                write_model=req.write_model or None,
                 gather_tools=req.tools_override or None,
                 notify=req.notify,
             )
@@ -1035,7 +1036,7 @@ async def create_task(req: CreateTaskRequest):
                 instruction=req.instruction,
                 agent_type="researcher",
                 repo=req.repo,
-                model_override=req.model or "qwen3.5:9b",
+                model_override=req.model or None,
                 system_prompt_override=req.system_prompt,
                 max_tokens=req.max_tokens,
                 temperature=req.temperature,

@@ -218,7 +218,6 @@ function renderForgeResult(r) {
 
 async function runMycroft(instruction) {
   const workflow = document.getElementById('workflow').value;
-  const model = document.getElementById('model').value;
   const systemPrompt = document.getElementById('systemPrompt').value.trim();
   const maxTokens = document.getElementById('maxTokens').value;
   const temperature = document.getElementById('temperature').value;
@@ -235,7 +234,6 @@ async function runMycroft(instruction) {
     workflow,
     instruction,
     repo: document.getElementById('repo').value.trim(),
-    model: model || null,
     system_prompt: systemPrompt || null,
     notify: document.getElementById('notifyRun').checked,
   };
@@ -843,7 +841,7 @@ async function loadModels() {
       .filter(m => m.downloaded !== false)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
 
-    ['model', 'gatherModel', 'writeModel', 'agentModel'].forEach(selId => {
+    ['gatherModel', 'writeModel', 'agentModel'].forEach(selId => {
       const el = document.getElementById(selId);
       _modelList.forEach(m => {
         const opt = document.createElement('option');
@@ -878,6 +876,7 @@ tools:
 let _currentAgent = null;
 let _agentTestTimer = null;
 let _agentNames = [];
+let _agentModels = {}; // name → default model from manifest
 
 function _extractYamlField(yaml, field) {
   const m = yaml.match(new RegExp(`^${field}:\\s*(.+)`, 'm'));
@@ -957,6 +956,11 @@ async function loadAgents() {
   try {
     const agents = await api('/api/agents');
     _agentNames = agents.map(a => a.name);
+    _agentModels = {};
+    for (const a of agents) {
+      const m = _extractYamlField(a.manifest || '', 'model');
+      if (m) _agentModels[a.name] = m;
+    }
     const el = document.getElementById('agentList');
     if (!agents.length) {
       el.innerHTML = '<p class="empty" style="padding:12px">No agents yet</p>';
@@ -1202,8 +1206,9 @@ function _agentOpts(selected) {
     ).join('');
 }
 
-function _modelOpts(selected) {
-  return '<option value="">Default</option>' +
+function _modelOpts(selected, agentDefault) {
+  const label = agentDefault ? `Default (${agentDefault})` : 'Default (agent config)';
+  return `<option value="">${label}</option>` +
     _modelList.map(m => {
       const name = m.name || m.id || '';
       return `<option value="${name}"${name === selected ? ' selected' : ''}>${name}</option>`;
@@ -1216,7 +1221,9 @@ function _renderPipelineSteps() {
     el.innerHTML = '<p class="empty">No steps yet — add a step to build the pipeline.</p>';
     return;
   }
-  el.innerHTML = _pipelineSteps.map((step, i) => `
+  el.innerHTML = _pipelineSteps.map((step, i) => {
+    const agentDefault = _agentModels[step.agent] || '';
+    return `
     <div class="pipeline-step">
       <div class="pipeline-step-header">
         <span class="pipeline-step-num">Step ${i + 1}</span>
@@ -1239,8 +1246,8 @@ function _renderPipelineSteps() {
             <select onchange="updatePipelineStep(${i},'agent',this.value)">${_agentOpts(step.agent)}</select>
           </div>
           <div class="form-group" style="margin-bottom:0">
-            <label>Model Override</label>
-            <select onchange="updatePipelineStep(${i},'model',this.value)">${_modelOpts(step.model)}</select>
+            <label>Model override (optional) <span class="tip" data-tip="Leave blank to use the model defined in the agent's config. Set only when you want this step to use a non-standard model.">ⓘ</span></label>
+            <select onchange="updatePipelineStep(${i},'model',this.value)">${_modelOpts(step.model, agentDefault)}</select>
           </div>
           <div class="form-group" style="margin-bottom:0;max-width:100px">
             <label>Max Iter <span class="tip" data-tip="Max tool-call iterations for this step. Overrides agent default.">ⓘ</span></label>
@@ -1269,7 +1276,8 @@ function _renderPipelineSteps() {
             placeholder="Leave empty to use agent default">${esc(step.prompt_override || '')}</textarea>
         </details>
       </div>
-    </div>`).join('');
+    </div>`;
+  }).join('');
 }
 
 function addPipelineStep() {
@@ -1291,6 +1299,7 @@ function movePipelineStep(i, dir) {
 
 function updatePipelineStep(i, field, value) {
   _pipelineSteps[i][field] = value;
+  if (field === 'agent') _renderPipelineSteps(); // refresh model placeholder
 }
 
 let _customWorkflowNames = [];
