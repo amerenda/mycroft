@@ -95,12 +95,14 @@ def main():
     agent_dir = agent_type.replace("-", "_")
     manifest_path = repo_root / "agents" / agent_dir / "manifest.yaml"
 
-    if manifest_path.exists():
-        manifest = AgentManifest.from_yaml(manifest_path)
-    else:
-        manifest = _load_manifest_from_db(agent_type)
-        if manifest is None:
-            log.error("Manifest not found on disk (%s) and not in DB", manifest_path)
+    # DB is the source of truth (what the UI edits). Filesystem is fallback only.
+    manifest = _load_manifest_from_db(agent_type)
+    if manifest is None:
+        if manifest_path.exists():
+            manifest = AgentManifest.from_yaml(manifest_path)
+            log.info("Loaded manifest for '%s' from filesystem (not in DB)", agent_type)
+        else:
+            log.error("Manifest not found in DB or on disk (%s)", manifest_path)
             sys.exit(1)
     # Model override: CLI flag > env var > manifest default
     model_override = args.model or os.environ.get("MODEL_OVERRIDE")
