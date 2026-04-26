@@ -112,12 +112,22 @@ Output the FULL report as your response now. Do not use any tools. Do not search
 
 
 
+class _TaskFailed(Exception):
+    pass
+
+
 async def _wait_for_task(task_id: str, db, timeout: int = 600) -> str:
-    """Poll task status until completion. Returns the result summary."""
+    """Poll task status until completion. Returns the result summary.
+
+    Raises _TaskFailed if the task permanently fails (stayed failed >3 min,
+    meaning Argo retries are exhausted). Transient failures (pod crash + Argo
+    retry) reset the failed timer when the status goes back to running.
+    """
     from common.models import TaskStatus
 
     elapsed = 0
     poll_interval = 3
+    failed_since: float | None = None
 
     while elapsed < timeout:
         task = await db.kb.get_task(task_id)
@@ -131,12 +141,18 @@ async def _wait_for_task(task_id: str, db, timeout: int = 600) -> str:
             return result.get("summary", "")
 
         if task.status == TaskStatus.failed:
-            error = (task.result or {}).get("error", "unknown")
-            log.warning("Task %s failed: %s", task_id[:8], error)
-            return f"(Research failed: {error})"
+            if failed_since is None:
+                failed_since = elapsed
+                log.warning("Task %s failed (waiting to see if Argo retries)...", task_id[:8])
+            elif elapsed - failed_since > 180:
+                error = (task.result or {}).get("error", "unknown")
+                raise _TaskFailed(f"Task {task_id[:8]} permanently failed: {error}")
+        else:
+            if failed_since is not None:
+                log.info("Task %s recovered from failure (Argo retry), resuming wait", task_id[:8])
+            failed_since = None
 
         await asyncio.sleep(poll_interval)
         elapsed += poll_interval
 
-    log.warning("Task %s timed out after %ds", task_id[:8], timeout)
-    return "(Research timed out)"
+    raise _TaskFailed(f"Task {task_id[:8]} timed out after {timeout}s")

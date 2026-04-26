@@ -528,11 +528,16 @@ async def _run_dynamic_pipeline_steps(
     scratch_scope: str,
 ) -> None:
     """Background: wait for previous step to finish, then launch the next step."""
-    from coordinator.research_pipeline import _wait_for_task
+    from coordinator.research_pipeline import _wait_for_task, _TaskFailed
     import uuid as _uuid
 
     try:
         await _wait_for_task(prev_task_id, db, timeout=3600)
+    except _TaskFailed as e:
+        log.warning("Pipeline aborted at step %d: %s", step_index, e)
+        return
+
+    try:
 
         # Mirror the previous step's full output into /runs/ (short-term, 7d TTL) so the
         # next agent reads it directly from KB — no coordinator truncation.
