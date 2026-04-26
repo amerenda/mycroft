@@ -12,7 +12,7 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-JOB_TIMEOUT = 600  # 10 minutes
+JOB_TIMEOUT = 3600  # 1 hour — queue can be long under GPU contention
 JOB_POLL_INTERVAL = 2  # seconds between status polls
 
 

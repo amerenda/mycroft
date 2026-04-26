@@ -175,6 +175,12 @@ Images:
 
 ---
 
+## TODO
+
+- **Separate queue-wait timeout from inference timeout** (`common/llm.py` `_wait_for_job`): The current `JOB_TIMEOUT` is a single wall-clock limit covering both time spent in queue and time spent doing inference. A better model: fail fast if the job hasn't entered `running` state within N minutes (queue is broken or model won't load), but give inference itself a much longer or separate budget. `_wait_for_job` already tracks `t_running` — split on that to apply different limits to each phase.
+
+---
+
 ## Key Conventions
 
 - All LLM calls route through `llm-manager` (never call Ollama/Anthropic directly)
