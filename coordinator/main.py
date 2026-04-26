@@ -708,23 +708,28 @@ async def _handle_engineering_task(
 async def _on_workflow_update(task_id: str, status: str, message: str):
     """Called by Argo watcher on workflow state changes."""
 
-    # Don't overwrite a task the user already cancelled
     current = await task_manager.get_task(task_id)
-    if current and current.status in (TaskStatus.failed, TaskStatus.completed):
-        log.debug("Ignoring workflow update for already-terminal task %s (%s)", task_id[:8], current.status)
-        return
 
     if status in ("failed", "error"):
+        # Argo is the source of truth for failure — override even a runtime-reported
+        # completed status (pod can crash after the agent writes its result)
+        if current and current.status == TaskStatus.failed:
+            log.debug("Ignoring duplicate failure for task %s", task_id[:8])
+            return
+        was_already_terminal = current and current.status in (TaskStatus.completed, TaskStatus.failed)
         await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": message})
         task = await task_manager.get_task(task_id)
-        if task:
+        if task and not was_already_terminal:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="failed").inc()
-        log.warning("Task %s failed: %s", task_id[:8], message)
+        log.warning("Task %s failed (Argo): %s", task_id[:8], message)
         await _broadcast_sse("task_update", {"task_id": task_id, "status": "failed",
                                              "agent_type": task.agent_type if task else ""})
 
     elif status == "succeeded":
+        if current and current.status in (TaskStatus.completed, TaskStatus.failed):
+            log.debug("Ignoring Argo succeeded for already-terminal task %s (%s)", task_id[:8], current.status)
+            return
         await db.kb.update_task(task_id, status=TaskStatus.completed)
         task = await task_manager.get_task(task_id)
         if task:
