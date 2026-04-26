@@ -56,7 +56,8 @@ class AgentRunner:
 
         # Report enforcement: researcher at regular/deep MUST write report.md
         # BUT: pipeline phases handle their own enforcement (gather has no write_file)
-        is_pipeline_phase = task.config.get("phase") in ("gather", "write")
+        phase = task.config.get("phase", "")
+        is_pipeline_phase = phase in ("gather", "write") or phase.startswith("pipeline-")
         self._requires_report = (
             manifest.name == "researcher"
             and self._effort in ("regular", "deep", None)
