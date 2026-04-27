@@ -28,30 +28,32 @@ Coordinator (FastAPI)
 
 | Directory | Purpose |
 |-----------|---------|
-| `coordinator/` | FastAPI service: task API, Telegram notifications, Argo submission, report storage |
+| `coordinator/` | FastAPI service: task API, Telegram notifications, Argo submission, Forge runner, report storage |
 | `runtime/` | Thin agent loop that runs inside Argo Workflow pods |
 | `agents/` | Agent definitions: `manifest.yaml` + `prompts.py` per agent type |
 | `common/` | Shared libraries: KB client, LLM client, config, models |
 | `frontend/` | Single-page web UI |
-| `workflows/` | Argo WorkflowTemplate YAMLs (for legacy template-based agents) |
+| `workflows/` | Argo WorkflowTemplate YAMLs (legacy; dynamic workflows now live in DB) |
 
 ### Agents
 
-| Agent | Purpose | Trigger |
-|-------|---------|---------|
-| `researcher` | Web research → structured report | API, UI |
-| `coder` | Clone repo, implement changes, open PR | API, UI |
-| `writer` | Turn gathered findings into a report | Pipeline phase 2 (research-regular/deep) |
-| `extractor` | Extract structured data from text | Pipeline, API |
-| `web_search` | Lightweight web search sub-agent | Pipeline step |
+| Agent | Model | Purpose | Trigger |
+|-------|-------|---------|---------|
+| `researcher` | qwen3:14b | Web research — gathers sources | API, UI, pipeline step |
+| `web-search` | qwen3.5:9b | Lightweight web search sub-agent | Pipeline step |
+| `writer` | llama3.1:8b | Synthesizes gathered findings into a report | Pipeline write phase |
+| `report-writer` | llama3.1:8b | Formats and writes final polished report | Pipeline step, API |
+| `extractor` | qwen3:14b | Extracts structured data from text | Pipeline, API |
+| `coder` | qwen3:14b | Clone repo, implement changes, open PR | API, UI |
 
 ### Workflows (Pipelines)
 
 | Workflow | Description |
 |----------|-------------|
-| `research-quick` | Single researcher agent, ~2 min |
-| `research-regular` | Gather agent → Writer agent, ~8 min |
-| `research-deep` | Extended gather + write, ~15 min |
+| `research-quick` | Single researcher agent, no pipeline |
+| `research-regular` | researcher (gather) → writer, ~8 min |
+| `research-deep` | researcher (gather) → researcher (review) → writer |
+| `research-new` | web-search → researcher → report-writer (3-step, DB-defined) |
 | `coder` | Coder agent, opens a PR |
 | Custom | Multi-step pipelines built in the Workflows editor |
 
@@ -186,7 +188,9 @@ Images:
 ## Key Conventions
 
 - All LLM calls route through `llm-manager` (never call Ollama/Anthropic directly)
+- **DB always wins**: agent manifests are seeded from `agents/<name>/manifest.yaml` once (if not already in DB), then the DB is authoritative — edit agents via the UI, not git
+- **`@group` tool syntax**: agent tool lists support `"@web"`, `"@files"`, etc. to reference DB-defined tool groups; the `@` prefix must be YAML-quoted (`"@web"`, not `@web`)
 - Agents communicate via KB paths, never directly to each other
 - Conversation history is persisted to the KB each iteration (restart safety)
-- Agent manifests live in `agents/<name>/manifest.yaml` and are also stored in the DB for UI-created agents
 - Don't hardcode "mycroft" in business logic — use generic terms (`coordinator`, `agent`, `platform`)
+- **Forge runner** (`POST /api/forge/run`): alternative execution path for coder tasks — clones a repo, runs the Forge CLI with a custom agent prompt, returns a git diff; does not use Argo or the KB
