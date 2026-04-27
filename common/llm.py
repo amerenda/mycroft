@@ -47,6 +47,7 @@ class LLMClient:
             timeout=30.0,
         )
         self._metrics_callback: Optional[callable] = None
+        self._current_job_id: str | None = None
 
     def set_metrics_callback(self, callback: callable) -> None:
         """Set a callback for metrics: callback(event_name, labels_dict, value)."""
@@ -123,48 +124,63 @@ class LLMClient:
 
         return response
 
+    async def cancel_current_job(self) -> None:
+        """Cancel the in-flight llm-manager job, if any. Safe to call with no active job."""
+        job_id = self._current_job_id
+        if not job_id:
+            return
+        try:
+            await self._client.delete(f"/api/queue/jobs/{job_id}")
+            log.info("Cancelled pending LLM job %s on shutdown", job_id)
+        except Exception as e:
+            log.warning("Failed to cancel LLM job %s on shutdown: %s", job_id, e)
+
     async def _wait_for_job(self, job_id: str, model: str) -> tuple[dict, float, float]:
         """Poll job status until terminal state or timeout.
         Returns (result_dict, queue_wait_seconds, inference_seconds).
         """
+        self._current_job_id = job_id
         elapsed = 0
         last_status = None
         t_start = time.monotonic()
         t_running = None
 
-        while elapsed < JOB_TIMEOUT:
-            resp = await self._client.get(f"/api/queue/jobs/{job_id}")
-            resp.raise_for_status()
-            job = resp.json()
-            status = job["status"]
-
-            if status != last_status:
-                if status == "running" and t_running is None:
-                    t_running = time.monotonic()
-                log.info("Queue job %s: %s%s", job_id, status,
-                         self._status_detail(status, model))
-                self._emit("llm_job_status", {"model": model, "status": status})
-                last_status = status
-
-            if status == "completed":
-                t_done = time.monotonic()
-                queue_wait = (t_running or t_done) - t_start
-                inference = t_done - (t_running or t_start)
-                return job["result"], queue_wait, inference
-            elif status == "failed":
-                raise RuntimeError(f"LLM job {job_id} failed: {job.get('error') or 'unknown'}")
-            elif status == "cancelled":
-                raise RuntimeError(f"LLM job {job_id} was cancelled")
-
-            await asyncio.sleep(JOB_POLL_INTERVAL)
-            elapsed += JOB_POLL_INTERVAL
-
-        log.warning("Queue job %s timed out after %ds, cancelling", job_id, JOB_TIMEOUT)
         try:
-            await self._client.delete(f"/api/queue/jobs/{job_id}")
-        except Exception:
-            pass
-        raise RuntimeError(f"LLM job {job_id} timed out after {JOB_TIMEOUT}s")
+            while elapsed < JOB_TIMEOUT:
+                resp = await self._client.get(f"/api/queue/jobs/{job_id}")
+                resp.raise_for_status()
+                job = resp.json()
+                status = job["status"]
+
+                if status != last_status:
+                    if status == "running" and t_running is None:
+                        t_running = time.monotonic()
+                    log.info("Queue job %s: %s%s", job_id, status,
+                             self._status_detail(status, model))
+                    self._emit("llm_job_status", {"model": model, "status": status})
+                    last_status = status
+
+                if status == "completed":
+                    t_done = time.monotonic()
+                    queue_wait = (t_running or t_done) - t_start
+                    inference = t_done - (t_running or t_start)
+                    return job["result"], queue_wait, inference
+                elif status == "failed":
+                    raise RuntimeError(f"LLM job {job_id} failed: {job.get('error') or 'unknown'}")
+                elif status == "cancelled":
+                    raise RuntimeError(f"LLM job {job_id} was cancelled")
+
+                await asyncio.sleep(JOB_POLL_INTERVAL)
+                elapsed += JOB_POLL_INTERVAL
+
+            log.warning("Queue job %s timed out after %ds, cancelling", job_id, JOB_TIMEOUT)
+            try:
+                await self._client.delete(f"/api/queue/jobs/{job_id}")
+            except Exception:
+                pass
+            raise RuntimeError(f"LLM job {job_id} timed out after {JOB_TIMEOUT}s")
+        finally:
+            self._current_job_id = None
 
     @staticmethod
     def _status_detail(status: str, model: str) -> str:

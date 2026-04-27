@@ -18,6 +18,7 @@ import asyncio
 import json
 import logging
 import os
+import signal
 import sys
 import uuid
 from pathlib import Path
@@ -276,5 +277,21 @@ async def _run_argo(manifest: AgentManifest, task: TaskConfig, platform: Platfor
     task.config["_tool_groups"] = await _fetch_tool_groups(platform.kb_dsn)
 
     runner = AgentRunner(manifest, task, platform)
-    result = await runner.run()
-    log.info("Agent completed. Result: %s", result[:500])
+
+    loop = asyncio.get_running_loop()
+    current_task = asyncio.current_task()
+
+    def _on_sigterm():
+        log.warning("SIGTERM received — cancelling agent")
+        if current_task and not current_task.done():
+            current_task.cancel()
+
+    loop.add_signal_handler(signal.SIGTERM, _on_sigterm)
+    try:
+        result = await runner.run()
+        log.info("Agent completed. Result: %s", result[:500])
+    except asyncio.CancelledError:
+        log.warning("Agent cancelled (SIGTERM) — cancelling pending LLM job")
+        await runner.llm.cancel_current_job()
+    finally:
+        loop.remove_signal_handler(signal.SIGTERM)
