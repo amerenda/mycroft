@@ -43,12 +43,6 @@ telegram_messages_total = Counter(
     ["direction"],  # inbound, outbound
 )
 
-intent_classifications_total = Counter(
-    "mycroft_intent_classifications_total",
-    "Intent classifications",
-    ["intent_type"],
-)
-
 # ── LLM metrics (shared by coordinator + agent runtime) ─────────────────────
 
 llm_calls_total = Counter(

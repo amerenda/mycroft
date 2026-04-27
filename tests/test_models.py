@@ -9,8 +9,6 @@ import yaml
 from common.models import (
     AgentManifest,
     AgentPermissions,
-    Intent,
-    IntentType,
     MemoryRecord,
     TaskConfig,
     TaskRecord,
@@ -111,19 +109,3 @@ class TestTaskRecord:
         t = TaskRecord(id="abc", agent_type="coder", status=TaskStatus.running)
         assert t.status == TaskStatus.running
         assert t.status.value == "running"
-
-
-class TestIntent:
-    def test_engineering_intent(self):
-        i = Intent(
-            type=IntentType.engineering,
-            agent_type="coder",
-            repo="ecdysis",
-            instruction="Fix the login bug",
-        )
-        assert i.type == IntentType.engineering
-        assert i.agent_type == "coder"
-
-    def test_system_intent(self):
-        i = Intent(type=IntentType.system, instruction="What's the status?")
-        assert i.agent_type is None

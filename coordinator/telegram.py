@@ -12,12 +12,11 @@ log = logging.getLogger(__name__)
 
 
 class TelegramBot:
-    """Handles inbound Telegram messages and dispatches to agents.
+    """Handles inbound Telegram messages.
 
     Uses long polling — no public endpoint needed. The bot polls
     Telegram's servers for updates in a background task.
-
-    Intent-based routing is disabled. Submit tasks via the Agent Studio UI.
+    Inbound messages are acknowledged; submit tasks via the Agent Studio UI.
     """
 
     def __init__(

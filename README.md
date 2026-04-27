@@ -181,8 +181,6 @@ Images:
 
 - **Separate queue-wait timeout from inference timeout** (`common/llm.py` `_wait_for_job`): The current `JOB_TIMEOUT` is a single wall-clock limit covering both time spent in queue and time spent doing inference. A better model: fail fast if the job hasn't entered `running` state within N minutes (queue is broken or model won't load), but give inference itself a much longer or separate budget. `_wait_for_job` already tracks `t_running` — split on that to apply different limits to each phase.
 
-- **Intent-based routing** (`coordinator/intent.py`, `coordinator/telegram.py`): Intent classification exists and is exposed at `POST /api/intent` (returns JSON, no side effects). Telegram routing is currently disabled — the bot sends notifications only and replies to messages with the Agent Studio URL. Wire intent back in to route Telegram messages to the correct workflow automatically.
-
 ---
 
 ## Key Conventions

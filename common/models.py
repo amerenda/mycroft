@@ -24,13 +24,6 @@ class TaskStatus(str, enum.Enum):
     failed = "failed"
 
 
-class IntentType(str, enum.Enum):
-    engineering = "engineering"
-    research = "research"
-    general = "general"
-    system = "system"
-
-
 # ---------------------------------------------------------------------------
 # Agent manifest (loaded from agents/{name}/manifest.yaml)
 # ---------------------------------------------------------------------------
@@ -131,14 +124,3 @@ class TaskRecord(BaseModel):
     argo_workflow_name: str | None = None
 
 
-# ---------------------------------------------------------------------------
-# Intent classification result
-# ---------------------------------------------------------------------------
-
-
-class Intent(BaseModel):
-    type: IntentType = IntentType.engineering
-    agent_type: str | None = None
-    repo: str | None = None
-    effort: str | None = None  # light, regular, deep — for research tasks
-    instruction: str = ""

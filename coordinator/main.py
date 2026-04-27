@@ -17,14 +17,12 @@ from pydantic import BaseModel
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from common.config import PlatformConfig
-from common.llm import LLMClient
 from common.metrics import (
     coordinator_info, tasks_created_total, tasks_completed_total,
     tasks_active, task_duration_seconds, argo_submissions_total,
-    telegram_messages_total, intent_classifications_total,
-    llm_metrics_callback,
+    telegram_messages_total,
 )
-from common.models import IntentType, TaskConfig, TaskStatus
+from common.models import TaskConfig, TaskStatus
 from coordinator.argo_submitter import ArgoSubmitter
 from coordinator.db import CoordinatorDB
 from coordinator.task_manager import TaskManager
@@ -47,7 +45,6 @@ task_manager: TaskManager
 argo: ArgoSubmitter
 telegram_bot: TelegramBot
 trigger_router: TriggerRouter
-llm: LLMClient
 
 # SSE client queues — one per connected browser tab
 _sse_clients: list[asyncio.Queue] = []
@@ -115,7 +112,7 @@ async def _llm_heartbeat_loop(llm_url: str, api_key: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global config, db, task_manager, argo, telegram_bot, trigger_router, llm
+    global config, db, task_manager, argo, telegram_bot, trigger_router
 
     config = PlatformConfig()
 
@@ -126,29 +123,6 @@ async def lifespan(app: FastAPI):
     # Task manager
     task_manager = TaskManager(db.kb)
 
-    # LLM: discover API key from llm-manager (same pattern as ecdysis)
-    llm_api_key = config.llm_manager_api_key
-    if config.llm_registration_secret:
-        try:
-            import httpx
-            async with httpx.AsyncClient(timeout=10) as client:
-                resp = await client.post(
-                    f"{config.llm_manager_url}/api/apps/discover",
-                    json={
-                        "name": "mycroft-coordinator",
-                        "base_url": "",
-                        "registration_secret": config.llm_registration_secret,
-                    },
-                )
-                resp.raise_for_status()
-                data = resp.json()
-                llm_api_key = data.get("api_key", "")
-                log.info("Discovered LLM API key from llm-manager (key=%s...)", llm_api_key[:8])
-        except Exception as e:
-            log.error("Failed to discover LLM API key: %s", e)
-
-    llm = LLMClient(config.llm_manager_url, llm_api_key, config.intent_model)
-    llm.set_metrics_callback(llm_metrics_callback)
     coordinator_info.info({"version": config.agent_image_tag})
 
     # Trigger router
@@ -226,7 +200,6 @@ async def lifespan(app: FastAPI):
     if config.telegram_bot_token:
         await telegram_bot.stop_polling()
     await db.close()
-    await llm.close()
     log.info("Coordinator stopped")
 
 
@@ -1006,18 +979,6 @@ class CreateTaskRequest(BaseModel):
     gather_model: str | None = None
     write_model: str | None = None
     notify: bool = True
-
-
-@app.post("/api/intent")
-async def classify_intent(req: dict):
-    """Classify text using the intent model. Returns classification JSON; does not route or launch anything."""
-    from coordinator.intent import classify as _classify
-    text = req.get("text", "")
-    if not text:
-        from fastapi import HTTPException
-        raise HTTPException(400, "text is required")
-    result = await _classify(text, llm)
-    return result.model_dump()
 
 
 @app.post("/api/tasks")
