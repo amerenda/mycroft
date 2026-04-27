@@ -1,20 +1,20 @@
 # Mycroft
 
-AI agent platform running on k3s. Accepts tasks via Telegram or the web UI, runs agents as ephemeral Argo Workflow pods, stores knowledge in pgvector, and produces reports.
+AI agent platform running on k3s. Accepts tasks via the web UI, runs agents as ephemeral Argo Workflow pods, stores knowledge in pgvector, and produces reports.
 
 ---
 
 ## Architecture
 
 ```
-Browser / Telegram
-       │
-       ▼
-  Coordinator (FastAPI)
-  ├── Task Manager  ─────────────────► PostgreSQL (agent-kb)
-  ├── Argo Submitter ────────────────► k3s / Argo Workflows
-  ├── Telegram Bot
-  └── Report Store
+Browser
+  │
+  ▼
+Coordinator (FastAPI)
+├── Task Manager  ─────────────────► PostgreSQL (agent-kb)
+├── Argo Submitter ────────────────► k3s / Argo Workflows
+├── Telegram Bot (notify-only)
+└── Report Store
                                               │
                                              pods
                                               │
@@ -28,7 +28,7 @@ Browser / Telegram
 
 | Directory | Purpose |
 |-----------|---------|
-| `coordinator/` | FastAPI service: task API, Telegram bot, Argo submission, report storage |
+| `coordinator/` | FastAPI service: task API, Telegram notifications, Argo submission, report storage |
 | `runtime/` | Thin agent loop that runs inside Argo Workflow pods |
 | `agents/` | Agent definitions: `manifest.yaml` + `prompts.py` per agent type |
 | `common/` | Shared libraries: KB client, LLM client, config, models |
@@ -39,8 +39,8 @@ Browser / Telegram
 
 | Agent | Purpose | Trigger |
 |-------|---------|---------|
-| `researcher` | Web research → structured report | Telegram "research" intent, API, UI |
-| `coder` | Clone repo, implement changes, open PR | Telegram "engineering" intent, API, UI |
+| `researcher` | Web research → structured report | API, UI |
+| `coder` | Clone repo, implement changes, open PR | API, UI |
 | `writer` | Turn gathered findings into a report | Pipeline phase 2 (research-regular/deep) |
 | `extractor` | Extract structured data from text | Pipeline, API |
 | `web_search` | Lightweight web search sub-agent | Pipeline step |
@@ -178,6 +178,8 @@ Images:
 ## TODO
 
 - **Separate queue-wait timeout from inference timeout** (`common/llm.py` `_wait_for_job`): The current `JOB_TIMEOUT` is a single wall-clock limit covering both time spent in queue and time spent doing inference. A better model: fail fast if the job hasn't entered `running` state within N minutes (queue is broken or model won't load), but give inference itself a much longer or separate budget. `_wait_for_job` already tracks `t_running` — split on that to apply different limits to each phase.
+
+- **Intent-based routing** (`coordinator/intent.py`, `coordinator/telegram.py`): Intent classification exists and is exposed at `POST /api/intent` (returns JSON, no side effects). Telegram routing is currently disabled — the bot sends notifications only and replies to messages with the Agent Studio URL. Wire intent back in to route Telegram messages to the correct workflow automatically.
 
 ---
 
