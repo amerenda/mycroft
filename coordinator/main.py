@@ -168,9 +168,6 @@ async def lifespan(app: FastAPI):
     telegram_bot = TelegramBot(
         token=config.telegram_bot_token,
         chat_id=config.telegram_chat_id,
-        llm=llm,
-        on_engineering_task=_handle_engineering_task,
-        on_status_query=_handle_status_query,
     )
     if config.telegram_bot_token:
         await telegram_bot.setup()
@@ -1009,6 +1006,18 @@ class CreateTaskRequest(BaseModel):
     gather_model: str | None = None
     write_model: str | None = None
     notify: bool = True
+
+
+@app.post("/api/intent")
+async def classify_intent(req: dict):
+    """Classify text using the intent model. Returns classification JSON; does not route or launch anything."""
+    from coordinator.intent import classify as _classify
+    text = req.get("text", "")
+    if not text:
+        from fastapi import HTTPException
+        raise HTTPException(400, "text is required")
+    result = await _classify(text, llm)
+    return result.model_dump()
 
 
 @app.post("/api/tasks")

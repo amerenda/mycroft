@@ -4,14 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
 
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters
-
-from common.llm import LLMClient
-from common.models import IntentType
-from coordinator.intent import classify
 
 log = logging.getLogger(__name__)
 
@@ -21,21 +16,17 @@ class TelegramBot:
 
     Uses long polling — no public endpoint needed. The bot polls
     Telegram's servers for updates in a background task.
+
+    Intent-based routing is disabled. Submit tasks via the Agent Studio UI.
     """
 
     def __init__(
         self,
         token: str,
         chat_id: str,
-        llm: LLMClient,
-        on_engineering_task,  # async callable(instruction, agent_type, repo) -> task_id
-        on_status_query,     # async callable(text) -> str
     ):
         self.token = token
         self.chat_id = chat_id
-        self.llm = llm
-        self._on_engineering_task = on_engineering_task
-        self._on_status_query = on_status_query
         self.app: Application | None = None
         self._polling_task: asyncio.Task | None = None
 
@@ -79,41 +70,10 @@ class TelegramBot:
             return
 
         text = update.message.text
-        log.info("Telegram message: %s", text[:100])
-
-        try:
-            intent = await classify(text, self.llm)
-
-            if intent.type in (IntentType.engineering, IntentType.research):
-                agent = intent.agent_type or ("researcher" if intent.type == IntentType.research else "coder")
-                # Map effort to max_iterations for research tasks
-                effort_map = {"light": 5, "regular": 15, "deep": 25}
-                max_iter = effort_map.get(intent.effort or "regular") if agent == "researcher" else None
-                try:
-                    task_id = await self._on_engineering_task(
-                        instruction=intent.instruction,
-                        agent_type=agent,
-                        repo=intent.repo or "",
-                        max_iterations=max_iter,
-                    )
-                    await update.message.reply_text(f"On it. {agent} task {task_id[:8]} launched.")
-                except Exception as e:
-                    log.error("Failed to launch task: %s", e)
-                    await update.message.reply_text(f"Task created but launch failed: {e}")
-
-            elif intent.type == IntentType.system:
-                response = await self._on_status_query(text)
-                await update.message.reply_text(response)
-
-            else:
-                # general — Phase 1c (OpenClaw)
-                await update.message.reply_text(
-                    "General assistant not available yet (Phase 1c). "
-                    "I can handle engineering tasks and status queries."
-                )
-        except Exception as e:
-            log.exception("Error handling Telegram message")
-            await update.message.reply_text(f"Error: {e}")
+        log.info("Telegram message (unrouted): %s", text[:100])
+        await update.message.reply_text(
+            "Submit tasks via Agent Studio: https://mycroft.amer.dev"
+        )
 
     async def send(self, text: str) -> None:
         """Send a message to Alex."""
