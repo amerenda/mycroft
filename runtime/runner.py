@@ -187,6 +187,16 @@ class AgentRunner:
                      self.iteration + 1, self.max_iterations, model_name)
             agent_iterations_total.labels(agent_type=self.manifest.name).inc()
 
+            remaining = self.max_iterations - self.iteration
+            if remaining == 3:
+                self.messages.append({
+                    "role": "user",
+                    "content": (
+                        f"Note: you have {remaining} iterations remaining. "
+                        "Begin wrapping up — finalize your output and submit soon."
+                    ),
+                })
+
             # Call LLM
             response = await self.llm.chat(
                 self.messages, tools=self.tools.schemas(),

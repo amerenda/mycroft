@@ -20,7 +20,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-MAX_OUTPUT_CHARS = 30000
+MAX_OUTPUT_CHARS = 12000
 
 
 # ── Raw content fetching (internal, not a tool) ─────────────────────────────
@@ -235,7 +235,7 @@ class WebSearch:
             if not title or not url or url in seen_urls:
                 continue
             seen_urls.add(url)
-            snippet = r.get("content", "")[:400]
+            snippet = r.get("content", "")[:500]
             date = r.get("publishedDate", "")
             date_str = f" [{date[:10]}]" if date else ""
             results.append(f"- **{title}**{date_str}\n  {url}\n  {snippet}")
