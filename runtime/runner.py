@@ -55,7 +55,7 @@ class AgentRunner:
         )
 
         # LLM call params from task config (overridable via API/UI)
-        self._max_tokens = task.config.get("max_tokens", 4096)
+        self._max_tokens = task.config.get("max_tokens") or 4096
         self._temperature = task.config.get("temperature")
 
         self.messages: list[dict[str, Any]] = []
