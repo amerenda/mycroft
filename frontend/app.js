@@ -2444,6 +2444,49 @@ document.querySelectorAll('.tab').forEach(btn => {
   }
 });
 
+// ── Settings ──────────────────────────────────────────────────────────────────
+
+async function loadSettings() {
+  const res = await fetch('/api/settings');
+  if (!res.ok) return;
+  const settings = await res.json();
+  const container = document.getElementById('settingsList');
+  container.innerHTML = '';
+  for (const s of settings) {
+    const div = document.createElement('div');
+    div.className = 'editor-section';
+    div.style.marginBottom = '24px';
+    div.innerHTML = `
+      <div class="editor-file-label">${s.label}</div>
+      <div style="color:#8b949e;font-size:0.8rem;margin-bottom:6px">${s.description}</div>
+      <textarea class="editor-textarea" rows="4" spellcheck="false" data-key="${s.key}">${s.value}</textarea>
+      <div style="margin-top:8px;display:flex;gap:8px;align-items:center">
+        <button class="btn-primary" onclick="saveSetting('${s.key}', this)">Save</button>
+        <span class="setting-status-${s.key}" style="font-size:0.8rem;color:#8b949e"></span>
+      </div>
+    `;
+    container.appendChild(div);
+  }
+}
+
+async function saveSetting(key, btn) {
+  const ta = document.querySelector(`textarea[data-key="${key}"]`);
+  const status = document.querySelector(`.setting-status-${key}`);
+  const res = await fetch(`/api/settings/${key}`, {
+    method: 'PUT',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({value: ta.value}),
+  });
+  if (res.ok) {
+    status.textContent = 'Saved';
+    status.style.color = '#3fb950';
+    setTimeout(() => { status.textContent = ''; }, 2000);
+  } else {
+    status.textContent = 'Error saving';
+    status.style.color = '#f85149';
+  }
+}
+
 // ── Init ──────────────────────────────────────────────────────────────────────
 
 _loadConfig();
@@ -2455,4 +2498,5 @@ loadAgents();
 loadWorkflows();
 loadWorkflowDropdown();
 loadSchemas();
+loadSettings();
 connectSSE();

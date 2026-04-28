@@ -19,6 +19,7 @@
     <button class="tab" data-tab="reports">Reports</button>
     <button class="tab" data-tab="trace">Trace</button>
     <button class="tab" data-tab="logs">Logs</button>
+    <button class="tab" data-tab="settings">Settings</button>
   </nav>
 </header>
 
@@ -608,6 +609,17 @@
       <button class="btn-tool-ctrl" onclick="clearLogView()">Clear view</button>
     </div>
     <div id="logLines" class="log-lines"></div>
+  </section>
+
+  <!-- SETTINGS TAB -->
+  <section id="tab-settings" class="tab-content">
+    <div style="max-width:800px;margin:0 auto;padding:24px 16px">
+      <h2 style="margin:0 0 4px;font-size:1.1rem">Platform Settings</h2>
+      <p style="margin:0 0 24px;color:#8b949e;font-size:0.85rem">
+        These values are stored in the DB. Code defaults are used if a setting has not been saved.
+      </p>
+      <div id="settingsList"></div>
+    </div>
   </section>
 
 </main>

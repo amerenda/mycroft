@@ -158,9 +158,14 @@ async def lifespan(app: FastAPI):
     from coordinator.reports import ensure_reports_table
     await ensure_reports_table(db.kb.pool)
 
-    from coordinator.editor_store import ensure_editor_tables, seed_from_filesystem, list_agents as _list_agents
+    from coordinator.editor_store import (
+        ensure_editor_tables, seed_from_filesystem, list_agents as _list_agents,
+        ensure_settings_table, seed_default_settings,
+    )
     await ensure_editor_tables(db.kb.pool)
     await seed_from_filesystem(db.kb.pool, _AGENTS_DIR, _WORKFLOWS_DIR)
+    await ensure_settings_table(db.kb.pool)
+    await seed_default_settings(db.kb.pool)
 
     # Ensure KB schema extensions (expires_at for short-term memory)
     await db.kb.ensure_schema()
@@ -265,6 +270,13 @@ async def _start_dynamic_pipeline(
     )
 
     step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
+
+    # Build system_suffix: per-step override + platform pipeline prompt (UI-editable)
+    from coordinator.editor_store import get_setting as _get_setting
+    platform_step_prompt = await _get_setting(db.kb.pool, "pipeline_step_prompt")
+    suffix_parts = [p for p in [step.get("system_suffix"), platform_step_prompt] if p]
+    combined_suffix = "\n\n".join(suffix_parts) or None
+
     task_config = {
         "instruction": instruction,
         "model_override": step.get("model") or None,
@@ -275,7 +287,7 @@ async def _start_dynamic_pipeline(
         "context_injection": [original_scope],
         "scratch_scope": scratch_scope,
         "step_description": step.get("description") or None,
-        "system_suffix": step.get("system_suffix") or None,
+        "system_suffix": combined_suffix,
         "phase": "pipeline-step-0",
         "is_last_step": is_last,
         "workflow": workflow_name,
@@ -1420,6 +1432,27 @@ async def delete_workflow(name: str):
     if not deleted:
         raise HTTPException(404, f"Workflow '{name}' not found")
     return {"status": "deleted", "name": name}
+
+
+# ---------------------------------------------------------------------------
+# Platform Settings API
+# ---------------------------------------------------------------------------
+
+
+@app.get("/api/settings")
+async def list_settings():
+    from coordinator.editor_store import list_settings as _list_settings
+    return await _list_settings(db.kb.pool)
+
+
+@app.put("/api/settings/{key}")
+async def save_setting(key: str, payload: dict):
+    from coordinator.editor_store import save_setting as _save_setting
+    try:
+        await _save_setting(db.kb.pool, key, payload.get("value", ""))
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    return {"status": "saved", "key": key}
 
 
 # ---------------------------------------------------------------------------

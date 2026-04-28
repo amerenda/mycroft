@@ -194,3 +194,81 @@ def _wf_row(row) -> dict:
 async def delete_workflow(pool: asyncpg.Pool, name: str) -> bool:
     result = await pool.execute("DELETE FROM workflow_definitions WHERE name = $1", name)
     return result.split()[-1] != "0"
+
+
+# ---------------------------------------------------------------------------
+# Platform settings
+# ---------------------------------------------------------------------------
+
+_SETTING_DEFAULTS: dict[str, dict] = {
+    "pipeline_step_prompt": {
+        "label": "Pipeline Step Prompt",
+        "description": "Injected into the system prompt of every pipeline step. Use this to give all agents universal pipeline instructions — e.g. how to signal completion.",
+        "value": (
+            'When your task is complete, call finish(content="...") with your full output. '
+            "Your output becomes the input to the next step in the pipeline."
+        ),
+    },
+}
+
+
+async def ensure_settings_table(pool: asyncpg.Pool) -> None:
+    async with pool.acquire() as conn:
+        await conn.execute("""
+            CREATE TABLE IF NOT EXISTS platform_settings (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL DEFAULT '',
+                updated_at TIMESTAMPTZ DEFAULT NOW()
+            )
+        """)
+    log.info("Settings table ready")
+
+
+async def seed_default_settings(pool: asyncpg.Pool) -> None:
+    async with pool.acquire() as conn:
+        for key, meta in _SETTING_DEFAULTS.items():
+            exists = await conn.fetchval(
+                "SELECT 1 FROM platform_settings WHERE key = $1", key
+            )
+            if not exists:
+                await conn.execute(
+                    "INSERT INTO platform_settings (key, value) VALUES ($1, $2)",
+                    key, meta["value"],
+                )
+                log.info("Seeded default setting '%s'", key)
+
+
+async def list_settings(pool: asyncpg.Pool) -> list[dict]:
+    rows = await pool.fetch("SELECT key, value FROM platform_settings ORDER BY key")
+    db_values = {r["key"]: r["value"] for r in rows}
+    return [
+        {
+            "key": key,
+            "label": meta["label"],
+            "description": meta["description"],
+            "value": db_values.get(key, meta["value"]),
+        }
+        for key, meta in _SETTING_DEFAULTS.items()
+    ]
+
+
+async def get_setting(pool: asyncpg.Pool, key: str) -> str:
+    val = await pool.fetchval(
+        "SELECT value FROM platform_settings WHERE key = $1", key
+    )
+    if val is not None:
+        return val
+    return _SETTING_DEFAULTS.get(key, {}).get("value", "")
+
+
+async def save_setting(pool: asyncpg.Pool, key: str, value: str) -> None:
+    if key not in _SETTING_DEFAULTS:
+        raise ValueError(f"Unknown setting key: {key!r}")
+    await pool.execute(
+        """
+        INSERT INTO platform_settings (key, value, updated_at)
+        VALUES ($1, $2, NOW())
+        ON CONFLICT (key) DO UPDATE SET value = $2, updated_at = NOW()
+        """,
+        key, value,
+    )
