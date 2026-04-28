@@ -49,11 +49,10 @@ class AgentManifest(BaseModel):
     name: str
     role: str = ""
     goal: str = ""
-    model: str = "claude-sonnet-4-20250514"
-    writer_model: str = ""  # optional second model for report writing
+    model: str = ""
     backend: str = "k8s"
 
-    @field_validator("writer_model", "role", "goal", "model", "backend", mode="before")
+    @field_validator("role", "goal", "model", "backend", mode="before")
     @classmethod
     def _coerce_none_str(cls, v: object) -> object:
         return v if v is not None else ""

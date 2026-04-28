@@ -149,7 +149,7 @@ RULES:
 async def run_forge(
     instruction: str,
     repo: str,
-    model: str = "qwen3:14b",
+    model: str = "",
     system_prompt: str | None = None,
     llm_url: str = "",
     llm_api_key: str = "",

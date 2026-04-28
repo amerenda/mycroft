@@ -206,194 +206,23 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Mycroft Coordinator", lifespan=lifespan)
 
 
-# ---------------------------------------------------------------------------
-# Research pipeline (background)
-# ---------------------------------------------------------------------------
-
-async def _start_research_pipeline(
-    instruction: str,
-    workflow: str,
-    gather_model: str | None = None,
-    write_model: str | None = None,
-    gather_tools: list[str] | None = None,
-    notify: bool = True,
-) -> str:
-    """Start the two-phase gather→write pipeline. Returns the gather task ID."""
-    import uuid as _uuid
-    from coordinator.research_pipeline import WORKFLOW_CONFIG, GATHERER_PROMPT
-
-    wf_config = WORKFLOW_CONFIG.get(workflow, WORKFLOW_CONFIG["research-regular"])
-    gather_cfg = wf_config["gather"]
-
-    resolved_gather_model = gather_model  # None = use agent manifest model
-    resolved_gather_tools = gather_tools or gather_cfg["tools"]
-
-    # Write the original brief for the writer phase to reference directly.
-    run_id = str(_uuid.uuid4())
-    original_scope = f"/runs/{run_id}/original"
-    await db.kb.pool.execute(
-        """
-        INSERT INTO memory_records
-            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, false,
-                NOW() + INTERVAL '7 days')
-        """,
-        str(_uuid.uuid4()), instruction, original_scope, [], "{}", 0.5, "coordinator",
-    )
-
-    scratch_scope = f"/runs/{run_id}/scratch"
-    await db.kb.pool.execute(
-        """
-        INSERT INTO memory_records
-            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, false,
-                NOW() + INTERVAL '7 days')
-        """,
-        str(_uuid.uuid4()), "", scratch_scope, [], "{}", 0.5, "coordinator",
-    )
-
-    gather_config = {
-        "instruction": instruction,
-        **({"model_override": resolved_gather_model} if resolved_gather_model else {}),
-        "max_iterations_override": gather_cfg["max_iterations"],
-        "tools_override": resolved_gather_tools,
-        "system_prompt_override": GATHERER_PROMPT,
-        "context_injection": [original_scope],
-        "scratch_scope": scratch_scope,
-        "step_description": "Gather research findings on the topic using web search, reading pages, and noting key facts.",
-        "phase": "gather",
-        "workflow": workflow,
-        "run_id": run_id,
-        **({"notify": False} if not notify else {}),
-    }
-
-    gather_task_id = await task_manager.create_task(
-        agent_type="researcher",
-        instruction=instruction,
-        trigger="pipeline",
-        repo="",
-        config=gather_config,
-    )
-    tasks_created_total.labels(agent_type="researcher", trigger="pipeline").inc()
-    tasks_active.labels(agent_type="researcher").inc()
-
-    gather_wf_name = await argo.submit(
-        agent_type="researcher",
-        task_id=gather_task_id,
-        params={"instruction": instruction, "model_override": resolved_gather_model},
-        manifest=trigger_router.get_manifest("researcher"),
-        on_update=_on_workflow_update,
-    )
-    await db.kb.update_task(gather_task_id, argo_workflow_name=gather_wf_name)
-
-    log.info("Research pipeline started: gather=%s model=%s workflow=%s run=%s",
-             gather_task_id[:8], resolved_gather_model, workflow, run_id[:8])
-
-    asyncio.create_task(
-        _pipeline_writer_phase(gather_task_id, instruction, workflow,
-                               write_model=write_model, notify=notify,
-                               run_id=run_id, original_scope=original_scope,
-                               scratch_scope=scratch_scope)
-    )
-
-    return gather_task_id
+class _PipelineTaskFailed(Exception):
+    pass
 
 
-async def _pipeline_writer_phase(
-    gather_task_id: str,
-    instruction: str,
-    workflow: str,
-    write_model: str | None = None,
-    notify: bool = True,
-    *,
-    run_id: str,
-    original_scope: str,
-    scratch_scope: str,
-):
-    """Background: wait for gatherer to finish, then launch the writer."""
-    import uuid as _uuid
-    from coordinator.research_pipeline import WORKFLOW_CONFIG, WRITER_PROMPT, _wait_for_task
-
-    try:
-        status_hint = await _wait_for_task(gather_task_id, db, timeout=3600)
-
-        # Abort writer if gather was cancelled
-        if not status_hint or status_hint.startswith("("):
-            gather_task = await task_manager.get_task(gather_task_id)
-            was_cancelled = (
-                gather_task
-                and gather_task.result
-                and "Cancelled" in gather_task.result.get("error", "")
-            )
-            if was_cancelled:
-                log.info("Pipeline writer phase aborted — gather task %s was cancelled", gather_task_id[:8])
-                return
-
-        # Mirror the gatherer's full output into /runs/ (short-term, 7d TTL) so the
-        # writer reads it from KB directly — no truncation in the coordinator.
-        gather_record = await db.kb.get(f"/agents/researcher/results/{gather_task_id}")
-        findings = (gather_record.content if gather_record else None) or status_hint
-        if not findings:
-            log.warning("Pipeline gatherer %s produced no usable findings, proceeding anyway", gather_task_id[:8])
-            findings = f"(Limited findings for: {instruction})"
-
-        findings_scope = f"/runs/{run_id}/gather/output"
-        await db.kb.pool.execute(
-            """
-            INSERT INTO memory_records
-                (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, false,
-                    NOW() + INTERVAL '7 days')
-            """,
-            str(_uuid.uuid4()), findings, findings_scope, [], "{}", 0.5, "coordinator",
-        )
-
-        log.info("Pipeline gatherer %s done (%d chars). Launching writer.", gather_task_id[:8], len(findings))
-
-        wf_config = WORKFLOW_CONFIG.get(workflow, WORKFLOW_CONFIG["research-regular"])
-        write_cfg = wf_config["write"]
-
-        resolved_write_model = write_model  # None = use agent manifest model
-
-        write_config = {
-            "instruction": "Write a research report based on the gathered findings.",
-            **({"model_override": resolved_write_model} if resolved_write_model else {}),
-            "max_iterations_override": write_cfg["max_iterations"],
-            "tools_override": write_cfg["tools"],
-            "system_prompt_override": WRITER_PROMPT,
-            "context_injection": [original_scope, findings_scope],
-            "scratch_scope": scratch_scope,
-            "step_description": "Synthesize the gathered research into a structured, well-written report with summary, findings, and recommendations.",
-            "phase": "write",
-            "workflow": workflow,
-            "run_id": run_id,
-            "parent_task_id": gather_task_id,
-            **({"notify": False} if not notify else {}),
-        }
-
-        write_task_id = await task_manager.create_task(
-            agent_type="researcher",
-            instruction="Write a research report based on the gathered findings.",
-            trigger="pipeline",
-            repo="",
-            config=write_config,
-        )
-
-        write_wf_name = await argo.submit(
-            agent_type="researcher",
-            task_id=write_task_id,
-            params={"instruction": "Write a research report based on the gathered findings.",
-                    **({"model_override": resolved_write_model} if resolved_write_model else {})},
-            manifest=trigger_router.get_manifest("researcher"),
-            on_update=_on_workflow_update,
-        )
-        await db.kb.update_task(write_task_id, argo_workflow_name=write_wf_name)
-
-        log.info("Pipeline writer launched: %s model=%s (parent=%s)",
-                 write_task_id[:8], resolved_write_model, gather_task_id[:8])
-
-    except Exception as e:
-        log.exception("Pipeline writer phase failed for gather=%s", gather_task_id[:8])
+async def _wait_for_pipeline_task(task_id: str, timeout: int = 3600) -> str:
+    """Poll until a pipeline step task reaches a terminal state. Returns result content."""
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        task = await task_manager.get_task(task_id)
+        if task and task.status == TaskStatus.completed:
+            result = task.result or {}
+            return result.get("content", "") if isinstance(result, dict) else str(result)
+        if task and task.status == TaskStatus.failed:
+            err = (task.result or {}).get("error", "unknown") if isinstance(task.result, dict) else str(task.result)
+            raise _PipelineTaskFailed(f"Task {task_id[:8]} failed: {err}")
+        await asyncio.sleep(5)
+    raise _PipelineTaskFailed(f"Task {task_id[:8]} timed out after {timeout}s")
 
 
 async def _start_dynamic_pipeline(
@@ -499,12 +328,11 @@ async def _run_dynamic_pipeline_steps(
     scratch_scope: str,
 ) -> None:
     """Background: wait for previous step to finish, then launch the next step."""
-    from coordinator.research_pipeline import _wait_for_task, _TaskFailed
     import uuid as _uuid
 
     try:
-        await _wait_for_task(prev_task_id, db, timeout=3600)
-    except _TaskFailed as e:
+        await _wait_for_pipeline_task(prev_task_id, timeout=3600)
+    except _PipelineTaskFailed as e:
         log.warning("Pipeline aborted at step %d: %s", step_index, e)
         return
 
@@ -591,10 +419,11 @@ async def _handle_engineering_task(
     instruction: str, agent_type: str, repo: str,
     model_override: str | None = None, system_prompt_override: str | None = None,
     max_tokens: int | None = None, temperature: float | None = None,
-    max_iterations: int | None = None, effort: str | None = None,
+    max_iterations: int | None = None,
     tools_override: list[str] | None = None,
     workflow: str | None = None,
     notify: bool = True,
+    effort: str | None = None,  # unused, kept for call-site compat during transition
 ) -> str:
     """Handle an engineering task from Telegram or API."""
     manifest = trigger_router.get_manifest(agent_type)
@@ -621,8 +450,6 @@ async def _handle_engineering_task(
         task_config["temperature"] = temperature
     if max_iterations is not None:
         task_config["max_iterations_override"] = max_iterations
-    if effort:
-        task_config["effort"] = effort
     if workflow:
         task_config["workflow"] = workflow
     if tools_override:
@@ -837,21 +664,14 @@ async def _handle_researcher_result(record, source: str) -> None:
     title, summary = _extract_title_summary(content)
 
     # Build report metadata
-    workflow = (task.config.get("workflow", "") if task else "") or "research-regular"
+    workflow = (task.config.get("workflow", "") if task else "") or ""
     models_used: dict[str, str] = {}
     commit_sha = getattr(config, "agent_image_tag", "") or ""
 
     if task:
-        writer_model = task.config.get("model_override", "")
-        if writer_model:
-            models_used["write"] = writer_model
-        parent_id = task.config.get("parent_task_id", "")
-        if parent_id:
-            parent = await task_manager.get_task(parent_id)
-            if parent:
-                gather_model = parent.config.get("model_override", "")
-                if gather_model:
-                    models_used["gather"] = gather_model
+        model_override = task.config.get("model_override", "")
+        if model_override:
+            models_used["model"] = model_override
 
     # Append metadata footer to content
     meta_parts = [f"Workflow: {workflow}"]
@@ -920,7 +740,7 @@ from coordinator.forge_runner import run_forge, get_run, ForgeResult
 class ForgeRunRequest(BaseModel):
     instruction: str
     repo: str = ""
-    model: str = "qwen3:14b"
+    model: str = ""
     system_prompt: str | None = None
 
 
@@ -973,66 +793,31 @@ class CreateTaskRequest(BaseModel):
     max_tokens: int | None = None
     temperature: float | None = None
     max_iterations: int | None = None
-    workflow: str | None = None              # research-quick, research-regular, research-deep, coder
-    effort: str | None = None               # deprecated alias for workflow
+    workflow: str | None = None
     tools_override: list[str] | None = None
-    gather_model: str | None = None
-    write_model: str | None = None
     notify: bool = True
 
 
 @app.post("/api/tasks")
 async def create_task(req: CreateTaskRequest):
-    from coordinator.research_pipeline import resolve_workflow, WORKFLOW_CONFIG
-
     try:
-        # Resolve workflow name (accepts either workflow= or deprecated effort=)
-        workflow = resolve_workflow(req.workflow, req.effort)
+        workflow = req.workflow or None
 
-        # Research pipelines
-        if workflow in ("research-regular", "research-deep"):
-            gather_task_id = await _start_research_pipeline(
-                req.instruction,
-                workflow,
-                gather_model=req.gather_model or None,
-                write_model=req.write_model or None,
-                gather_tools=req.tools_override or None,
-                notify=req.notify,
-            )
-            return {"task_id": gather_task_id}
-
-        if workflow == "research-quick":
-            task_id = await _handle_engineering_task(
-                instruction=req.instruction,
-                agent_type="researcher",
-                repo=req.repo,
-                model_override=req.model or None,
-                system_prompt_override=req.system_prompt,
-                max_tokens=req.max_tokens,
-                temperature=req.temperature,
-                max_iterations=req.max_iterations or 6,
-                effort=None,
-                tools_override=req.tools_override or ["web_search", "wiki_read", "web_read"],
-                workflow="research-quick",
-                notify=req.notify,
-            )
-            return {"task_id": task_id}
-
-        # Unknown workflow name — look up in DB and run as dynamic pipeline
-        if workflow and workflow not in ("coder",):
+        # Workflow name — look up in DB and run as dynamic pipeline
+        if workflow:
             from coordinator.editor_store import get_workflow as _get_wf
             wf_def = await _get_wf(db.kb.pool, workflow)
-            if wf_def:
-                pipeline_json = wf_def.get("pipeline_json") or {}
-                steps = pipeline_json.get("steps", [])
-                if not steps:
-                    raise ValueError(f"Workflow '{workflow}' has no pipeline steps defined")
-                first_task_id = await _start_dynamic_pipeline(req.instruction, workflow, steps)
-                return {"task_id": first_task_id}
-            raise ValueError(f"Unknown workflow: '{workflow}'")
+            if not wf_def:
+                raise ValueError(f"Unknown workflow: '{workflow}'")
+            pipeline_json = wf_def.get("pipeline_json") or {}
+            steps = pipeline_json.get("steps", [])
+            if not steps:
+                raise ValueError(f"Workflow '{workflow}' has no pipeline steps defined")
+            first_task_id = await _start_dynamic_pipeline(req.instruction, workflow, steps)
+            return {"task_id": first_task_id}
 
-        # coder, direct agent_type, or no workflow specified (test button path)
-        agent_type = req.agent_type or workflow
+        # Direct agent task (test button, API callers)
+        agent_type = req.agent_type
         if not agent_type:
             raise ValueError("workflow or agent_type is required")
         task_id = await _handle_engineering_task(
@@ -1044,9 +829,8 @@ async def create_task(req: CreateTaskRequest):
             max_tokens=req.max_tokens,
             temperature=req.temperature,
             max_iterations=req.max_iterations,
-            effort=None,
             tools_override=req.tools_override,
-            workflow=workflow,
+            workflow=None,
             notify=req.notify,
         )
         return {"task_id": task_id}

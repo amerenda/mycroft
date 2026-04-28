@@ -111,7 +111,7 @@ async function runTask() {
 // ── Forge runner ──────────────────────────────────────────────────────────────
 
 async function runForge(instruction) {
-  const model = document.getElementById('model').value || 'qwen3:14b';
+  const model = document.getElementById('model').value || '';
   const repo = document.getElementById('repo').value.trim();
   const systemPrompt = document.getElementById('systemPrompt').value.trim();
 
@@ -222,26 +222,23 @@ async function runMycroft(instruction) {
   const maxTokens = document.getElementById('maxTokens').value;
   const temperature = document.getElementById('temperature').value;
   const maxIterations = document.getElementById('maxIterations').value;
-  const gatherModel = document.getElementById('gatherModel').value;
-  const writeModel = document.getElementById('writeModel').value;
 
   // Send tool override only when not all tools are checked
   const allCbs = [...document.querySelectorAll('.tool-cb')];
   const checkedValues = allCbs.filter(cb => cb.checked).map(cb => cb.value);
   const toolsOverride = checkedValues.length < allCbs.length ? checkedValues : null;
 
+  if (!workflow) { alert('Select a workflow first'); return; }
+
   const body = {
     workflow,
     instruction,
-    repo: document.getElementById('repo').value.trim(),
     system_prompt: systemPrompt || null,
     notify: document.getElementById('notifyRun').checked,
   };
   if (maxTokens) body.max_tokens = parseInt(maxTokens);
   if (temperature) body.temperature = parseFloat(temperature);
   if (maxIterations) body.max_iterations = parseInt(maxIterations);
-  if (gatherModel) body.gather_model = gatherModel;
-  if (writeModel) body.write_model = writeModel;
   if (toolsOverride) body.tools_override = toolsOverride;
 
   const r = await api('/api/tasks', {
@@ -456,19 +453,13 @@ function renderTrace(messages, task) {
 
 // ── Prompt preview ────────────────────────────────────────────────────────────
 
-const _WORKFLOW_AGENT = {
-  'research-quick': 'researcher',
-  'research-regular': 'researcher',
-  'research-deep': 'researcher',
-  'coder': 'coder',
-};
 
 async function previewPrompt() {
   const instruction = document.getElementById('instruction').value.trim();
   if (!instruction) return;
 
   const workflow = document.getElementById('workflow').value;
-  const agentType = _WORKFLOW_AGENT[workflow] || 'researcher';
+  const agentType = 'researcher';
 
   try {
     const r = await api('/api/tasks/test', {
@@ -823,15 +814,6 @@ function setDefaultTools() {
   });
 }
 
-// ── Workflow change handler ───────────────────────────────────────────────────
-
-function onWorkflowChange() {
-  const workflow = document.getElementById('workflow').value;
-  document.getElementById('modelChain').style.display =
-    (workflow === 'research-regular' || workflow === 'research-deep') ? '' : 'none';
-  document.getElementById('repoGroup').style.display =
-    (workflow === 'coder') ? '' : 'none';
-}
 
 // ── Models ────────────────────────────────────────────────────────────────────
 
@@ -844,8 +826,9 @@ async function loadModels() {
       .filter(m => m.downloaded !== false)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
 
-    ['gatherModel', 'writeModel', 'agentModel', 'agentWriterModel'].forEach(selId => {
+    ['agentModel', 'agentWriterModel'].forEach(selId => {
       const el = document.getElementById(selId);
+      if (!el) return;
       _modelList.forEach(m => {
         const opt = document.createElement('option');
         const name = m.name || m.id || '';
@@ -867,7 +850,7 @@ async function loadModels() {
 const AGENT_MANIFEST_TEMPLATE = `name: my-agent
 role: "Describe what this agent does"
 goal: "What outcome this agent produces"
-model: qwen3:14b
+model: ""
 backend: k8s
 max_concurrent: 2
 max_iterations: 10
@@ -1050,14 +1033,6 @@ async function selectAgent(name) {
     document.getElementById('agentMemory').value = _extractResourceField(a.manifest, 'memory');
     document.getElementById('agentCpu').value = _extractResourceField(a.manifest, 'cpu');
     document.getElementById('agentScratch').value = _extractResourceField(a.manifest, 'scratch');
-    const writerModel = _extractYamlField(a.manifest, 'writer_model');
-    const agentWriterEl = document.getElementById('agentWriterModel');
-    if (writerModel && !agentWriterEl.querySelector(`option[value="${CSS.escape(writerModel)}"]`)) {
-      const opt = document.createElement('option');
-      opt.value = writerModel; opt.textContent = writerModel;
-      agentWriterEl.insertBefore(opt, agentWriterEl.options[1] || null);
-    }
-    agentWriterEl.value = writerModel || '';
     // prompts field is now plain text; handle old Python-format records for backward compat
     document.getElementById('agentSystemPrompt').value = _extractSystemPrompt(a.prompts || '');
     // Reset preview panel when switching agents
@@ -1088,13 +1063,12 @@ function newAgent() {
   _currentAgent = null;
   document.getElementById('agentName').value = '';
   document.getElementById('agentManifest').value = AGENT_MANIFEST_TEMPLATE;
-  document.getElementById('agentModel').value = 'qwen3:14b';
+  document.getElementById('agentModel').value = '';
   document.getElementById('agentMaxIterations').value = '10';
   document.getElementById('agentMaxConcurrent').value = '';
   document.getElementById('agentMemory').value = '';
   document.getElementById('agentCpu').value = '';
   document.getElementById('agentScratch').value = '';
-  document.getElementById('agentWriterModel').value = '';
   document.getElementById('agentSystemPrompt').value = '';
   document.getElementById('agentToolsList').value = '';
   document.getElementById('agentPermsRead').value = '';
@@ -1119,8 +1093,6 @@ async function saveAgent() {
   if (maxIter) manifest = _updateYamlField(manifest, 'max_iterations', maxIter);
   const maxConcurrent = document.getElementById('agentMaxConcurrent').value;
   if (maxConcurrent) manifest = _updateYamlField(manifest, 'max_concurrent', maxConcurrent);
-  const writerModel = document.getElementById('agentWriterModel').value;
-  manifest = _updateYamlField(manifest, 'writer_model', writerModel || '');
   const memory = document.getElementById('agentMemory').value.trim();
   const cpu = document.getElementById('agentCpu').value.trim();
   const scratch = document.getElementById('agentScratch').value.trim();
@@ -1370,29 +1342,33 @@ function updatePipelineStep(i, field, value) {
   if (field === 'agent') _renderPipelineSteps(); // refresh model placeholder
 }
 
-let _customWorkflowNames = [];
-
 async function loadWorkflowDropdown() {
   try {
     const workflows = await api('/api/workflows');
-    const custom = workflows.filter(w => w.pipeline_json).sort((a, b) => a.name.localeCompare(b.name));
-    _customWorkflowNames = custom.map(w => w.name);
+    const withPipeline = workflows.filter(w => w.pipeline_json).sort((a, b) => a.name.localeCompare(b.name));
 
     const sel = document.getElementById('workflow');
-    const existing = sel.querySelector('optgroup[label="Custom"]');
-    if (existing) existing.remove();
-    if (!custom.length) return;
+    const prev = sel.value;
+    sel.innerHTML = '';
 
-    const group = document.createElement('optgroup');
-    group.label = 'Custom';
-    custom.forEach(w => {
+    if (!withPipeline.length) {
+      const opt = document.createElement('option');
+      opt.value = '';
+      opt.textContent = 'No workflows — create one in the Workflows tab';
+      sel.appendChild(opt);
+      return;
+    }
+
+    withPipeline.forEach(w => {
       const opt = document.createElement('option');
       opt.value = w.name;
-      opt.textContent = w.name;
-      group.appendChild(opt);
+      const steps = (w.pipeline_json && w.pipeline_json.steps || []).length;
+      opt.textContent = w.name + (steps ? ` (${steps} steps)` : '');
+      sel.appendChild(opt);
     });
-    sel.appendChild(group);
-  } catch (e) { /* ignore */ }
+
+    if (prev && [...sel.options].some(o => o.value === prev)) sel.value = prev;
+  } catch (e) { console.warn('Failed to load workflow dropdown:', e); }
 }
 
 async function loadWorkflows() {
@@ -1563,7 +1539,6 @@ function runWorkflowFromEditor(quick = false) {
       sel.appendChild(opt);
       sel.value = _currentWorkflow;
     }
-    onWorkflowChange();
     const iterEl = document.getElementById('maxIterations');
     if (quick) {
       document.getElementById('advancedOptions').open = true;

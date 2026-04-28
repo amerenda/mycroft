@@ -56,24 +56,6 @@ class AgentRunner:
         # LLM call params from task config (overridable via API/UI)
         self._max_tokens = task.config.get("max_tokens", 4096)
         self._temperature = task.config.get("temperature")
-        self._effort = task.config.get("effort")  # light, regular, heavy
-
-        # Report enforcement: researcher at regular/deep MUST write report.md
-        # BUT: pipeline phases handle their own enforcement (gather has no write_file)
-        phase = task.config.get("phase", "")
-        is_pipeline_phase = phase in ("gather", "write") or phase.startswith("pipeline-")
-        self._requires_report = (
-            manifest.name == "researcher"
-            and self._effort in ("regular", "deep", None)
-            and not is_pipeline_phase
-        )
-        self._has_written_report = False
-
-        # Writer model: a second model that synthesizes research into a report.
-        # The research model (e.g. qwen3.5:9b) gathers info, then the writer
-        # model (e.g. llama3.1:8b) writes the structured report.
-        self._writer_model = task.config.get("writer_model") or getattr(manifest, "writer_model", "") or None
-        self._switched_to_writer = False
 
         self.messages: list[dict[str, Any]] = []
         self.iteration = 0
@@ -201,31 +183,9 @@ class AgentRunner:
 
         while self.iteration < self.max_iterations:
             model_name = self.llm.model
-            phase = "writer" if self._switched_to_writer else "research"
-            log.info("Iteration %d/%d [%s] model=%s report_written=%s",
-                     self.iteration + 1, self.max_iterations, phase, model_name, self._has_written_report)
+            log.info("Iteration %d/%d model=%s",
+                     self.iteration + 1, self.max_iterations, model_name)
             agent_iterations_total.labels(agent_type=self.manifest.name).inc()
-
-            # Budget warning: tell the model when it's running low on iterations
-            remaining = self.max_iterations - self.iteration
-            if self._requires_report and not self._has_written_report and not self._switched_to_writer:
-                if remaining == int(self.max_iterations * 0.4):
-                    self.messages.append({
-                        "role": "user",
-                        "content": (
-                            f"BUDGET WARNING: You have {remaining} iterations left. "
-                            f"Start writing the report NOW using write_file. "
-                            f"You can continue researching after the report is saved."
-                        ),
-                    })
-                elif remaining == 2:
-                    self.messages.append({
-                        "role": "user",
-                        "content": (
-                            f"FINAL WARNING: Only {remaining} iterations left. "
-                            f"Write the report to /workspace/report.md IMMEDIATELY or your work will be lost."
-                        ),
-                    })
 
             # Call LLM
             response = await self.llm.chat(
@@ -272,9 +232,6 @@ class AgentRunner:
                         log.info("Agent submitted via submit_report (%d chars)", len(content))
                         return content
 
-                    # Track report writes
-                    if tc.name == "write_file" and "report" in tc.arguments.lower():
-                        self._has_written_report = True
                     agent_tool_calls_total.labels(
                         agent_type=self.manifest.name, tool=tc.name).inc()
                     t_tool = time.monotonic()
@@ -313,90 +270,9 @@ class AgentRunner:
                 })
                 continue
 
-            # Non-empty text with no tool calls — agent wants to finish.
-            # But some agents MUST complete certain actions before they can finish.
-            if self._requires_report and not self._has_written_report:
-                # Switch to writer model if available and not already switched
-                if self._writer_model and not self._switched_to_writer:
-                    log.info("Switching to writer model: %s", self._writer_model)
-                    self._switched_to_writer = True
-                    self.llm = LLMClient(
-                        self.platform.llm_manager_url,
-                        self.platform.llm_manager_api_key,
-                        self._writer_model,
-                    )
-                    self.llm.set_metrics_callback(llm_metrics_callback)
-                    # Tell the writer model to synthesize everything into a report
-                    self.messages.append({
-                        "role": "user",
-                        "content": (
-                            "The research phase is complete. Now write the report.\n\n"
-                            "Based on ALL the information gathered above, write a structured "
-                            "research report to /workspace/report.md using write_file.\n\n"
-                            "The report MUST include:\n"
-                            "- A # heading with the research topic\n"
-                            "- ## Summary (2-3 opinionated sentences)\n"
-                            "- ## Findings (key facts with source URLs)\n"
-                            "- ## Recommendation (what to do)\n"
-                            "- ## Sources (URLs used)\n\n"
-                            "Write the FULL report content to the file. Do it now."
-                        ),
-                    })
-                    self.iteration += 1
-                    continue
-                else:
-                    # Already switched or no writer model — bounce
-                    log.warning("Agent tried to finish without writing report, forcing continuation")
-                    self.messages.append({
-                        "role": "user",
-                        "content": "You MUST write the report to /workspace/report.md using write_file before you can finish. Do that now.",
-                    })
-                    self.iteration += 1
-                    continue
-
             self.messages.append({"role": "assistant", "content": response.content})
             log.info("Agent finished: %s", response.content[:200])
             return response.content
-
-        # Hit iteration limit — last chance: switch to writer model for report
-        if self._requires_report and not self._has_written_report and self._writer_model and not self._switched_to_writer:
-            log.info("Iteration limit reached, switching to writer model for final report")
-            self._switched_to_writer = True
-            self.llm = LLMClient(
-                self.platform.llm_manager_url,
-                self.platform.llm_manager_api_key,
-                self._writer_model,
-            )
-            self.llm.set_metrics_callback(llm_metrics_callback)
-            self.messages.append({
-                "role": "user",
-                "content": (
-                    "The research phase is complete. Now write the report.\n\n"
-                    "Based on ALL the information gathered above, write a structured "
-                    "research report to /workspace/report.md using write_file. Include "
-                    "a summary, findings with sources, and a recommendation. Do it now."
-                ),
-            })
-            # Give the writer a few iterations
-            for _ in range(5):
-                response = await self.llm.chat(
-                    self.messages, tools=self.tools.schemas(),
-                    max_tokens=self._max_tokens, temperature=self._temperature,
-                )
-                if response.tool_calls:
-                    for tc in response.tool_calls:
-                        if tc.name == "write_file" and "report" in tc.arguments.lower():
-                            self._has_written_report = True
-                        result = await self.tools.execute(tc.name, tc.arguments)
-                        self.messages.append({"role": "assistant", "tool_calls": [
-                            {"id": tc.id, "type": "function", "function": {"name": tc.name, "arguments": tc.arguments}}
-                        ]})
-                        self.messages.append({"role": "tool", "tool_call_id": tc.id, "content": result})
-                    if self._has_written_report:
-                        await self._persist_conversation()
-                        return response.content or "Report written."
-                elif response.content:
-                    return response.content
 
         limit_msg = (
             f"Hit iteration limit ({self.max_iterations}). "

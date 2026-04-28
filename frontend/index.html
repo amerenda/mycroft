@@ -42,12 +42,9 @@
 
         <div class="form-row">
           <div class="form-group">
-            <label>Workflow <span class="tip" data-tip="research-quick: single-agent lookup, no pipeline (~2 min). research-regular: gather + write pipeline, multi-source report (~8 min). research-deep: more iterations, comprehensive report (~15 min). coder: writes code and opens PRs.">ⓘ</span></label>
-            <select id="workflow" onchange="onWorkflowChange()">
-              <option value="research-quick">research-quick — quick lookup</option>
-              <option value="research-regular" selected>research-regular — gather + write</option>
-              <option value="research-deep">research-deep — comprehensive</option>
-              <option value="coder">coder — write code + PR</option>
+            <label>Workflow</label>
+            <select id="workflow">
+              <option value="">Loading…</option>
             </select>
           </div>
           <div class="form-group" id="repoGroup" style="display:none">
@@ -76,21 +73,6 @@
             <div class="form-group">
               <label>Max Iterations <span class="tip" data-tip="Max tool-call rounds. Light default: 6. Regular gather: 5, write: 3. Higher = more thorough but slower. Agent exits early when done.">ⓘ</span></label>
               <input id="maxIterations" type="number" value="" min="1" max="50" placeholder="Default">
-            </div>
-          </div>
-
-          <!-- Pipeline model chain — researcher regular/deep only -->
-          <div class="adv-section" id="modelChain" style="display:none">
-            <div class="adv-section-label">Pipeline Models <span class="tip" data-tip="regular/deep runs two agents: Gather searches + reads; Write turns findings into a report. Assign different models to each phase for best results.">ⓘ</span></div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>Gather model override <span class="tip" data-tip="Override the gather agent's model for this run. Leave blank to use the model set in the agent's config.">ⓘ</span></label>
-                <select id="gatherModel"><option value="">Agent config (default)</option></select>
-              </div>
-              <div class="form-group">
-                <label>Write model override <span class="tip" data-tip="Override the write agent's model for this run. Leave blank to use the model set in the agent's config.">ⓘ</span></label>
-                <select id="writeModel"><option value="">Agent config (default)</option></select>
-              </div>
             </div>
           </div>
 
@@ -252,12 +234,6 @@
             <div class="form-group" style="margin-bottom:0;max-width:60px">
               <label>Max Concurrent <span class="tip" data-tip="How many tasks of this agent type can run simultaneously.">ⓘ</span></label>
               <input id="agentMaxConcurrent" type="number" min="1" max="20" placeholder="2">
-            </div>
-          </div>
-          <div class="form-row" style="margin-top:8px;margin-bottom:0">
-            <div class="form-group" style="margin-bottom:0;flex:1">
-              <label>Writer Model <span class="tip" data-tip="Optional second model used for the write/synthesis phase (e.g. researcher pipeline). Leave blank to use the same model for all phases.">ⓘ</span></label>
-              <select id="agentWriterModel"><option value="">None (same model)</option></select>
             </div>
           </div>
         </div>
