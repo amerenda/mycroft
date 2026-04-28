@@ -157,7 +157,7 @@ class AgentRunner:
                         original_brief = record.content
                     else:
                         step_label = scope.rstrip("/").rsplit("/", 1)[-1]
-                        prior_sections.append(f"[CONTEXT: {step_label.upper()}]\n{record.content}")
+                        prior_sections.append(f"[PIPELINE INPUT]\n{record.content}")
 
             user_content = build_user_message(self.task.instruction, context)
             if self.task.context_injection:
