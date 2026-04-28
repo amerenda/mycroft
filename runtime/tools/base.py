@@ -124,10 +124,9 @@ def load_tools(
     or individual tool names ("web_search"). extra_groups overrides/extends the
     built-in group map with DB-defined groups.
 
-    kb_dsn + scratch_scope: when both are provided, pipeline tools are auto-injected.
-    Last step (is_last_step=True) gets only submit_report — scratch tools are for
-    intermediate steps that need to pass notes forward.
-    Non-last steps get scratch_read, scratch_write, and submit_report.
+    kb_dsn + scratch_scope: when both are provided, submit_report is auto-injected.
+    scratch_read and scratch_write are only loaded if explicitly listed in tool_names —
+    configure them per-agent in the UI and instruct via prompt.
     """
     groups = {**_BUILTIN_GROUPS, **(extra_groups or {})}
 
@@ -190,14 +189,17 @@ def load_tools(
             "todo_update_task": TodoUpdateTask(),
         })
 
+    if selected & {"scratch_read", "scratch_write"} and kb_dsn and scratch_scope:
+        from runtime.tools.kb import ScratchRead, ScratchWrite
+        if "scratch_read" in selected:
+            all_tools["scratch_read"] = ScratchRead(kb_dsn, scratch_scope)
+        if "scratch_write" in selected:
+            all_tools["scratch_write"] = ScratchWrite(kb_dsn, scratch_scope)
+
     tools = [all_tools[n] for n in selected if n in all_tools]
 
     if kb_dsn and scratch_scope:
-        from runtime.tools.kb import ScratchRead, ScratchWrite
-        if is_last_step:
-            tools += [SubmitReport()]
-        else:
-            tools += [ScratchRead(kb_dsn, scratch_scope), ScratchWrite(kb_dsn, scratch_scope), SubmitReport()]
+        tools += [SubmitReport()]
 
     log.info("Loaded %d tools: %s", len(tools), [t.name for t in tools])
     return ToolRegistry(tools)
