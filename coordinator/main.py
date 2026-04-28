@@ -1084,7 +1084,7 @@ async def test_task(req: TestTaskRequest):
 
     # Build prompt preview — use DB prompts as system override if available
     db_prompts = trigger_router.get_prompts(req.agent_type)
-    tools = load_tools(manifest.tools)
+    tools = load_tools(manifest.tools, web_read_max_chars=manifest.web_read_max_chars)
     source = "db" if db_prompts else "built-in"
     system_prompt = db_prompts or build_system_prompt(manifest, tools.schemas())
     user_message = build_user_message(req.instruction, [])
@@ -1298,7 +1298,8 @@ async def agent_effective_prompt(
     """Return the exact system prompt and tool list the model would receive.
 
     pipeline=true simulates a pipeline context (adds auto-injected tools).
-    is_last_step=true simulates last pipeline step (submit_report only, no scratch).
+    Auto-injected for all pipeline steps: scratch_read, scratch_write, finish.
+    submit_report must be declared explicitly in the agent's tool list.
     """
     _safe_name(name)
     from runtime.context import build_system_prompt
@@ -1315,6 +1316,7 @@ async def agent_effective_prompt(
         kb_dsn="preview" if pipeline else None,
         scratch_scope=scratch_scope,
         is_last_step=is_last_step,
+        web_read_max_chars=manifest.web_read_max_chars,
     )
 
     db_prompt = trigger_router.get_prompts(name)
@@ -1326,12 +1328,7 @@ async def agent_effective_prompt(
         source = "built-in"
 
     manifest_tools = list(manifest.tools)
-    auto_injected: list[str] = []
-    if pipeline:
-        if is_last_step:
-            auto_injected = ["submit_report"]
-        else:
-            auto_injected = ["scratch_read", "scratch_write", "submit_report"]
+    auto_injected = ["scratch_read", "scratch_write", "finish"] if pipeline else []
 
     return {
         "agent": name,

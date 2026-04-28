@@ -84,9 +84,9 @@ async def seed_from_filesystem(pool: asyncpg.Pool, agents_dir: Path, workflows_d
                 prompts_file = d / "prompts.py"
                 if prompts_file.exists():
                     raw = prompts_file.read_text()
-                    # Extract plain text from Python file if it uses SYSTEM_SUPPLEMENT format
+                    # Extract plain text from Python file (supports SYSTEM_PROMPT or SYSTEM_SUPPLEMENT)
                     import re as _re
-                    m = _re.search(r'SYSTEM_SUPPLEMENT\s*=\s*"""\s*([\s\S]*?)\s*"""', raw)
+                    m = _re.search(r'SYSTEM_(?:PROMPT|SUPPLEMENT)\s*=\s*"""\s*([\s\S]*?)\s*"""', raw)
                     prompts_text = m.group(1).strip() if m else raw.strip()
                 await conn.execute(
                     "INSERT INTO agent_definitions (name, manifest, prompts) VALUES ($1, $2, $3)",

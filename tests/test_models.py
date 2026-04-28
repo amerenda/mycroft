@@ -25,6 +25,18 @@ class TestAgentManifest:
         assert m.max_concurrent == 2
         assert m.tools == []
         assert m.permissions.read == []
+        assert m.web_read_max_chars is None
+
+    def test_none_coercion(self):
+        m = AgentManifest(name="test", role=None, goal=None, model=None, backend=None)
+        assert m.role == ""
+        assert m.goal == ""
+        assert m.model == ""
+        assert m.backend == ""
+
+    def test_web_read_max_chars(self):
+        m = AgentManifest(name="test", web_read_max_chars=25000)
+        assert m.web_read_max_chars == 25000
 
     def test_full_manifest(self):
         m = AgentManifest(

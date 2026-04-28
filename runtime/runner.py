@@ -194,7 +194,7 @@ class AgentRunner:
                     "role": "user",
                     "content": (
                         f"Note: you have {remaining} iterations remaining. "
-                        "Begin wrapping up — finalize your output and submit soon."
+                        "Begin wrapping up — finalize your output and call finish soon."
                     ),
                 })
 

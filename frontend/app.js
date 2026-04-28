@@ -826,7 +826,7 @@ async function loadModels() {
       .filter(m => m.downloaded !== false)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
 
-    ['agentModel', 'agentWriterModel'].forEach(selId => {
+    ['agentModel'].forEach(selId => {
       const el = document.getElementById(selId);
       if (!el) return;
       _modelList.forEach(m => {
