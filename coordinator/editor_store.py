@@ -80,10 +80,17 @@ async def seed_from_filesystem(pool: asyncpg.Pool, agents_dir: Path, workflows_d
                 "SELECT 1 FROM agent_definitions WHERE name = $1", agent_name
             )
             if not exists:
-                prompts = (d / "prompts.py").read_text() if (d / "prompts.py").exists() else ""
+                prompts_text = ""
+                prompts_file = d / "prompts.py"
+                if prompts_file.exists():
+                    raw = prompts_file.read_text()
+                    # Extract plain text from Python file if it uses SYSTEM_SUPPLEMENT format
+                    import re as _re
+                    m = _re.search(r'SYSTEM_SUPPLEMENT\s*=\s*"""\s*([\s\S]*?)\s*"""', raw)
+                    prompts_text = m.group(1).strip() if m else raw.strip()
                 await conn.execute(
                     "INSERT INTO agent_definitions (name, manifest, prompts) VALUES ($1, $2, $3)",
-                    agent_name, manifest_text, prompts,
+                    agent_name, manifest_text, prompts_text,
                 )
                 log.info("Seeded agent '%s' from filesystem (dir: %s)", agent_name, d.name)
 

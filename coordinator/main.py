@@ -1301,6 +1301,7 @@ async def test_task(req: TestTaskRequest):
     # Build prompt preview — use DB prompts as system override if available
     db_prompts = trigger_router.get_prompts(req.agent_type)
     tools = load_tools(manifest.tools)
+    source = "db" if db_prompts else "built-in"
     system_prompt = db_prompts or build_system_prompt(manifest, tools.schemas())
     user_message = build_user_message(req.instruction, [])
 
@@ -1308,6 +1309,7 @@ async def test_task(req: TestTaskRequest):
         "agent_type": req.agent_type,
         "model": manifest.model,
         "system_prompt": system_prompt,
+        "system_prompt_source": source,
         "user_message": user_message,
         "tools": [t["function"]["name"] for t in tools.schemas()],
     }
@@ -1501,6 +1503,62 @@ async def get_agent(name: str):
     if not agent:
         raise HTTPException(404, f"Agent '{name}' not found")
     return agent
+
+
+@app.get("/api/agents/{name}/effective-prompt")
+async def agent_effective_prompt(
+    name: str,
+    pipeline: bool = False,
+    is_last_step: bool = False,
+):
+    """Return the exact system prompt and tool list the model would receive.
+
+    pipeline=true simulates a pipeline context (adds auto-injected tools).
+    is_last_step=true simulates last pipeline step (submit_report only, no scratch).
+    """
+    _safe_name(name)
+    from runtime.context import build_system_prompt
+    from runtime.tools.base import load_tools
+
+    manifest = trigger_router.get_manifest(name)
+    if not manifest:
+        raise HTTPException(404, f"Agent '{name}' not found or not loaded")
+
+    # Simulate pipeline tool injection if requested
+    scratch_scope = "/runs/preview/scratch" if pipeline else None
+    tools = load_tools(
+        manifest.tools,
+        kb_dsn="preview" if pipeline else None,
+        scratch_scope=scratch_scope,
+        is_last_step=is_last_step,
+    )
+
+    db_prompt = trigger_router.get_prompts(name)
+    if db_prompt:
+        system_prompt = db_prompt
+        source = "db"
+    else:
+        system_prompt = build_system_prompt(manifest, tools.schemas())
+        source = "built-in"
+
+    manifest_tools = list(manifest.tools)
+    auto_injected: list[str] = []
+    if pipeline:
+        if is_last_step:
+            auto_injected = ["submit_report"]
+        else:
+            auto_injected = ["scratch_read", "scratch_write", "submit_report"]
+
+    return {
+        "agent": name,
+        "system_prompt": system_prompt,
+        "source": source,
+        "tools": [t["function"]["name"] for t in tools.schemas()],
+        "manifest_tools": manifest_tools,
+        "auto_injected_tools": auto_injected,
+        "pipeline": pipeline,
+        "is_last_step": is_last_step,
+    }
 
 
 @app.put("/api/agents/{name}")

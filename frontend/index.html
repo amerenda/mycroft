@@ -264,8 +264,33 @@
 
         <!-- System prompt -->
         <div class="editor-section">
-          <div class="editor-file-label">System Prompt</div>
-          <textarea id="agentSystemPrompt" class="editor-textarea" rows="12" spellcheck="false" placeholder="System prompt for this agent..."></textarea>
+          <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px">
+            <div class="editor-file-label" style="margin-bottom:0">System Prompt <span class="tip" data-tip="This is the complete system prompt sent to the model. If set, it fully replaces the built-in default (which includes the CRITICAL RULE and tool list prose). Leave empty to use the built-in default.">ⓘ</span></div>
+            <div style="display:flex;gap:6px;align-items:center">
+              <label style="font-size:0.78em;color:#8b949e;display:flex;align-items:center;gap:4px;cursor:pointer">
+                <input type="checkbox" id="previewPipeline" style="accent-color:#58a6ff"> pipeline
+              </label>
+              <label style="font-size:0.78em;color:#8b949e;display:flex;align-items:center;gap:4px;cursor:pointer">
+                <input type="checkbox" id="previewLastStep" style="accent-color:#58a6ff"> last step
+              </label>
+              <button class="btn-tool-ctrl" onclick="previewAgentPrompt()" style="font-size:0.8em">Preview effective prompt</button>
+            </div>
+          </div>
+          <textarea id="agentSystemPrompt" class="editor-textarea" rows="12" spellcheck="false" placeholder="Leave empty to use the built-in default (CRITICAL RULE + tool list). Set this to fully control what the model sees."></textarea>
+          <div id="agentPromptPreview" style="display:none;margin-top:10px">
+            <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px">
+              <span style="font-size:0.8em;color:#8b949e">Effective prompt — <span id="agentPromptSource" style="font-weight:600"></span></span>
+              <button class="btn-tool-ctrl" onclick="document.getElementById('agentPromptPreview').style.display='none'" style="font-size:0.75em">✕</button>
+            </div>
+            <div id="agentPromptSourceBadge" style="margin-bottom:6px;font-size:0.75em"></div>
+            <pre id="agentPromptPreviewText" style="background:#0d1117;border:1px solid #30363d;border-radius:6px;padding:10px;font-size:0.78em;white-space:pre-wrap;max-height:300px;overflow-y:auto;color:#c9d1d9;margin:0"></pre>
+            <div style="margin-top:6px;font-size:0.78em;color:#8b949e">
+              Tools: <span id="agentPromptTools" style="color:#c9d1d9"></span>
+            </div>
+            <div id="agentAutoInjectedRow" style="margin-top:2px;font-size:0.78em;color:#8b949e;display:none">
+              Auto-injected (pipeline): <span id="agentAutoInjectedTools" style="color:#58a6ff"></span>
+            </div>
+          </div>
         </div>
 
         <!-- Permissions -->
@@ -286,15 +311,13 @@
         <!-- Raw files (advanced) -->
         <div class="editor-section">
           <details>
-            <summary>Raw Files (manifest.yaml / prompts.py)</summary>
+            <summary>Raw manifest.yaml</summary>
             <div style="margin-top:10px">
-              <div class="editor-file-label">manifest.yaml</div>
               <textarea id="agentManifest" class="editor-textarea" rows="14" spellcheck="false"></textarea>
-              <div class="editor-file-label" style="margin-top:10px">prompts.py</div>
-              <textarea id="agentPrompts" class="editor-textarea" rows="8" spellcheck="false"></textarea>
             </div>
           </details>
         </div>
+        <input type="hidden" id="agentPrompts">
 
         <!-- Test agent -->
         <div class="editor-section">

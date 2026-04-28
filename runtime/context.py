@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 import logging
 from typing import Any
 
@@ -11,43 +10,23 @@ from common.models import AgentManifest, MemoryRecord
 log = logging.getLogger(__name__)
 
 
-def _load_supplement(agent_name: str, effort: str | None = None) -> str:
-    """Load the system supplement from an agent's prompts module.
-
-    If the module exports EFFORT_SUPPLEMENTS dict and effort is specified,
-    uses the effort-specific supplement. Otherwise falls back to SYSTEM_SUPPLEMENT.
-    """
-    try:
-        module_name = agent_name.replace("-", "_")
-        mod = importlib.import_module(f"agents.{module_name}.prompts")
-    except (ModuleNotFoundError, ImportError):
-        return ""
-
-    # Try effort-specific supplement first
-    if effort:
-        effort_map = getattr(mod, "EFFORT_SUPPLEMENTS", {})
-        if effort in effort_map:
-            return effort_map[effort]
-
-    return getattr(mod, "SYSTEM_SUPPLEMENT", "")
-
-
 def build_system_prompt(
     manifest: AgentManifest,
     tool_schemas: list[dict[str, Any]],
     effort: str | None = None,
 ) -> str:
-    """Build the system prompt from manifest and available tools."""
+    """Build the default system prompt from manifest and available tools.
+
+    This is only used when no system_prompt_override is set on the task.
+    All agent-specific prompt content should live in the DB (set via the
+    Agents UI), not in baked-image files.
+    """
     tool_list = "\n".join(
         f"- {t['function']['name']}: {t['function']['description']}"
         for t in tool_schemas
     )
 
-    supplement = _load_supplement(manifest.name, effort)
-    if supplement:
-        log.info("Loaded system supplement for agent '%s' (effort=%s)", manifest.name, effort or "default")
-
-    base = f"""You are {manifest.role}.
+    return f"""You are {manifest.role}.
 Your goal: {manifest.goal}
 
 # CRITICAL RULE
@@ -70,8 +49,6 @@ Call one of your tools to take action.
 2. If a tool call fails, read the error and try a different approach. Do not give up.
 3. Only respond without a tool call when the ENTIRE task is complete.
 """
-
-    return base + supplement
 
 
 def build_user_message(instruction: str, context_records: list[MemoryRecord]) -> str:

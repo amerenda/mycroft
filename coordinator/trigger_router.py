@@ -13,18 +13,18 @@ from common.models import AgentManifest
 log = logging.getLogger(__name__)
 
 
-def _extract_system_supplement(text: str) -> str:
-    """If text is a Python prompts.py file, extract the SYSTEM_SUPPLEMENT value.
-    Otherwise return the text as-is (already plain prompt text)."""
+def _extract_prompt_text(text: str) -> str:
+    """Return plain prompt text from DB prompts field.
+
+    New saves from the UI are stored as plain text directly.
+    Old records seeded before this change may still be in Python prompts.py
+    format (SYSTEM_SUPPLEMENT = \"\"\"...\"\"\"). Handle both for backward compat.
+    """
     if "SYSTEM_SUPPLEMENT" not in text:
-        return text
-    try:
-        ns: dict = {}
-        exec(compile(text, "<prompts>", "exec"), ns)  # noqa: S102
-        val = ns.get("SYSTEM_SUPPLEMENT") or ns.get("SYSTEM_PROMPT") or ""
-        return val.strip() if val else text
-    except Exception:
-        return text
+        return text.strip()
+    import re
+    m = re.search(r'SYSTEM_SUPPLEMENT\s*=\s*"""\s*([\s\S]*?)\s*"""', text)
+    return m.group(1).strip() if m else text.strip()
 
 
 class TriggerRouter:
@@ -52,7 +52,7 @@ class TriggerRouter:
             manifest = AgentManifest(**data)
             self.manifests[manifest.name] = manifest
             if prompts_text:
-                self.prompts[manifest.name] = _extract_system_supplement(prompts_text)
+                self.prompts[manifest.name] = _extract_prompt_text(prompts_text)
             log.info("Registered agent from DB: %s", manifest.name)
             return manifest
         except Exception as e:

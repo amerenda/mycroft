@@ -483,8 +483,11 @@ async function previewPrompt() {
 
     const panel = document.getElementById('promptPanel');
     panel.style.display = 'block';
+    const srcLabel = r.system_prompt_source === 'db'
+      ? '<span style="color:#3fb950">✓ DB prompt</span>'
+      : '<span style="color:#e3b341">⚠ built-in default (no DB prompt set)</span>';
     panel.querySelector('#promptContent').innerHTML = `
-      <div class="msg msg-system"><div class="role">System Prompt</div><pre>${esc(r.system_prompt)}</pre></div>
+      <div class="msg msg-system"><div class="role">System Prompt — ${srcLabel}</div><pre>${esc(r.system_prompt)}</pre></div>
       <div class="msg msg-user"><div class="role">User Message</div><pre>${esc(r.user_message)}</pre></div>
       <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${r.tools.join(', ')} | Model: ${r.model}</p>`;
     const spEl = document.getElementById('systemPrompt');
@@ -962,12 +965,36 @@ function _setPerms(yaml, readLines, writeLines) {
 }
 
 function _extractSystemPrompt(prompts) {
+  // Backward compat: handle old Python prompts.py format stored in DB
   const m = prompts.match(/SYSTEM_SUPPLEMENT\s*=\s*"""\s*([\s\S]*?)\s*"""/);
-  return m ? m[1].trim() : '';
+  return m ? m[1].trim() : prompts.trim();
 }
 
-function _wrapSystemPrompt(name, content) {
-  return `"""System prompt for ${name}."""\n\nSYSTEM_SUPPLEMENT = """\n${content}\n"""\n`;
+async function previewAgentPrompt() {
+  if (!_currentAgent) return;
+  const pipeline = document.getElementById('previewPipeline').checked;
+  const isLastStep = document.getElementById('previewLastStep').checked;
+  try {
+    const r = await api(`/api/agents/${_currentAgent}/effective-prompt?pipeline=${pipeline}&is_last_step=${isLastStep}`);
+    const panel = document.getElementById('agentPromptPreview');
+    panel.style.display = '';
+    const sourceLabel = r.source === 'db' ? '✓ from DB (your prompt)' : '⚠ built-in default (no DB prompt set)';
+    const sourceColor = r.source === 'db' ? '#3fb950' : '#e3b341';
+    document.getElementById('agentPromptSource').textContent = sourceLabel;
+    document.getElementById('agentPromptSource').style.color = sourceColor;
+    document.getElementById('agentPromptPreviewText').textContent = r.system_prompt;
+    const manifestTools = r.manifest_tools.length ? r.manifest_tools.join(', ') : '(none)';
+    document.getElementById('agentPromptTools').textContent = manifestTools;
+    const autoRow = document.getElementById('agentAutoInjectedRow');
+    if (r.auto_injected_tools.length) {
+      autoRow.style.display = '';
+      document.getElementById('agentAutoInjectedTools').textContent = r.auto_injected_tools.join(', ');
+    } else {
+      autoRow.style.display = 'none';
+    }
+  } catch (e) {
+    alert('Preview failed: ' + e.message);
+  }
 }
 
 async function loadAgents() {
@@ -1001,8 +1028,6 @@ async function selectAgent(name) {
     _currentAgent = name;
     document.getElementById('agentName').value = name;
     document.getElementById('agentManifest').value = a.manifest;
-    document.getElementById('agentPrompts').value = a.prompts || '';
-
     // Structured fields
     const model = _extractYamlField(a.manifest, 'model');
     const agentModelEl = document.getElementById('agentModel');
@@ -1025,7 +1050,10 @@ async function selectAgent(name) {
       agentWriterEl.insertBefore(opt, agentWriterEl.options[1] || null);
     }
     agentWriterEl.value = writerModel || '';
+    // prompts field is now plain text; handle old Python-format records for backward compat
     document.getElementById('agentSystemPrompt').value = _extractSystemPrompt(a.prompts || '');
+    // Reset preview panel when switching agents
+    document.getElementById('agentPromptPreview').style.display = 'none';
 
     const tools = _extractTools(a.manifest);
     const allGroups = _allGroupNames();
@@ -1052,7 +1080,6 @@ function newAgent() {
   _currentAgent = null;
   document.getElementById('agentName').value = '';
   document.getElementById('agentManifest').value = AGENT_MANIFEST_TEMPLATE;
-  document.getElementById('agentPrompts').value = '';
   document.getElementById('agentModel').value = 'qwen3:14b';
   document.getElementById('agentMaxIterations').value = '10';
   document.getElementById('agentMaxConcurrent').value = '';
@@ -1097,10 +1124,8 @@ async function saveAgent() {
     .map(t => t);
   manifest = _setTools(manifest, toolEntries);
 
-  const sysPrompt = document.getElementById('agentSystemPrompt').value.trim();
-  const prompts = sysPrompt
-    ? _wrapSystemPrompt(name, sysPrompt)
-    : document.getElementById('agentPrompts').value;
+  // System prompt stored as plain text — no Python wrapping
+  const prompts = document.getElementById('agentSystemPrompt').value.trim();
 
   // Sync permissions textareas → manifest YAML
   const readLines = document.getElementById('agentPermsRead').value;
@@ -1110,7 +1135,6 @@ async function saveAgent() {
   }
 
   document.getElementById('agentManifest').value = manifest;
-  document.getElementById('agentPrompts').value = prompts;
 
   try {
     const result = await api('/api/agents/' + name, {
@@ -1135,7 +1159,7 @@ async function cloneAgent() {
   const name = newName.trim();
   let manifest = document.getElementById('agentManifest').value;
   manifest = _updateYamlField(manifest, 'name', name);
-  const prompts = document.getElementById('agentPrompts').value;
+  const prompts = document.getElementById('agentSystemPrompt').value.trim();
   try {
     const result = await api('/api/agents/' + name, {
       method: 'PUT',
