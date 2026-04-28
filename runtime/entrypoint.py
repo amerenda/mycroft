@@ -121,8 +121,10 @@ def main():
             return
         asyncio.run(_run_cli(manifest, task, platform))
     else:
+        effective_max_iter = min(task.max_iterations_override or manifest.max_iterations,
+                                 platform.global_max_iterations)
         log.info("Starting agent: type=%s task=%s model=%s max_iter=%d",
-                 agent_type, task_id[:8], manifest.model, platform.global_max_iterations)
+                 agent_type, task_id[:8], manifest.model, effective_max_iter)
         asyncio.run(_run_argo(manifest, task, platform))
 
 

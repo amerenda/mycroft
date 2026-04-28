@@ -269,6 +269,7 @@ async def _start_dynamic_pipeline(
         "instruction": instruction,
         "model_override": step.get("model") or None,
         "max_iterations_override": step.get("max_iterations") or None,
+        "max_tokens": step.get("max_tokens") or None,
         "tools_override": step.get("tools") or None,
         "system_prompt_override": step_prompt,
         "context_injection": [original_scope],

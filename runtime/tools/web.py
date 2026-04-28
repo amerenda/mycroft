@@ -127,7 +127,7 @@ _NOISE_DOMAINS: frozenset[str] = frozenset({
 
 # Minimum SearXNG score to include a result. Results below this threshold
 # are typically single-engine noise with no corroboration.
-_MIN_SCORE = float(os.environ.get("SEARXNG_MIN_SCORE", "0.3"))
+_MIN_SCORE = float(os.environ.get("SEARXNG_MIN_SCORE", "0.1"))
 
 
 def _is_noise(result: dict) -> bool:
