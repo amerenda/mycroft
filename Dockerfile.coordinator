@@ -18,7 +18,6 @@ COPY common/ ./common/
 COPY coordinator/ ./coordinator/
 COPY runtime/ ./runtime/
 COPY agents/ ./agents/
-COPY workflows/ ./workflows/
 
 RUN mkdir -p /home/mycroft/.forge && chown -R mycroft:mycroft /home/mycroft
 USER mycroft
