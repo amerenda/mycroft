@@ -111,7 +111,7 @@ async function runTask() {
 // ── Forge runner ──────────────────────────────────────────────────────────────
 
 async function runForge(instruction) {
-  const model = document.getElementById('model').value || '';
+  const model = document.getElementById('model')?.value || '';
   const repo = document.getElementById('repo').value.trim();
   const systemPrompt = document.getElementById('systemPrompt').value.trim();
 
@@ -468,7 +468,7 @@ async function previewPrompt() {
       body: JSON.stringify({
         agent_type: agentType,
         instruction,
-        model: document.getElementById('model').value || null,
+        model: document.getElementById('model')?.value || null,
       }),
     });
 
