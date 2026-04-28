@@ -174,8 +174,8 @@ async def lifespan(app: FastAPI):
 
     # Periodic heartbeat to llm-manager (keeps app "online")
     _heartbeat_task = None
-    if llm_api_key:
-        _heartbeat_task = asyncio.create_task(_llm_heartbeat_loop(config.llm_manager_url, llm_api_key))
+    if config.llm_manager_api_key:
+        _heartbeat_task = asyncio.create_task(_llm_heartbeat_loop(config.llm_manager_url, config.llm_manager_api_key))
 
     # Periodic cleanup of expired short-term KB records (every hour)
     async def _kb_cleanup_loop():
