@@ -12,8 +12,9 @@ import httpx
 
 log = logging.getLogger(__name__)
 
-JOB_TIMEOUT = 3600  # 1 hour — queue can be long under GPU contention
-JOB_POLL_INTERVAL = 2  # seconds between status polls
+JOB_TIMEOUT = 3600       # 1 hour — total timeout for inference under GPU contention
+QUEUE_WAIT_TIMEOUT = 300 # 5 min — if still queued after this, no runner is available
+JOB_POLL_INTERVAL = 2    # seconds between status polls
 
 
 @dataclass
@@ -144,6 +145,7 @@ class LLMClient:
         last_status = None
         t_start = time.monotonic()
         t_running = None
+        t_first_queued = None
 
         try:
             while elapsed < JOB_TIMEOUT:
@@ -155,10 +157,26 @@ class LLMClient:
                 if status != last_status:
                     if status == "running" and t_running is None:
                         t_running = time.monotonic()
+                    if status == "queued" and t_first_queued is None:
+                        t_first_queued = time.monotonic()
                     log.info("Queue job %s: %s%s", job_id, status,
                              self._status_detail(status, model))
                     self._emit("llm_job_status", {"model": model, "status": status})
                     last_status = status
+
+                # Fast-fail if no runner has picked up the job within QUEUE_WAIT_TIMEOUT.
+                # Staying in 'queued' this long means no runner is available for the model.
+                if status == "queued" and t_first_queued is not None:
+                    queued_secs = time.monotonic() - t_first_queued
+                    if queued_secs > QUEUE_WAIT_TIMEOUT:
+                        try:
+                            await self._client.delete(f"/api/queue/jobs/{job_id}")
+                        except Exception:
+                            pass
+                        raise RuntimeError(
+                            f"LLM job {job_id} stuck in queue for {queued_secs:.0f}s — "
+                            f"no runner available for model '{model}'"
+                        )
 
                 if status == "completed":
                     t_done = time.monotonic()
