@@ -155,8 +155,8 @@ def load_tools(
     or individual tool names ("web_search"). extra_groups overrides/extends the
     built-in group map with DB-defined groups.
 
-    scratch_read, scratch_write, and submit_report are only loaded if explicitly listed
-    in tool_names — configure per-agent in the UI and instruct via prompt.
+    Pipeline steps (kb_dsn + scratch_scope set) silently get scratch_read, scratch_write,
+    and finish — pure pipeline infrastructure. submit_report must be declared explicitly.
     """
     groups = {**_BUILTIN_GROUPS, **(extra_groups or {})}
 
@@ -219,20 +219,14 @@ def load_tools(
             "todo_update_task": TodoUpdateTask(),
         })
 
-    if selected & {"scratch_read", "scratch_write"} and kb_dsn and scratch_scope:
-        from runtime.tools.kb import ScratchRead, ScratchWrite
-        if "scratch_read" in selected:
-            all_tools["scratch_read"] = ScratchRead(kb_dsn, scratch_scope)
-        if "scratch_write" in selected:
-            all_tools["scratch_write"] = ScratchWrite(kb_dsn, scratch_scope)
-
     if "submit_report" in selected:
         all_tools["submit_report"] = SubmitReport()
 
     tools = [all_tools[n] for n in selected if n in all_tools]
 
     if kb_dsn and scratch_scope:
-        tools.append(Finish())
+        from runtime.tools.kb import ScratchRead, ScratchWrite
+        tools += [ScratchRead(kb_dsn, scratch_scope), ScratchWrite(kb_dsn, scratch_scope), Finish()]
 
     log.info("Loaded %d tools: %s", len(tools), [t.name for t in tools])
     return ToolRegistry(tools)
