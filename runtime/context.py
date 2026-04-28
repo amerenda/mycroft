@@ -15,18 +15,26 @@ def build_system_prompt(
     tool_schemas: list[dict[str, Any]],
     effort: str | None = None,
 ) -> str:
+    # Prepend thinking control token for models that support it (e.g. qwen3).
+    # Only injected when explicitly set in the manifest — absent = model default.
     """Build the default system prompt from manifest and available tools.
 
     This is only used when no system_prompt_override is set on the task.
     All agent-specific prompt content should live in the DB (set via the
     Agents UI), not in baked-image files.
     """
+    thinking_prefix = ""
+    if manifest.thinking is True:
+        thinking_prefix = "/think\n\n"
+    elif manifest.thinking is False:
+        thinking_prefix = "/no_think\n\n"
+
     tool_list = "\n".join(
         f"- {t['function']['name']}: {t['function']['description']}"
         for t in tool_schemas
     )
 
-    return f"""You are {manifest.role}.
+    return thinking_prefix + f"""You are {manifest.role}.
 Your goal: {manifest.goal}
 
 # CRITICAL RULE

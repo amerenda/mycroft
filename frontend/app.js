@@ -1035,6 +1035,8 @@ async function selectAgent(name) {
     document.getElementById('agentMaxIterations').value = _extractYamlField(a.manifest, 'max_iterations');
     document.getElementById('agentMaxConcurrent').value = _extractYamlField(a.manifest, 'max_concurrent');
     document.getElementById('agentWebReadMax').value = _extractYamlField(a.manifest, 'web_read_max_chars');
+    const thinkingVal = _extractYamlField(a.manifest, 'thinking');
+    document.getElementById('agentThinking').value = thinkingVal === null || thinkingVal === undefined ? '' : String(thinkingVal);
     document.getElementById('agentMemory').value = _extractResourceField(a.manifest, 'memory');
     document.getElementById('agentCpu').value = _extractResourceField(a.manifest, 'cpu');
     document.getElementById('agentScratch').value = _extractResourceField(a.manifest, 'scratch');
@@ -1072,6 +1074,7 @@ function newAgent() {
   document.getElementById('agentMaxIterations').value = '10';
   document.getElementById('agentMaxConcurrent').value = '';
   document.getElementById('agentWebReadMax').value = '';
+  document.getElementById('agentThinking').value = '';
   document.getElementById('agentMemory').value = '';
   document.getElementById('agentCpu').value = '';
   document.getElementById('agentScratch').value = '';
@@ -1102,6 +1105,10 @@ async function saveAgent() {
   const webReadMax = document.getElementById('agentWebReadMax').value;
   if (webReadMax) manifest = _updateYamlField(manifest, 'web_read_max_chars', parseInt(webReadMax));
   else manifest = _removeYamlField(manifest, 'web_read_max_chars');
+  const thinkingSelect = document.getElementById('agentThinking').value;
+  if (thinkingSelect === 'true') manifest = _updateYamlField(manifest, 'thinking', true);
+  else if (thinkingSelect === 'false') manifest = _updateYamlField(manifest, 'thinking', false);
+  else manifest = _removeYamlField(manifest, 'thinking');
   const memory = document.getElementById('agentMemory').value.trim();
   const cpu = document.getElementById('agentCpu').value.trim();
   const scratch = document.getElementById('agentScratch').value.trim();

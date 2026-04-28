@@ -59,6 +59,7 @@ class AgentManifest(BaseModel):
     max_concurrent: int = 2
     max_iterations: int = 10
     web_read_max_chars: int | None = None
+    thinking: bool | None = None
     resources: AgentResources = Field(default_factory=AgentResources)
     tools: list[str] = Field(default_factory=list)
     permissions: AgentPermissions = Field(default_factory=AgentPermissions)
