@@ -234,21 +234,16 @@ class AgentRunner:
                 for tc in response.tool_calls:
                     log.info("Tool call: %s(%s)", tc.name, tc.arguments[:100])
 
-                    if tc.name == "submit_report":
-                        try:
-                            args = json.loads(tc.arguments) if tc.arguments else {}
-                        except json.JSONDecodeError:
-                            args = {}
-                        content = args.get("content", "")
-                        log.info("Agent submitted via submit_report (%d chars)", len(content))
-                        return content
-
                     agent_tool_calls_total.labels(
                         agent_type=self.manifest.name, tool=tc.name).inc()
                     t_tool = time.monotonic()
                     result = await self.tools.execute(tc.name, tc.arguments)
                     agent_tool_call_seconds.labels(tool=tc.name).observe(
                         time.monotonic() - t_tool)
+
+                    if tc.name in ("finish", "submit_report"):
+                        log.info("Step terminated via %s (%d chars)", tc.name, len(result))
+                        return result
 
                     self.messages.append({
                         "role": "tool",
@@ -285,21 +280,26 @@ class AgentRunner:
             log.info("Agent finished: %s", response.content[:200])
             return response.content
 
-        limit_msg = (
-            f"Hit iteration limit ({self.max_iterations}). "
-            f"Task: {self.task.instruction[:100]}"
+        # Force-finish: return the last substantive assistant message as output
+        last_content = next(
+            (m["content"] for m in reversed(self.messages)
+             if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()),
+            "",
         )
-        log.warning(limit_msg)
+        log.warning("Max iterations (%d) reached without finish call — force-finishing (%d chars)",
+                    self.max_iterations, len(last_content))
 
-        # Notify Alex
         await self.kb.write(
             scope=f"/notifications/alex/{self.task.id}",
-            content=limit_msg,
+            content=(
+                f"Agent {self.manifest.name} hit iteration limit ({self.max_iterations}) "
+                f"without calling finish. Force-finished. Task: {self.task.instruction[:100]}"
+            ),
             needs_embedding=False,
             source=f"{self.manifest.name}/{self.task.id}",
         )
 
-        return limit_msg
+        return last_content
 
     async def _persist_conversation(self) -> None:
         """Save conversation history to KB for restart safety."""

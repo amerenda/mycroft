@@ -9,18 +9,18 @@ from typing import Any, Protocol
 log = logging.getLogger(__name__)
 
 
-class SubmitReport:
-    """Pipeline tool: submit final output and end the agent loop immediately."""
+class Finish:
+    """Silently-injected terminator: signal step completion and pass output to the next step."""
 
     @property
     def name(self) -> str:
-        return "submit_report"
+        return "finish"
 
     @property
     def description(self) -> str:
         return (
-            "Submit your final output and end your turn. Call this exactly once with the complete "
-            "content. The pipeline will stop immediately after this — do not call any other tool."
+            "Signal that this step is complete. Pass your output in `content` — "
+            "it will be available to the next pipeline step. Call this exactly once when done."
         )
 
     @property
@@ -30,14 +30,45 @@ class SubmitReport:
             "properties": {
                 "content": {
                     "type": "string",
-                    "description": "The complete output (Markdown, plain text, etc.)",
+                    "description": "Output to pass to the next step.",
                 }
             },
             "required": ["content"],
         }
 
     async def execute(self, args: dict[str, Any]) -> str:
-        return "Submitted."
+        return args.get("content", "")
+
+
+class SubmitReport:
+    """Explicit tool for workflows that produce a user-facing report."""
+
+    @property
+    def name(self) -> str:
+        return "submit_report"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Submit a completed, formatted report as the final output of this step. "
+            "Call this exactly once with the full report content."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The complete formatted report (Markdown).",
+                }
+            },
+            "required": ["content"],
+        }
+
+    async def execute(self, args: dict[str, Any]) -> str:
+        return args.get("content", "")
 
 
 class Tool(Protocol):
@@ -199,6 +230,9 @@ def load_tools(
         all_tools["submit_report"] = SubmitReport()
 
     tools = [all_tools[n] for n in selected if n in all_tools]
+
+    if kb_dsn and scratch_scope:
+        tools.append(Finish())
 
     log.info("Loaded %d tools: %s", len(tools), [t.name for t in tools])
     return ToolRegistry(tools)
