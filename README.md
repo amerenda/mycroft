@@ -120,10 +120,13 @@ Every agent sees the original brief verbatim — no telephone effect, no coordin
 
 ### Scratch Space
 
-All agents in a pipeline share a scratch record at `/runs/{run_id}/scratch`. Two tools are auto-injected for pipeline agents:
+All agents in a pipeline share a scratch record at `/runs/{run_id}/scratch`. Three tools are auto-injected for all pipeline agents regardless of their manifest `tools:` list:
 
 - **`scratch_read`** — read current scratch content
 - **`scratch_write`** — overwrite scratch entirely (last write wins)
+- **`submit_report`** — submit the agent's final output and exit the loop immediately
+
+`submit_report` is the correct way for pipeline output steps (e.g. `report-writer`) to return content. The runner intercepts the call and returns its `content` argument directly — no further iterations run. Models reliably prefer calling a tool over emitting plain text, so this is more robust than prompting for a text response.
 
 Scratch is for mid-run coordination flags and notes. Full step outputs live in `/runs/{run_id}/step-{n}/output` and are never overwritten.
 
@@ -183,10 +186,38 @@ Images:
 
 ---
 
+---
+
+## Agent Configuration — Source of Truth
+
+Agent configuration lives in the **database**, managed through the **Agents UI tab**. The files under `agents/` are for local reference and initial seeding only — they are not the runtime source of truth.
+
+### What the coordinator reads at startup
+
+- `agents/<name>/manifest.yaml` — loaded via `trigger_router.load_manifests()` as a fallback if the agent has no DB record
+- `agents/<name>/prompts.py` — **NOT read at runtime**. This file is dead code for the coordinator. It exists as a reference template for copy-pasting into the UI.
+
+### How it actually works
+
+```
+startup: load_manifests() → reads manifest.yaml → populates trigger_router (no prompts)
+DB poll: register()       → reads agent_definitions table → overwrites trigger_router entry (with prompts)
+```
+
+The DB version always overwrites the file version. Prompts only enter the system via `register()` (DB path). `trigger_router.get_prompts()` returns `""` for any agent not loaded from DB, so file-based `prompts.py` changes never reach the LLM.
+
+### Rules
+
+- **Edit agents via the UI, not git.** Changes to `agents/*/manifest.yaml` or `agents/*/prompts.py` have no effect while the coordinator is running with a DB record for that agent.
+- **Prompts are DB-only.** Do not try to manage system prompts through gitops — there is no mechanism to push file contents into the DB automatically. Update prompts in the Agents tab.
+- `agents/<name>/manifest.yaml` files are useful for: bootstrapping a new agent into a fresh DB, local reference, and documentation. Keep them in sync with the DB as a best-effort human record.
+
+---
+
 ## Key Conventions
 
 - All LLM calls route through `llm-manager` (never call Ollama/Anthropic directly)
-- **DB always wins**: agent manifests are seeded from `agents/<name>/manifest.yaml` once (if not already in DB), then the DB is authoritative — edit agents via the UI, not git
+- **DB always wins**: agent manifests and prompts are seeded from `agents/<name>/manifest.yaml` once (if not already in DB), then the DB is authoritative — edit agents via the UI, not git
 - **`@group` tool syntax**: agent tool lists support `"@web"`, `"@files"`, etc. to reference DB-defined tool groups; the `@` prefix must be YAML-quoted (`"@web"`, not `@web`)
 - Agents communicate via KB paths, never directly to each other
 - Conversation history is persisted to the KB each iteration (restart safety)
