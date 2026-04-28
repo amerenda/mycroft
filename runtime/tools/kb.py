@@ -47,17 +47,21 @@ class ScratchRead:
 class ScratchWrite:
     name = "scratch_write"
     description = (
-        "Update the shared scratch space for this workflow run. "
+        "Write to the shared scratch space for this workflow run. "
         "All agents in this pipeline can read it. "
         "Use it to leave key facts, URLs, or partial findings for later steps. "
-        "Overwrites the current content — include anything you want to preserve."
+        "Set append=true to add to existing notes; omit or set false to overwrite."
     )
     parameters = {
         "type": "object",
         "properties": {
             "content": {
                 "type": "string",
-                "description": "New scratch content. Replaces whatever was there before.",
+                "description": "Content to write to scratch.",
+            },
+            "append": {
+                "type": "boolean",
+                "description": "If true, append to existing scratch content. If false (default), overwrite.",
             },
         },
         "required": ["content"],
@@ -71,9 +75,18 @@ class ScratchWrite:
         import uuid
         import asyncpg
         content = args.get("content", "")
+        append = args.get("append", False)
         conn = await asyncpg.connect(self._kb_dsn)
         try:
             async with conn.transaction():
+                if append:
+                    row = await conn.fetchrow(
+                        "SELECT content FROM memory_records WHERE scope = $1 "
+                        "ORDER BY created_at DESC LIMIT 1",
+                        self._scope,
+                    )
+                    existing = row["content"] if row else ""
+                    content = (existing + "\n\n" + content).strip() if existing else content
                 await conn.execute(
                     "DELETE FROM memory_records WHERE scope = $1", self._scope
                 )
@@ -88,7 +101,8 @@ class ScratchWrite:
                     str(uuid.uuid4()), content, self._scope,
                     [], json.dumps({}), 0.5, "agent-scratch",
                 )
-            log.info("Scratch updated: scope=%s len=%d", self._scope, len(content))
-            return f"Scratch updated ({len(content)} chars)."
+            log.info("Scratch %s: scope=%s len=%d", "appended" if append else "updated",
+                     self._scope, len(content))
+            return f"Scratch {'appended' if append else 'updated'} ({len(content)} chars)."
         finally:
             await conn.close()
