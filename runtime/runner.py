@@ -261,6 +261,15 @@ class AgentRunner:
                 for tc in response.tool_calls:
                     log.info("Tool call: %s(%s)", tc.name, tc.arguments[:100])
 
+                    if tc.name == "submit_report":
+                        try:
+                            args = json.loads(tc.arguments) if tc.arguments else {}
+                        except json.JSONDecodeError:
+                            args = {}
+                        content = args.get("content", "")
+                        log.info("Agent submitted via submit_report (%d chars)", len(content))
+                        return content
+
                     # Track report writes
                     if tc.name == "write_file" and "report" in tc.arguments.lower():
                         self._has_written_report = True

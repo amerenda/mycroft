@@ -9,6 +9,37 @@ from typing import Any, Protocol
 log = logging.getLogger(__name__)
 
 
+class SubmitReport:
+    """Pipeline tool: submit final output and end the agent loop immediately."""
+
+    @property
+    def name(self) -> str:
+        return "submit_report"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Submit your final output and end your turn. Call this exactly once with the complete "
+            "content. The pipeline will stop immediately after this — do not call any other tool."
+        )
+
+    @property
+    def parameters(self) -> dict[str, Any]:
+        return {
+            "type": "object",
+            "properties": {
+                "content": {
+                    "type": "string",
+                    "description": "The complete output (Markdown, plain text, etc.)",
+                }
+            },
+            "required": ["content"],
+        }
+
+    async def execute(self, args: dict[str, Any]) -> str:
+        return "Submitted."
+
+
 class Tool(Protocol):
     """Interface that all agent tools must implement."""
 
@@ -159,7 +190,7 @@ def load_tools(
 
     if kb_dsn and scratch_scope:
         from runtime.tools.kb import ScratchRead, ScratchWrite
-        tools += [ScratchRead(kb_dsn, scratch_scope), ScratchWrite(kb_dsn, scratch_scope)]
+        tools += [ScratchRead(kb_dsn, scratch_scope), ScratchWrite(kb_dsn, scratch_scope), SubmitReport()]
 
     log.info("Loaded %d tools: %s", len(tools), [t.name for t in tools])
     return ToolRegistry(tools)
