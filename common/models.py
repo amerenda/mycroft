@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 # ---------------------------------------------------------------------------
@@ -52,6 +52,11 @@ class AgentManifest(BaseModel):
     model: str = "claude-sonnet-4-20250514"
     writer_model: str = ""  # optional second model for report writing
     backend: str = "k8s"
+
+    @field_validator("writer_model", "role", "goal", "model", "backend", mode="before")
+    @classmethod
+    def _coerce_none_str(cls, v: object) -> object:
+        return v if v is not None else ""
     max_concurrent: int = 2
     max_iterations: int = 10
     resources: AgentResources = Field(default_factory=AgentResources)

@@ -972,25 +972,33 @@ function _extractSystemPrompt(prompts) {
 
 async function previewAgentPrompt() {
   if (!_currentAgent) return;
-  const pipeline = document.getElementById('previewPipeline').checked;
-  const isLastStep = document.getElementById('previewLastStep').checked;
+  const pipelineEl = document.getElementById('previewPipeline');
+  const lastStepEl = document.getElementById('previewLastStep');
+  const pipeline = pipelineEl ? pipelineEl.checked : false;
+  const isLastStep = lastStepEl ? lastStepEl.checked : false;
   try {
     const r = await api(`/api/agents/${_currentAgent}/effective-prompt?pipeline=${pipeline}&is_last_step=${isLastStep}`);
     const panel = document.getElementById('agentPromptPreview');
+    if (!panel) return;
     panel.style.display = '';
     const sourceLabel = r.source === 'db' ? '✓ from DB (your prompt)' : '⚠ built-in default (no DB prompt set)';
     const sourceColor = r.source === 'db' ? '#3fb950' : '#e3b341';
-    document.getElementById('agentPromptSource').textContent = sourceLabel;
-    document.getElementById('agentPromptSource').style.color = sourceColor;
-    document.getElementById('agentPromptPreviewText').textContent = r.system_prompt;
-    const manifestTools = r.manifest_tools.length ? r.manifest_tools.join(', ') : '(none)';
-    document.getElementById('agentPromptTools').textContent = manifestTools;
+    const sourceEl = document.getElementById('agentPromptSource');
+    if (sourceEl) { sourceEl.textContent = sourceLabel; sourceEl.style.color = sourceColor; }
+    const previewText = document.getElementById('agentPromptPreviewText');
+    if (previewText) previewText.textContent = r.system_prompt || '';
+    const manifestTools = (r.manifest_tools || []).length ? r.manifest_tools.join(', ') : '(none)';
+    const toolsEl = document.getElementById('agentPromptTools');
+    if (toolsEl) toolsEl.textContent = manifestTools;
     const autoRow = document.getElementById('agentAutoInjectedRow');
-    if (r.auto_injected_tools.length) {
-      autoRow.style.display = '';
-      document.getElementById('agentAutoInjectedTools').textContent = r.auto_injected_tools.join(', ');
-    } else {
-      autoRow.style.display = 'none';
+    if (autoRow) {
+      if ((r.auto_injected_tools || []).length) {
+        autoRow.style.display = '';
+        const autoEl = document.getElementById('agentAutoInjectedTools');
+        if (autoEl) autoEl.textContent = r.auto_injected_tools.join(', ');
+      } else {
+        autoRow.style.display = 'none';
+      }
     }
   } catch (e) {
     alert('Preview failed: ' + e.message);
