@@ -874,6 +874,10 @@ function _updateYamlField(yaml, field, value) {
   return re.test(yaml) ? yaml.replace(re, `$1${value}`) : yaml + `\n${field}: ${value}`;
 }
 
+function _removeYamlField(yaml, field) {
+  return yaml.replace(new RegExp(`^${field}:.*\\n?`, 'm'), '');
+}
+
 function _extractResourceField(yaml, field) {
   const m = yaml.match(new RegExp(`^  ${field}:\\s*["']?([^"'\\n]+)["']?\\s*$`, 'm'));
   return m ? m[1].trim() : '';
@@ -1030,6 +1034,7 @@ async function selectAgent(name) {
     agentModelEl.value = model;
     document.getElementById('agentMaxIterations').value = _extractYamlField(a.manifest, 'max_iterations');
     document.getElementById('agentMaxConcurrent').value = _extractYamlField(a.manifest, 'max_concurrent');
+    document.getElementById('agentWebReadMax').value = _extractYamlField(a.manifest, 'web_read_max_chars');
     document.getElementById('agentMemory').value = _extractResourceField(a.manifest, 'memory');
     document.getElementById('agentCpu').value = _extractResourceField(a.manifest, 'cpu');
     document.getElementById('agentScratch').value = _extractResourceField(a.manifest, 'scratch');
@@ -1066,6 +1071,7 @@ function newAgent() {
   document.getElementById('agentModel').value = '';
   document.getElementById('agentMaxIterations').value = '10';
   document.getElementById('agentMaxConcurrent').value = '';
+  document.getElementById('agentWebReadMax').value = '';
   document.getElementById('agentMemory').value = '';
   document.getElementById('agentCpu').value = '';
   document.getElementById('agentScratch').value = '';
@@ -1093,6 +1099,9 @@ async function saveAgent() {
   if (maxIter) manifest = _updateYamlField(manifest, 'max_iterations', maxIter);
   const maxConcurrent = document.getElementById('agentMaxConcurrent').value;
   if (maxConcurrent) manifest = _updateYamlField(manifest, 'max_concurrent', maxConcurrent);
+  const webReadMax = document.getElementById('agentWebReadMax').value;
+  if (webReadMax) manifest = _updateYamlField(manifest, 'web_read_max_chars', parseInt(webReadMax));
+  else manifest = _removeYamlField(manifest, 'web_read_max_chars');
   const memory = document.getElementById('agentMemory').value.trim();
   const cpu = document.getElementById('agentCpu').value.trim();
   const scratch = document.getElementById('agentScratch').value.trim();

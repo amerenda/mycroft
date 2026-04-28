@@ -116,6 +116,7 @@ def load_tools(
     scratch_scope: str | None = None,
     extra_groups: dict[str, list[str]] | None = None,
     is_last_step: bool = False,
+    web_read_max_chars: int | None = None,
 ) -> ToolRegistry:
     """Load tools by name and return a registry.
 
@@ -175,9 +176,9 @@ def load_tools(
     if selected & {"web_read", "web_search", "wiki_read"}:
         from runtime.tools.web import WebRead, WebSearch, WikiRead
         all_tools.update({
-            "web_read": WebRead(),
+            "web_read": WebRead(max_chars=web_read_max_chars),
             "web_search": WebSearch(),
-            "wiki_read": WikiRead(),
+            "wiki_read": WikiRead(max_chars=web_read_max_chars),
         })
 
     if selected & {"todo_list_projects", "todo_get_tasks", "todo_create_task", "todo_update_task"}:

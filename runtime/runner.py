@@ -51,6 +51,7 @@ class AgentRunner:
             scratch_scope=scratch_scope,
             extra_groups=extra_groups,
             is_last_step=is_last_step,
+            web_read_max_chars=manifest.web_read_max_chars,
         )
 
         # LLM call params from task config (overridable via API/UI)

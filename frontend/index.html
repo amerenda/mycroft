@@ -235,6 +235,10 @@
               <label>Max Concurrent <span class="tip" data-tip="How many tasks of this agent type can run simultaneously.">ⓘ</span></label>
               <input id="agentMaxConcurrent" type="number" min="1" max="20" placeholder="2">
             </div>
+            <div class="form-group" style="margin-bottom:0;max-width:90px">
+              <label>Web Read Limit <span class="tip" data-tip="Max chars returned by web_read/wiki_read per call. Leave empty for no limit. Larger models can handle more (e.g. 30000). Smaller models may struggle with very long pages.">ⓘ</span></label>
+              <input id="agentWebReadMax" type="number" min="1000" step="1000" placeholder="No limit">
+            </div>
           </div>
         </div>
 

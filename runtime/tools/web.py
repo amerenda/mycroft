@@ -20,7 +20,7 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-MAX_OUTPUT_CHARS = 12000
+_DEFAULT_MAX_WEB_READ_CHARS: int | None = None  # no limit by default
 
 
 # ── Raw content fetching (internal, not a tool) ─────────────────────────────
@@ -255,6 +255,9 @@ class WebSearch:
 class WebRead:
     """Fetch a URL and return its cleaned text content."""
 
+    def __init__(self, max_chars: int | None = None):
+        self._max_chars = max_chars
+
     @property
     def name(self) -> str:
         return "web_read"
@@ -289,8 +292,8 @@ class WebRead:
         if not content:
             return f"Error: could not fetch content from {url}"
 
-        if len(content) > MAX_OUTPUT_CHARS:
-            content = content[:MAX_OUTPUT_CHARS] + "\n\n... (truncated)"
+        if self._max_chars is not None and len(content) > self._max_chars:
+            content = content[:self._max_chars] + "\n\n... (truncated)"
 
         elapsed = time.monotonic() - t0
         log.info("WebRead: %s → %d chars in %.1fs", url, len(content), elapsed)
@@ -301,6 +304,9 @@ class WebRead:
 
 class WikiRead:
     """Fetch a Wikipedia article via the REST API. Returns clean text."""
+
+    def __init__(self, max_chars: int | None = None):
+        self._max_chars = max_chars
 
     @property
     def name(self) -> str:
@@ -378,8 +384,8 @@ class WikiRead:
             log.warning("WikiRead failed for '%s': %s", topic, e)
             return f"Wikipedia article not found for: {topic}"
 
-        if len(content) > MAX_OUTPUT_CHARS:
-            content = content[:MAX_OUTPUT_CHARS] + "\n\n... (truncated)"
+        if self._max_chars is not None and len(content) > self._max_chars:
+            content = content[:self._max_chars] + "\n\n... (truncated)"
 
         elapsed = time.monotonic() - t0
         log.info("WikiRead: '%s' (full=%s) → %d chars in %.1fs", topic, full, len(content), elapsed)
