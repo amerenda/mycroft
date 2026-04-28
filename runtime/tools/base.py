@@ -124,9 +124,8 @@ def load_tools(
     or individual tool names ("web_search"). extra_groups overrides/extends the
     built-in group map with DB-defined groups.
 
-    kb_dsn + scratch_scope: when both are provided, submit_report is auto-injected.
-    scratch_read and scratch_write are only loaded if explicitly listed in tool_names —
-    configure them per-agent in the UI and instruct via prompt.
+    scratch_read, scratch_write, and submit_report are only loaded if explicitly listed
+    in tool_names — configure per-agent in the UI and instruct via prompt.
     """
     groups = {**_BUILTIN_GROUPS, **(extra_groups or {})}
 
@@ -196,10 +195,10 @@ def load_tools(
         if "scratch_write" in selected:
             all_tools["scratch_write"] = ScratchWrite(kb_dsn, scratch_scope)
 
-    tools = [all_tools[n] for n in selected if n in all_tools]
+    if "submit_report" in selected:
+        all_tools["submit_report"] = SubmitReport()
 
-    if kb_dsn and scratch_scope:
-        tools += [SubmitReport()]
+    tools = [all_tools[n] for n in selected if n in all_tools]
 
     log.info("Loaded %d tools: %s", len(tools), [t.name for t in tools])
     return ToolRegistry(tools)
