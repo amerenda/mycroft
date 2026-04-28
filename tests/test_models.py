@@ -20,7 +20,7 @@ class TestAgentManifest:
     def test_defaults(self):
         m = AgentManifest(name="test")
         assert m.name == "test"
-        assert m.model == "claude-sonnet-4-20250514"
+        assert m.model == ""
         assert m.max_iterations == 10
         assert m.max_concurrent == 2
         assert m.tools == []
