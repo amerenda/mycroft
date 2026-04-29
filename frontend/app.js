@@ -1337,13 +1337,43 @@ function _renderPipelineSteps() {
             onchange="updatePipelineStep(${i},'prompt_override',this.value)"
             placeholder="Leave empty to use agent default">${esc(step.prompt_override || '')}</textarea>
         </details>
+        <details${step.type === 'parallel' ? ' open' : ''} style="margin-top:6px">
+          <summary style="font-size:0.82em;color:#58a6ff;cursor:pointer">Parallel Fan-out <span class="tip" data-tip="Run this agent N times in parallel (one per decomposed angle), then pass all results to the next step. Optional: set a decompose model+prompt to have an LLM split the instruction into N distinct angles.">ⓘ</span></summary>
+          <div style="margin-top:8px">
+            <div class="form-row" style="margin-bottom:8px">
+              <div class="form-group" style="margin-bottom:0;max-width:140px">
+                <label>Type</label>
+                <select onchange="updatePipelineStep(${i},'type',this.value)">
+                  <option value="" ${!step.type || step.type === 'sequential' ? 'selected' : ''}>Sequential (default)</option>
+                  <option value="parallel" ${step.type === 'parallel' ? 'selected' : ''}>Parallel</option>
+                </select>
+              </div>
+              <div class="form-group" style="margin-bottom:0;max-width:80px">
+                <label>N <span class="tip" data-tip="Number of parallel instances to run.">ⓘ</span></label>
+                <input type="number" min="2" max="10" placeholder="3"
+                  value="${esc(String(step.n || ''))}"
+                  onchange="updatePipelineStep(${i},'n',this.value ? parseInt(this.value) : '')">
+              </div>
+              <div class="form-group" style="margin-bottom:0">
+                <label>Decompose Model <span class="tip" data-tip="LLM used to split the instruction into N angles. Leave blank to run the same instruction N times.">ⓘ</span></label>
+                <select onchange="updatePipelineStep(${i},'decompose_model',this.value)">${_modelOpts(step.decompose_model, '')}</select>
+              </div>
+            </div>
+            <div class="form-group" style="margin-bottom:0">
+              <label>Decompose Prompt <span class="tip" data-tip="Prompt sent to the decompose model. Use {instruction} and {n} as placeholders. Must return a JSON array of strings.">ⓘ</span></label>
+              <textarea class="editor-textarea" rows="3" style="margin-top:4px"
+                onchange="updatePipelineStep(${i},'decompose_prompt',this.value)"
+                placeholder="Split this into {n} focused angles. Return a JSON array of strings only. Request: {instruction}">${esc(step.decompose_prompt || '')}</textarea>
+            </div>
+          </div>
+        </details>
       </div>
     </div>`;
   }).join('');
 }
 
 function addPipelineStep() {
-  _pipelineSteps.push({ agent: '', model: '', description: '', system_suffix: '', prompt_override: '', max_iterations: '', tools: [] });
+  _pipelineSteps.push({ agent: '', model: '', description: '', system_suffix: '', prompt_override: '', max_iterations: '', tools: [], type: '', n: '', decompose_model: '', decompose_prompt: '' });
   _renderPipelineSteps();
 }
 
@@ -1429,6 +1459,10 @@ async function selectWorkflow(name) {
       prompt_override: s.prompt_override || '',
       max_iterations: s.max_iterations || '',
       tools: s.tools || [],
+      type: s.type || '',
+      n: s.n || '',
+      decompose_model: s.decompose_model || '',
+      decompose_prompt: s.decompose_prompt || '',
     }));
     _renderPipelineSteps();
     document.getElementById('workflowEditor').style.display = '';
@@ -1443,7 +1477,7 @@ async function selectWorkflow(name) {
 
 function newWorkflow() {
   _currentWorkflow = null;
-  _pipelineSteps = [{ agent: '', model: '', description: '', system_suffix: '', prompt_override: '', max_iterations: '', tools: [] }];
+  _pipelineSteps = [{ agent: '', model: '', description: '', system_suffix: '', prompt_override: '', max_iterations: '', tools: [], type: '', n: '', decompose_model: '', decompose_prompt: '' }];
   document.getElementById('workflowName').value = '';
   document.getElementById('workflowDescription').value = '';
   document.getElementById('workflowContent').value = '';
@@ -1469,6 +1503,12 @@ async function saveWorkflow() {
       prompt_override: s.prompt_override || '',
       ...(s.max_iterations ? { max_iterations: parseInt(s.max_iterations) } : {}),
       ...(s.tools && s.tools.length ? { tools: s.tools } : {}),
+      ...(s.type === 'parallel' ? {
+        type: 'parallel',
+        ...(s.n ? { n: parseInt(s.n) } : {}),
+        ...(s.decompose_model ? { decompose_model: s.decompose_model } : {}),
+        ...(s.decompose_prompt ? { decompose_prompt: s.decompose_prompt } : {}),
+      } : {}),
     })),
   };
   const content = document.getElementById('workflowContent').value;
@@ -1501,6 +1541,12 @@ async function cloneWorkflow() {
       prompt_override: s.prompt_override || '',
       ...(s.max_iterations ? { max_iterations: parseInt(s.max_iterations) } : {}),
       ...(s.tools && s.tools.length ? { tools: s.tools } : {}),
+      ...(s.type === 'parallel' ? {
+        type: 'parallel',
+        ...(s.n ? { n: parseInt(s.n) } : {}),
+        ...(s.decompose_model ? { decompose_model: s.decompose_model } : {}),
+        ...(s.decompose_prompt ? { decompose_prompt: s.decompose_prompt } : {}),
+      } : {}),
     })),
   };
   const content = document.getElementById('workflowContent').value;
