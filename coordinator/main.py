@@ -491,6 +491,9 @@ async def _handle_engineering_task(
     if not notify:
         task_config["notify"] = False
 
+    import uuid as _uuid
+    task_config["scratch_scope"] = f"/scratch/{_uuid.uuid4()}"
+
     # Create task
     task_id = await task_manager.create_task(
         agent_type=agent_type,
