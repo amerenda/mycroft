@@ -7,10 +7,10 @@ Working name. Internal code uses generic terms (coordinator, agent, platform) fo
 | Directory | Purpose |
 |-----------|---------|
 | `common/` | Shared libraries: KB client, LLM client, config, models |
-| `coordinator/` | FastAPI service: Telegram bot, intent classification, Argo submission |
+| `coordinator/` | FastAPI service: task API, Argo submission, KB listener |
 | `runtime/` | Thin agent loop + tools (runs in ephemeral Argo Workflow pods) |
 | `agents/` | Agent definitions: manifest.yaml + prompts.py per agent type |
-| `workflows/` | Argo WorkflowTemplate YAMLs (applied to k3s, not used by Python) |
+| `workflows/` | Optional multi-step workflow YAMLs for Agent Studio (empty by default; GitOps templates live elsewhere) |
 | `tests/` | pytest tests |
 
 ## Running Locally

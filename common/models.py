@@ -57,7 +57,6 @@ class AgentManifest(BaseModel):
     role: str = ""
     goal: str = ""
     model: str = "claude-sonnet-4-20250514"
-    writer_model: str = ""  # optional second model for report writing
     backend: str = "k8s"
     max_concurrent: int = 2
     max_iterations: int = 10
@@ -139,5 +138,5 @@ class Intent(BaseModel):
     type: IntentType = IntentType.engineering
     agent_type: str | None = None
     repo: str | None = None
-    effort: str | None = None  # light, regular, deep — for research tasks
+    effort: str | None = None  # optional hint when classifying user messages
     instruction: str = ""

@@ -1,7 +1,5 @@
 const API = '';
 
-let activeRunner = 'mycroft';
-
 // ── Top-level tab navigation ─────────────────────────────────────────────────
 
 document.querySelectorAll('.tab').forEach(btn => {
@@ -22,21 +20,6 @@ function setRightTab(name) {
   document.querySelectorAll('.rtab-content').forEach(c => {
     c.classList.toggle('active', c.id === 'rtab-' + name);
   });
-}
-
-// ── Runner toggle ─────────────────────────────────────────────────────────────
-
-function setRunner(runner) {
-  activeRunner = runner;
-  const btn = document.getElementById('runBtn');
-  const previewBtn = document.getElementById('previewBtn');
-  if (runner === 'forge') {
-    btn.textContent = 'Run with Forge';
-    previewBtn.style.display = 'none';
-  } else {
-    btn.textContent = 'Run Task';
-    previewBtn.style.display = '';
-  }
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -61,7 +44,8 @@ let pollTimer = null;
 
 async function runTask() {
   const instruction = document.getElementById('instruction').value.trim();
-  if (!instruction) return;
+  const userMessage = document.getElementById('userMessage').value.trim();
+  if (!instruction && !userMessage) return;
 
   const btn = document.getElementById('runBtn');
   btn.disabled = true;
@@ -80,158 +64,47 @@ async function runTask() {
   setRightTab('trace');
 
   try {
-    if (activeRunner === 'forge') {
-      await runForge(instruction);
-    } else {
-      await runMycroft(instruction);
-    }
+    await runMycroft(instruction, userMessage);
   } catch (e) {
     traceEl.innerHTML = `<p style="color:#da3633">Error: ${esc(e.message)}</p>`;
     statusEl.textContent = 'error';
     statusEl.className = 'status-badge status-failed';
   } finally {
     btn.disabled = false;
-    btn.textContent = activeRunner === 'forge' ? 'Run with Forge' : 'Run Task';
+    btn.textContent = 'Run Task';
   }
-}
-
-// ── Forge runner ──────────────────────────────────────────────────────────────
-
-async function runForge(instruction) {
-  const model = document.getElementById('model').value || 'qwen3:14b';
-  const repo = document.getElementById('repo').value.trim();
-  const systemPrompt = document.getElementById('systemPrompt').value.trim();
-
-  if (!repo) throw new Error('Repo is required for Forge runs');
-
-  const r = await api('/api/forge/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ instruction, repo, model, system_prompt: systemPrompt || null }),
-  });
-
-  if (r.run_id) {
-    const statusEl = document.getElementById('traceStatus');
-    statusEl.textContent = 'running';
-    statusEl.className = 'status-badge status-running';
-    document.getElementById('traceContent').innerHTML =
-      '<p class="empty">Forge is cloning repo and running...</p>';
-    pollForgeRun(r.run_id);
-  }
-}
-
-function pollForgeRun(runId) {
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
-    try {
-      const r = await api('/api/forge/runs/' + runId);
-      renderForgeResult(r);
-      if (r.status === 'completed' || r.status === 'failed') {
-        clearInterval(pollTimer);
-        pollTimer = null;
-        const statusEl = document.getElementById('traceStatus');
-        statusEl.textContent = r.status;
-        statusEl.className = 'status-badge status-' + r.status;
-      }
-    } catch (e) { /* still running */ }
-  }, 2000);
-}
-
-function renderForgeResult(r) {
-  const el = document.getElementById('traceContent');
-  const cards = [];
-
-  if (r.status === 'running') {
-    el.innerHTML = '<p class="empty">Forge is working... (cloning, running LLM calls)</p>';
-    return;
-  }
-
-  if (r.error) {
-    cards.push(`
-      <div class="trace-card" style="border-left:3px solid #da3633">
-        <div class="trace-card-header" onclick="this.parentElement.classList.toggle('expanded')">
-          <span style="color:#da3633">Error: ${esc(r.error)}</span>
-        </div>
-        <div class="trace-card-body">${esc(r.stderr)}</div>
-      </div>`);
-  }
-
-  if (r.git_diff) {
-    cards.push(`
-      <div class="trace-card tool-call expanded" onclick="this.classList.toggle('expanded')">
-        <div class="trace-card-header">
-          <span><span class="trace-tool-name">git diff</span> (${r.files_changed.length} file${r.files_changed.length !== 1 ? 's' : ''})</span>
-          <span class="trace-meta">${r.git_diff.length} bytes</span>
-        </div>
-        <div class="trace-card-body">${esc(r.git_diff)}</div>
-      </div>`);
-  }
-
-  if (r.files_changed && r.files_changed.length) {
-    cards.push(`
-      <div class="trace-card llm-response">
-        <div class="trace-card-header">
-          <span class="trace-content">Files changed: ${r.files_changed.join(', ')}</span>
-        </div>
-      </div>`);
-  }
-
-  if (r.stdout) {
-    cards.push(`
-      <div class="trace-card" onclick="this.classList.toggle('expanded')">
-        <div class="trace-card-header">
-          <span>Forge output</span>
-          <span class="trace-meta">${r.stdout.length} chars</span>
-        </div>
-        <div class="trace-card-body">${esc(r.stdout)}</div>
-      </div>`);
-  }
-
-  if (!cards.length) cards.push('<p class="empty">No changes made</p>');
-
-  const statsEl = document.getElementById('queueStats');
-  statsEl.style.display = 'flex';
-  statsEl.innerHTML = `
-    <span>Exit: <strong>${r.exit_code}</strong></span>
-    <span>Duration: <strong>${r.duration_seconds.toFixed(1)}s</strong></span>
-    <span>Files: <strong>${r.files_changed.length}</strong></span>
-    <span>Status: <strong>${r.status}</strong></span>`;
-
-  el.innerHTML = cards.join('');
 }
 
 // ── Mycroft runner ────────────────────────────────────────────────────────────
 
-async function runMycroft(instruction) {
+async function runMycroft(instruction, userMessage) {
   const model = document.getElementById('model').value;
   const systemPrompt = document.getElementById('systemPrompt').value.trim();
   const maxTokens = document.getElementById('maxTokens').value;
   const temperature = document.getElementById('temperature').value;
   const maxIterations = document.getElementById('maxIterations').value;
-  const agentType = document.getElementById('agentType').value;
-  const effort = document.getElementById('effort').value;
-  const gatherModel = document.getElementById('gatherModel').value;
-  const writeModel = document.getElementById('writeModel').value;
+  const agentType = document.getElementById('agentType').value.trim();
+  if (!agentType) throw new Error('Agent type is required (e.g. playground)');
 
-  // Send tool override only when not all tools are checked
   const allCbs = [...document.querySelectorAll('.tool-cb')];
   const checkedValues = allCbs.filter(cb => cb.checked).map(cb => cb.value);
-  const toolsOverride = checkedValues.length < allCbs.length ? checkedValues : null;
+  const partialTools = checkedValues.length < allCbs.length ? checkedValues : null;
 
   const body = {
     agent_type: agentType,
     instruction,
     repo: document.getElementById('repo').value.trim(),
     model: model || null,
-    system_prompt: systemPrompt || null,
   };
-  if (agentType === 'researcher' || agentType === 'extractor') body.effort = effort || null;
+  if (systemPrompt) body.system_prompt = systemPrompt;
+  if (userMessage) body.user_message = userMessage;
   if (maxTokens) body.max_tokens = parseInt(maxTokens);
   if (temperature) body.temperature = parseFloat(temperature);
   if (maxIterations) body.max_iterations = parseInt(maxIterations);
-  if (gatherModel) body.gather_model = gatherModel;
-  if (writeModel) body.write_model = writeModel;
-  if (toolsOverride) body.tools_override = toolsOverride;
+  if (partialTools) body.tools = partialTools;
+
+  const kbRecallEl = document.getElementById('kbRecall');
+  if (kbRecallEl && !kbRecallEl.checked) body.kb_recall = false;
 
   const r = await api('/api/tasks', {
     method: 'POST',
@@ -339,29 +212,73 @@ function renderTrace(messages, task) {
 
 // ── Prompt preview ────────────────────────────────────────────────────────────
 
-async function previewPrompt() {
+function buildTestTaskBody({ omitOverrides } = {}) {
+  const agentType = document.getElementById('agentType').value.trim();
   const instruction = document.getElementById('instruction').value.trim();
-  if (!instruction) return;
+  const userMessage = document.getElementById('userMessage').value.trim();
+  const model = document.getElementById('model').value || null;
+  const systemPrompt = document.getElementById('systemPrompt').value.trim();
+  const allCbs = [...document.querySelectorAll('.tool-cb')];
+  const checkedValues = allCbs.filter(cb => cb.checked).map(cb => cb.value);
+  const partialTools = checkedValues.length < allCbs.length ? checkedValues : null;
+  const kbRecallEl = document.getElementById('kbRecall');
+
+  const body = { agent_type: agentType, instruction, model };
+  if (!omitOverrides) {
+    if (systemPrompt) body.system_prompt = systemPrompt;
+    if (userMessage) body.user_message = userMessage;
+    if (partialTools) body.tools = partialTools;
+  }
+  if (kbRecallEl && !kbRecallEl.checked) body.kb_recall = false;
+  return body;
+}
+
+async function loadPromptDefaults() {
+  const agentType = document.getElementById('agentType').value.trim();
+  if (!agentType) {
+    alert('Agent type is required.');
+    return;
+  }
+  const instruction = document.getElementById('instruction').value.trim();
+  const userMessage = document.getElementById('userMessage').value.trim();
+  if (!instruction && !userMessage) {
+    alert('Enter an instruction (for built-in user message) or a user message first.');
+    return;
+  }
 
   try {
+    const body = buildTestTaskBody({ omitOverrides: true });
     const r = await api('/api/tasks/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agent_type: document.getElementById('agentType').value,
-        instruction,
-        model: document.getElementById('model').value || null,
-      }),
+      body: JSON.stringify(body),
+    });
+    document.getElementById('systemPrompt').value = r.system_prompt || '';
+    document.getElementById('userMessage').value = r.user_message || '';
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function previewPrompt() {
+  const instruction = document.getElementById('instruction').value.trim();
+  const userMessage = document.getElementById('userMessage').value.trim();
+  if (!instruction && !userMessage) return;
+
+  try {
+    const body = buildTestTaskBody({ omitOverrides: false });
+    const r = await api('/api/tasks/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
 
     const panel = document.getElementById('promptPanel');
     panel.style.display = 'block';
-    panel.querySelector('#promptContent').innerHTML = `
+    document.getElementById('promptContent').innerHTML = `
       <div class="msg msg-system"><div class="role">System Prompt</div><pre>${esc(r.system_prompt)}</pre></div>
       <div class="msg msg-user"><div class="role">User Message</div><pre>${esc(r.user_message)}</pre></div>
-      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${r.tools.join(', ')} | Model: ${r.model}</p>`;
-    const spEl = document.getElementById('systemPrompt');
-    if (!spEl.value.trim()) spEl.value = r.system_prompt;
+      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${(r.tools || []).join(', ') || '(none)'} | Model: ${esc(String(r.model || ''))}</p>`;
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -450,7 +367,7 @@ async function loadRightReports() {
     const reports = await api('/api/reports');
     const el = document.getElementById('rightReportList');
     if (!reports.length) {
-      el.innerHTML = '<p class="empty">No reports yet. Run a researcher task to generate one.</p>';
+      el.innerHTML = '<p class="empty">No reports yet. Complete a task with Sazed configured to generate one.</p>';
       return;
     }
     el.innerHTML = reports.map(r => `
@@ -512,25 +429,6 @@ function setDefaultTools() {
   });
 }
 
-// ── Agent type + effort handlers ──────────────────────────────────────────────
-
-function onAgentTypeChange() {
-  const agent = document.getElementById('agentType').value;
-  document.getElementById('effortGroup').style.display = (agent === 'researcher') ? '' : 'none';
-  _updateModelChainVisibility();
-}
-
-function onEffortChange() {
-  _updateModelChainVisibility();
-}
-
-function _updateModelChainVisibility() {
-  const agent = document.getElementById('agentType').value;
-  const effort = document.getElementById('effort').value;
-  const show = agent === 'researcher' && (effort === 'regular' || effort === 'deep');
-  document.getElementById('modelChain').style.display = show ? '' : 'none';
-}
-
 // ── Models ────────────────────────────────────────────────────────────────────
 
 async function loadModels() {
@@ -540,18 +438,16 @@ async function loadModels() {
       .filter(m => m.downloaded !== false)
       .sort((a, b) => (a.name || a.id || '').localeCompare(b.name || b.id || ''));
 
-    ['model', 'gatherModel', 'writeModel'].forEach(selId => {
-      const el = document.getElementById(selId);
-      list.forEach(m => {
-        const opt = document.createElement('option');
-        const name = m.name || m.id || '';
-        opt.value = name;
-        const tags = [];
-        if (m.loaded) tags.push('loaded');
-        if (m.parameter_count) tags.push(m.parameter_count);
-        opt.textContent = name + (tags.length ? ' (' + tags.join(', ') + ')' : '');
-        el.appendChild(opt);
-      });
+    const el = document.getElementById('model');
+    list.forEach(m => {
+      const opt = document.createElement('option');
+      const name = m.name || m.id || '';
+      opt.value = name;
+      const tags = [];
+      if (m.loaded) tags.push('loaded');
+      if (m.parameter_count) tags.push(m.parameter_count);
+      opt.textContent = name + (tags.length ? ' (' + tags.join(', ') + ')' : '');
+      el.appendChild(opt);
     });
   } catch (e) {
     console.warn('Failed to load models:', e);
@@ -676,22 +572,11 @@ description: "What this workflow does"
 
 steps:
   - id: step1
-    agent: researcher
-    role: gather
-    max_iterations: 5
+    agent: my-agent
+    role: primary
+    max_iterations: 10
     tools:
-      - web_search
-      - web_read
-
-  - id: step2
-    agent: researcher
-    role: write
-    max_iterations: 3
-    tools:
-      - write_file
-      - read_file
-    depends_on:
-      - step1
+      - shell
 `;
 
 let _currentWorkflow = null;

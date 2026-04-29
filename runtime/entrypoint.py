@@ -73,6 +73,13 @@ def main():
 
     if args.instruction:
         task.instruction = args.instruction
+        cfg_json = os.environ.get("TASK_CONFIG_JSON", "").strip()
+        if cfg_json:
+            try:
+                task.config.update(json.loads(cfg_json))
+            except json.JSONDecodeError as e:
+                log.error("Invalid TASK_CONFIG_JSON: %s", e)
+                sys.exit(1)
         if args.dry_run:
             _dry_run(manifest, task, platform)
             return
@@ -85,12 +92,17 @@ def main():
 
 def _dry_run(manifest: AgentManifest, task: TaskConfig, platform: PlatformConfig):
     """Show the prompt that would be sent to the LLM without calling it."""
-    from runtime.context import build_system_prompt, build_user_message
+    from runtime.task_prompts import (
+        resolve_initial_user_message_sync,
+        resolve_system_prompt,
+        resolve_tool_names,
+    )
     from runtime.tools.base import load_tools
 
-    tools = load_tools(manifest.tools)
-    system_prompt = build_system_prompt(manifest, tools.schemas())
-    user_message = build_user_message(task.instruction, [])
+    tool_names = resolve_tool_names(task, manifest)
+    tools = load_tools(tool_names)
+    system_prompt = resolve_system_prompt(task, manifest, tools.schemas())
+    user_message = resolve_initial_user_message_sync(task, [])
 
     print("=" * 60)
     print("DRY RUN — Agent:", manifest.name)
@@ -159,12 +171,12 @@ def _apply_config(task: TaskConfig, cfg: dict):
         task.repo = cfg["repo"]
     if cfg.get("model_override"):
         task.model_override = cfg["model_override"]
-    if cfg.get("system_prompt_override"):
-        task.system_prompt_override = cfg["system_prompt_override"]
+    sp = cfg.get("system_prompt") or cfg.get("system_prompt_override")
+    if sp:
+        task.system_prompt_override = str(sp).strip()
     if cfg.get("max_iterations_override"):
         task.max_iterations_override = cfg["max_iterations_override"]
-    # tools_override and other pipeline config stay in task.config
-    # and are read by the runner directly
+    # tools, permissions, user_message, etc. remain on task.config for the runner
 
 
 async def _run_argo(manifest: AgentManifest, task: TaskConfig, platform: PlatformConfig):
@@ -190,11 +202,13 @@ async def _run_argo(manifest: AgentManifest, task: TaskConfig, platform: Platfor
 
     await kb.close()
 
-    if not task.instruction:
-        log.error("No instruction found for task %s", task.id)
+    has_user = task.config.get("user_message") and str(task.config["user_message"]).strip()
+    if not task.instruction and not has_user:
+        log.error("No instruction or user_message for task %s", task.id)
         sys.exit(1)
 
-    log.info("Task instruction: %s", task.instruction[:200])
+    preview = (task.instruction or "").strip() or (str(task.config.get("user_message") or "")[:200])
+    log.info("Task instruction/user preview: %s", preview[:200] if preview else "(empty)")
 
     await _discover_llm_key(manifest, platform)
 

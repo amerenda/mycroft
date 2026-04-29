@@ -9,23 +9,19 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 
 from common.config import PlatformConfig
-from common.llm import LLMClient
 from common.metrics import (
     coordinator_info, tasks_created_total, tasks_completed_total,
     tasks_active, task_duration_seconds, argo_submissions_total,
-    telegram_messages_total, intent_classifications_total,
-    llm_metrics_callback,
 )
-from common.models import IntentType, TaskConfig, TaskStatus
+from common.models import TaskConfig, TaskStatus
 from coordinator.argo_submitter import ArgoSubmitter
 from coordinator.db import CoordinatorDB
 from coordinator.task_manager import TaskManager
-from coordinator.telegram import TelegramBot
 from coordinator.trigger_router import TriggerRouter
 
 logging.basicConfig(
@@ -42,9 +38,7 @@ config: PlatformConfig
 db: CoordinatorDB
 task_manager: TaskManager
 argo: ArgoSubmitter
-telegram_bot: TelegramBot
 trigger_router: TriggerRouter
-llm: LLMClient
 
 
 # ---------------------------------------------------------------------------
@@ -71,7 +65,7 @@ async def _llm_heartbeat_loop(llm_url: str, api_key: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global config, db, task_manager, argo, telegram_bot, trigger_router, llm
+    global config, db, task_manager, argo, trigger_router
 
     config = PlatformConfig()
 
@@ -103,8 +97,6 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.error("Failed to discover LLM API key: %s", e)
 
-    llm = LLMClient(config.llm_manager_url, llm_api_key, config.intent_model)
-    llm.set_metrics_callback(llm_metrics_callback)
     coordinator_info.info({"version": config.agent_image_tag})
 
     # Trigger router
@@ -118,19 +110,6 @@ async def lifespan(app: FastAPI):
         image_repo=config.agent_image_repo,
         image_tag=config.agent_image_tag,
     )
-
-    # Telegram bot
-    telegram_bot = TelegramBot(
-        token=config.telegram_bot_token,
-        chat_id=config.telegram_chat_id,
-        llm=llm,
-        on_engineering_task=_handle_engineering_task,
-        on_status_query=_handle_status_query,
-    )
-    if config.telegram_bot_token:
-        await telegram_bot.setup()
-        await telegram_bot.start_polling()
-        log.info("Telegram bot initialized (polling mode)")
 
     # Tool schema versioning
     from common.tool_schemas import ensure_schema_table, seed_default_schemas
@@ -155,133 +134,11 @@ async def lifespan(app: FastAPI):
     # Shutdown
     if _heartbeat_task:
         _heartbeat_task.cancel()
-    if config.telegram_bot_token:
-        await telegram_bot.stop_polling()
     await db.close()
-    await llm.close()
     log.info("Coordinator stopped")
 
 
 app = FastAPI(title="Mycroft Coordinator", lifespan=lifespan)
-
-
-# ---------------------------------------------------------------------------
-# Research pipeline (background)
-# ---------------------------------------------------------------------------
-
-async def _start_research_pipeline(
-    instruction: str,
-    effort: str,
-    gather_model: str | None = None,
-    write_model: str | None = None,
-    gather_tools: list[str] | None = None,
-) -> str:
-    """Start the two-phase gather→write pipeline. Returns the gather task ID."""
-    from coordinator.research_pipeline import PHASE_CONFIG, GATHERER_PROMPT
-
-    phase_config = PHASE_CONFIG.get(effort, PHASE_CONFIG["regular"])
-    gather_cfg = phase_config["gather"]
-
-    resolved_gather_model = gather_model or gather_cfg["model"]
-    resolved_gather_tools = gather_tools or gather_cfg["tools"]
-
-    gather_config = {
-        "instruction": instruction,
-        "model_override": resolved_gather_model,
-        "max_iterations_override": gather_cfg["max_iterations"],
-        "tools_override": resolved_gather_tools,
-        "system_prompt_override": GATHERER_PROMPT,
-        "phase": "gather",
-        "effort": effort,
-    }
-
-    gather_task_id = await task_manager.create_task(
-        agent_type="researcher",
-        instruction=instruction,
-        trigger="pipeline",
-        repo="",
-        config=gather_config,
-    )
-    tasks_created_total.labels(agent_type="researcher", trigger="pipeline").inc()
-    tasks_active.labels(agent_type="researcher").inc()
-
-    await argo.submit(
-        agent_type="researcher",
-        task_id=gather_task_id,
-        params={"instruction": instruction, "model_override": resolved_gather_model},
-        on_update=_on_workflow_update,
-    )
-
-    log.info("Research pipeline started: gather=%s model=%s effort=%s",
-             gather_task_id[:8], resolved_gather_model, effort)
-
-    asyncio.create_task(
-        _pipeline_writer_phase(gather_task_id, instruction, effort, write_model=write_model)
-    )
-
-    return gather_task_id
-
-
-async def _pipeline_writer_phase(
-    gather_task_id: str,
-    instruction: str,
-    effort: str,
-    write_model: str | None = None,
-):
-    """Background: wait for gatherer to finish, then launch the writer."""
-    from coordinator.research_pipeline import PHASE_CONFIG, WRITER_PROMPT, _wait_for_task
-
-    try:
-        findings = await _wait_for_task(gather_task_id, db, timeout=600)
-
-        if not findings or findings.startswith("("):
-            log.warning("Pipeline gatherer %s produced no usable findings", gather_task_id[:8])
-            findings = f"(Limited findings for: {instruction})"
-
-        log.info("Pipeline gatherer %s done (%d chars). Launching writer.", gather_task_id[:8], len(findings))
-
-        phase_config = PHASE_CONFIG.get(effort, PHASE_CONFIG["regular"])
-        write_cfg = phase_config["write"]
-
-        resolved_write_model = write_model or write_cfg["model"]
-
-        writer_instruction = (
-            f"Write a research report based on these findings.\n\n"
-            f"Original question: {instruction}\n\n"
-            f"Research findings:\n{findings[:15000]}"
-        )
-
-        write_config = {
-            "instruction": writer_instruction,
-            "model_override": resolved_write_model,
-            "max_iterations_override": write_cfg["max_iterations"],
-            "tools_override": write_cfg["tools"],
-            "system_prompt_override": WRITER_PROMPT,
-            "phase": "write",
-            "effort": effort,
-            "parent_task_id": gather_task_id,
-        }
-
-        write_task_id = await task_manager.create_task(
-            agent_type="researcher",
-            instruction=writer_instruction,
-            trigger="pipeline",
-            repo="",
-            config=write_config,
-        )
-
-        await argo.submit(
-            agent_type="researcher",
-            task_id=write_task_id,
-            params={"instruction": writer_instruction, "model_override": resolved_write_model},
-            on_update=_on_workflow_update,
-        )
-
-        log.info("Pipeline writer launched: %s model=%s (parent=%s)",
-                 write_task_id[:8], resolved_write_model, gather_task_id[:8])
-
-    except Exception as e:
-        log.exception("Pipeline writer phase failed for gather=%s", gather_task_id[:8])
 
 
 # ---------------------------------------------------------------------------
@@ -292,10 +149,11 @@ async def _handle_engineering_task(
     instruction: str, agent_type: str, repo: str,
     model_override: str | None = None, system_prompt_override: str | None = None,
     max_tokens: int | None = None, temperature: float | None = None,
-    max_iterations: int | None = None, effort: str | None = None,
+    max_iterations: int | None = None,
     tools_override: list[str] | None = None,
+    extra_config: dict[str, Any] | None = None,
 ) -> str:
-    """Handle an engineering task from Telegram or API."""
+    """Handle a task from the API (create KB record + submit Argo)."""
     manifest = trigger_router.get_manifest(agent_type)
     if not manifest:
         raise ValueError(f"Unknown agent type: {agent_type}")
@@ -309,17 +167,21 @@ async def _handle_engineering_task(
     if model_override:
         task_config["model_override"] = model_override
     if system_prompt_override:
-        task_config["system_prompt_override"] = system_prompt_override
+        sp = system_prompt_override.strip()
+        task_config["system_prompt"] = sp
+        task_config["system_prompt_override"] = sp
     if max_tokens is not None:
         task_config["max_tokens"] = max_tokens
     if temperature is not None:
         task_config["temperature"] = temperature
     if max_iterations is not None:
         task_config["max_iterations_override"] = max_iterations
-    if effort:
-        task_config["effort"] = effort
     if tools_override:
         task_config["tools_override"] = tools_override
+    if extra_config:
+        for k, v in extra_config.items():
+            if v is not None:
+                task_config[k] = v
 
     # Create task
     task_id = await task_manager.create_task(
@@ -374,7 +236,6 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
         if task:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="failed").inc()
-        # Failures go to logs + metrics only, not Telegram
         log.warning("Task %s failed: %s", task_id[:8], message)
 
     elif status == "succeeded":
@@ -383,67 +244,28 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
         if task:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="completed").inc()
-        # Success goes to Telegram
-        try:
-            await telegram_bot.send(f"Task {task_id[:8]} completed: {message}")
-        except Exception:
-            log.warning("Failed to send Telegram update for task %s", task_id[:8])
-
-
-async def _handle_status_query(text: str) -> str:
-    """Handle a status query — look up recent tasks."""
-    tasks = await task_manager.list_tasks(limit=5)
-    if not tasks:
-        return "No tasks found."
-
-    lines = []
-    for t in tasks:
-        status_icon = {"pending": "...", "running": ">>", "completed": "OK", "failed": "XX"}
-        icon = status_icon.get(t.status.value, "??")
-        summary = ""
-        if t.result:
-            summary = t.result.get("summary", t.result.get("error", ""))[:100]
-        lines.append(f"[{icon}] {t.id[:8]} {t.agent_type} — {summary or t.trigger}")
-
-    return "\n".join(lines)
+        log.info("Task %s completed: %s", task_id[:8], message)
 
 
 async def _on_agent_event(event: dict[str, Any]) -> None:
-    """Handle PG NOTIFY from agent completion.
-
-    Only sends Telegram messages for successful completions with results.
-    Failures, iteration limits, and other noise go to logs + metrics only.
-    """
+    """Handle PG NOTIFY from agent completion (optional Sazed export)."""
     scope = event.get("scope", "")
     source = event.get("source", "")
 
-    # Agent result — route based on agent type
     if "/results/" in scope:
         record = await db.kb.get(scope)
         if not record:
             return
 
-        is_researcher = "researcher" in source
-
-        # Researcher results → Sazed reports + Telegram summary with link
-        if is_researcher and config.sazed_url:
+        if config.sazed_url:
             await _post_to_sazed(record, source)
-        elif telegram_bot:
-            # Other agents (coder, etc.) → Telegram directly
-            pr_url = ""
-            if record.metadata:
-                pr_url = record.metadata.get("pr_url", "")
+        else:
+            log.info(
+                "Agent result: %s — %d chars",
+                source,
+                len(record.content or ""),
+            )
 
-            msg = f"Agent finished: {source}\n{record.content[:500]}"
-            if pr_url:
-                msg += f"\nPR: {pr_url}"
-
-            try:
-                await telegram_bot.send(msg)
-            except Exception:
-                log.warning("Failed to send Telegram notification", exc_info=True)
-
-    # Notifications — log only, don't send to Telegram
     elif scope.startswith("/notifications/alex/"):
         record = await db.kb.get(scope)
         if record:
@@ -451,13 +273,12 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
 
 
 async def _post_to_sazed(record, source: str) -> None:
-    """Post a researcher result to Sazed and notify via Telegram."""
+    """Post an agent result to Sazed when SAZED_URL is configured."""
     import httpx
 
     content = record.content or ""
 
-    # Extract title from first markdown heading or first line
-    title = "Research Report"
+    title = "Agent output"
     for line in content.split("\n"):
         line = line.strip()
         if line.startswith("# "):
@@ -484,7 +305,6 @@ async def _post_to_sazed(record, source: str) -> None:
     if not summary:
         summary = content[:300]
 
-    # Extract task_id from source (format: "researcher/{task_id}")
     task_id = source.split("/")[-1] if "/" in source else ""
 
     try:
@@ -506,68 +326,8 @@ async def _post_to_sazed(record, source: str) -> None:
 
         log.info("Report posted to Sazed: %s", report_url)
 
-        # Send summary + link to Telegram
-        if telegram_bot:
-            msg = f"{summary}\n\nFull report: {report_url}"
-            await telegram_bot.send(msg)
-
     except Exception as e:
         log.error("Failed to post report to Sazed: %s", e)
-        # Fallback: send raw content to Telegram
-        if telegram_bot:
-            try:
-                await telegram_bot.send(f"Agent finished: {source}\n{content[:500]}")
-            except Exception:
-                pass
-
-
-# ---------------------------------------------------------------------------
-# Forge Runner API
-# ---------------------------------------------------------------------------
-
-from coordinator.forge_runner import run_forge, get_run, ForgeResult
-
-
-class ForgeRunRequest(BaseModel):
-    instruction: str
-    repo: str = ""
-    model: str = "qwen3:14b"
-    system_prompt: str | None = None
-
-
-@app.post("/api/forge/run")
-async def forge_run(req: ForgeRunRequest):
-    if not req.repo:
-        raise HTTPException(400, "repo is required (e.g. 'amerenda/mycroft')")
-
-    llm_api_key = config.llm_manager_api_key
-    run_id = await run_forge(
-        instruction=req.instruction,
-        repo=req.repo,
-        model=req.model,
-        system_prompt=req.system_prompt,
-        llm_url=config.llm_manager_url,
-        llm_api_key=llm_api_key,
-    )
-    return {"run_id": run_id}
-
-
-@app.get("/api/forge/runs/{run_id}")
-async def forge_run_status(run_id: str):
-    result = get_run(run_id)
-    if not result:
-        raise HTTPException(404, "Run not found")
-    return {
-        "run_id": result.run_id,
-        "status": result.status,
-        "exit_code": result.exit_code,
-        "git_diff": result.git_diff,
-        "files_changed": result.files_changed,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-        "duration_seconds": result.duration_seconds,
-        "error": result.error,
-    }
 
 
 # ---------------------------------------------------------------------------
@@ -576,55 +336,70 @@ async def forge_run_status(run_id: str):
 
 class CreateTaskRequest(BaseModel):
     agent_type: str
-    instruction: str
+    instruction: str = ""
     repo: str = ""
     trigger: str = "manual"
     model: str | None = None
     system_prompt: str | None = None
+    user_message: str | None = None
     max_tokens: int | None = None
     temperature: float | None = None
     max_iterations: int | None = None
-    effort: str | None = None       # light, regular, deep — for researcher
-    tools_override: list[str] | None = None   # explicit tool allowlist
-    gather_model: str | None = None           # gather phase model (regular/deep pipeline)
-    write_model: str | None = None            # write phase model (regular/deep pipeline)
+    tools: list[str] | None = None
+    tools_override: list[str] | None = None
+    permissions: dict[str, Any] | None = None
+    kb_recall: bool | None = None
+    kb_recall_scopes: list[str] | None = None
+    kb_recall_limit: int | None = None
+    effort: str | None = None
+    empty_response_nudge: str | None = None
+    iteration_limit_reply: str | None = None
+
+
+def _extra_task_config_from_playground(req: CreateTaskRequest) -> dict[str, Any]:
+    """Fields stored in agent_tasks.config / inbox metadata (UI overrides)."""
+    extra: dict[str, Any] = {}
+    if req.user_message is not None:
+        extra["user_message"] = req.user_message
+    if req.tools is not None:
+        extra["tools"] = req.tools
+    elif req.tools_override is not None:
+        extra["tools_override"] = req.tools_override
+    if req.permissions is not None:
+        extra["permissions"] = req.permissions
+    if req.kb_recall is not None:
+        extra["kb_recall"] = req.kb_recall
+    if req.kb_recall_scopes is not None:
+        extra["kb_recall_scopes"] = req.kb_recall_scopes
+    if req.kb_recall_limit is not None:
+        extra["kb_recall_limit"] = req.kb_recall_limit
+    if req.effort is not None:
+        extra["effort"] = req.effort
+    if req.empty_response_nudge is not None:
+        extra["empty_response_nudge"] = req.empty_response_nudge
+    if req.iteration_limit_reply is not None:
+        extra["iteration_limit_reply"] = req.iteration_limit_reply
+    return extra
 
 
 @app.post("/api/tasks")
 async def create_task(req: CreateTaskRequest):
     try:
-        # Research pipeline: regular/deep tiers use two-phase gather→write
-        if req.agent_type == "researcher" and req.effort in ("regular", "deep"):
-            gather_task_id = await _start_research_pipeline(
-                req.instruction,
-                req.effort,
-                gather_model=req.gather_model or req.model,
-                write_model=req.write_model,
-                gather_tools=req.tools_override or None,
-            )
-            return {"task_id": gather_task_id}
-
-        # Light researcher: defaults that can be overridden per-request
-        max_iter = req.max_iterations
-        model = req.model
-        tools_ovr = req.tools_override
-        if req.agent_type == "researcher" and req.effort == "light":
-            max_iter = max_iter or 6
-            model = model or "qwen3.5:9b"
-            if not tools_ovr:
-                tools_ovr = ["web_search", "wiki_read", "web_read"]
-
+        if not (req.instruction or "").strip() and not (req.user_message or "").strip():
+            raise HTTPException(400, "Provide non-empty instruction or user_message")
+        extra = _extra_task_config_from_playground(req)
+        tools_for_handle = None if req.tools is not None else req.tools_override
         task_id = await _handle_engineering_task(
             instruction=req.instruction,
             agent_type=req.agent_type,
             repo=req.repo,
-            model_override=model,
+            model_override=req.model,
             system_prompt_override=req.system_prompt,
             max_tokens=req.max_tokens,
             temperature=req.temperature,
-            max_iterations=max_iter,
-            effort=req.effort,
-            tools_override=tools_ovr,
+            max_iterations=req.max_iterations,
+            tools_override=tools_for_handle,
+            extra_config=extra,
         )
         return {"task_id": task_id}
     except ValueError as e:
@@ -735,15 +510,30 @@ async def get_task_prompt(task_id: str):
 
 
 class TestTaskRequest(BaseModel):
-    agent_type: str = "coder"
-    instruction: str
+    agent_type: str = "playground"
+    instruction: str = ""
     model: str | None = None
+    system_prompt: str | None = None
+    user_message: str | None = None
+    tools: list[str] | None = None
+    tools_override: list[str] | None = None
+    permissions: dict[str, Any] | None = None
+    kb_recall: bool | None = None
+    kb_recall_scopes: list[str] | None = None
+    kb_recall_limit: int | None = None
+    effort: str | None = None
+    empty_response_nudge: str | None = None
+    iteration_limit_reply: str | None = None
 
 
 @app.post("/api/tasks/test")
 async def test_task(req: TestTaskRequest):
-    """Preview the prompt that would be sent to an agent. Does not create a task."""
-    from runtime.context import build_system_prompt, build_user_message
+    """Preview resolved system/user prompts and tools (same resolution as runtime)."""
+    from runtime.task_prompts import (
+        resolve_initial_user_message_sync,
+        resolve_system_prompt,
+        resolve_tool_names,
+    )
     from runtime.tools.base import load_tools
 
     manifest = trigger_router.get_manifest(req.agent_type)
@@ -754,10 +544,41 @@ async def test_task(req: TestTaskRequest):
         manifest = manifest.model_copy()
         manifest.model = req.model
 
-    # Build prompt preview
-    tools = load_tools(manifest.tools)
-    system_prompt = build_system_prompt(manifest, tools.schemas())
-    user_message = build_user_message(req.instruction, [])
+    task = TaskConfig(
+        id="preview",
+        agent_type=req.agent_type,
+        instruction=req.instruction,
+        model_override=req.model,
+        config={},
+    )
+    extra = _extra_task_config_from_playground(
+        CreateTaskRequest(
+            agent_type=req.agent_type,
+            instruction=req.instruction,
+            model=req.model,
+            system_prompt=req.system_prompt,
+            user_message=req.user_message,
+            tools=req.tools,
+            tools_override=req.tools_override,
+            permissions=req.permissions,
+            kb_recall=req.kb_recall,
+            kb_recall_scopes=req.kb_recall_scopes,
+            kb_recall_limit=req.kb_recall_limit,
+            effort=req.effort,
+            empty_response_nudge=req.empty_response_nudge,
+            iteration_limit_reply=req.iteration_limit_reply,
+        )
+    )
+    task.config.update(extra)
+    if req.system_prompt:
+        task.config["system_prompt"] = req.system_prompt.strip()
+        task.config["system_prompt_override"] = req.system_prompt.strip()
+        task.system_prompt_override = req.system_prompt.strip()
+
+    tool_names = resolve_tool_names(task, manifest)
+    tools = load_tools(tool_names)
+    system_prompt = resolve_system_prompt(task, manifest, tools.schemas())
+    user_message = resolve_initial_user_message_sync(task, [])
 
     return {
         "agent_type": req.agent_type,
@@ -766,19 +587,6 @@ async def test_task(req: TestTaskRequest):
         "user_message": user_message,
         "tools": [t["function"]["name"] for t in tools.schemas()],
     }
-
-
-@app.post("/webhooks/telegram")
-async def telegram_webhook(request: Request):
-    """Telegram webhook endpoint (for future use with Cloudflare Tunnel)."""
-    if not telegram_bot.app:
-        raise HTTPException(503, "Telegram bot not configured")
-
-    from telegram import Update
-    data = await request.json()
-    update = Update.de_json(data, telegram_bot.app.bot)
-    await telegram_bot.app.process_update(update)
-    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

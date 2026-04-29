@@ -27,14 +27,7 @@
 
         <div class="form-row">
           <div class="form-group">
-            <label>Runner</label>
-            <select id="runner" onchange="setRunner(this.value)">
-              <option value="mycroft" selected>Mycroft</option>
-              <option value="forge">Forge</option>
-            </select>
-          </div>
-          <div class="form-group">
-            <label>Model <span class="tip" data-tip="Primary LLM for this task. 'loaded' = warm in VRAM, faster first call. For the research pipeline, sets the Gather model unless overridden in Advanced Options.">ⓘ</span></label>
+            <label>Model <span class="tip" data-tip="Primary LLM for this task. 'loaded' = warm in VRAM, faster first call.">ⓘ</span></label>
             <select id="model"><option value="">Default</option></select>
           </div>
         </div>
@@ -45,26 +38,19 @@
             <input id="repo" type="text" placeholder="amerenda/mycroft" value="amerenda/mycroft">
           </div>
           <div class="form-group">
-            <label>Agent Type <span class="tip" data-tip="researcher: web research + report. coder: writes code + PRs. extractor: reads specific URLs and pulls targeted facts — no searching, no report.">ⓘ</span></label>
-            <select id="agentType" onchange="onAgentTypeChange()">
-              <option value="researcher">researcher</option>
-              <option value="coder">coder</option>
-              <option value="extractor">extractor</option>
-            </select>
-          </div>
-          <div class="form-group" id="effortGroup" style="display:none">
-            <label>Effort <span class="tip" data-tip="light: 1 search → quick answer, no report (~1 min). regular: gather→write pipeline, multi-source report (~8 min). deep: more searches + adversarial review (~12 min).">ⓘ</span></label>
-            <select id="effort" onchange="onEffortChange()">
-              <option value="light">Light — quick lookup</option>
-              <option value="regular" selected>Regular — gather + write</option>
-              <option value="deep">Deep — comprehensive</option>
-            </select>
+            <label>Agent type <span class="tip" data-tip="Must match a folder under agents/ (manifest) and your Argo WorkflowTemplate name agent-&lt;type&gt;.">ⓘ</span></label>
+            <input id="agentType" type="text" placeholder="e.g. playground" value="playground" autocomplete="off">
           </div>
         </div>
 
         <div class="form-group">
-          <label>Instruction</label>
+          <label>Instruction <span class="tip" data-tip="Used for KB recall and default user message. You can leave this empty if User message (override) is set.">ⓘ</span></label>
           <textarea id="instruction" rows="3" placeholder="e.g. How does Cilium replace kube-proxy?"></textarea>
+        </div>
+
+        <div class="form-group">
+          <label>User message (override) <span class="tip" data-tip="If set, replaces the built default user message (including KB recall block). Leave empty to build from Instruction.">ⓘ</span></label>
+          <textarea id="userMessage" rows="4" placeholder="Leave empty to use instruction + KB recall defaults."></textarea>
         </div>
 
         <details id="advancedOptions">
@@ -80,23 +66,8 @@
               <input id="temperature" type="number" value="" step="0.1" min="0" max="2" placeholder="Default">
             </div>
             <div class="form-group">
-              <label>Max Iterations <span class="tip" data-tip="Max tool-call rounds. Light default: 6. Regular gather: 5, write: 3. Higher = more thorough but slower. Agent exits early when done.">ⓘ</span></label>
+              <label>Max Iterations <span class="tip" data-tip="Max tool-call rounds. Higher = more thorough but slower. Agent exits early when done.">ⓘ</span></label>
               <input id="maxIterations" type="number" value="" min="1" max="50" placeholder="Default">
-            </div>
-          </div>
-
-          <!-- Pipeline model chain — researcher regular/deep only -->
-          <div class="adv-section" id="modelChain" style="display:none">
-            <div class="adv-section-label">Pipeline Models <span class="tip" data-tip="regular/deep runs two agents: Gather searches + reads; Write turns findings into a report. Assign different models to each phase for best results.">ⓘ</span></div>
-            <div class="form-row">
-              <div class="form-group">
-                <label>Gather model <span class="tip" data-tip="Model for Phase 1 (search + read). Default: qwen3.5:9b. The top-level Model dropdown also sets this if left blank. Try qwen3.6:27b for larger context window.">ⓘ</span></label>
-                <select id="gatherModel"><option value="">Default (qwen3.5:9b)</option></select>
-              </div>
-              <div class="form-group">
-                <label>Write model <span class="tip" data-tip="Model for Phase 2 (write report from findings). Default: llama3.1:8b — follows format instructions well. Try qwen3:14b for better prose quality.">ⓘ</span></label>
-                <select id="writeModel"><option value="">Default (llama3.1:8b)</option></select>
-              </div>
             </div>
           </div>
 
@@ -104,7 +75,7 @@
           <div class="adv-section">
             <details id="toolDetails">
               <summary class="adv-section-label">
-                Tool Allowlist <span class="tip" data-tip="Override which tools the agent can call. Useful for sandboxing: e.g. give researcher only web_search (no web_read) to test snippet-only answers. Uncheck tools to remove them. All checked = no override.">ⓘ</span>
+                Tool Allowlist <span class="tip" data-tip="Override which tools the agent can call. Uncheck tools to remove them. All checked = no override.">ⓘ</span>
               </summary>
               <div class="tool-controls">
                 <button type="button" class="btn-tool-ctrl" onclick="checkAllTools(true)">All</button>
@@ -143,10 +114,18 @@
             </details>
           </div>
 
+          <div class="form-row" style="margin-top:10px">
+            <div class="form-group">
+              <label class="tool-label" style="display:flex;align-items:center;gap:8px">
+                <input type="checkbox" id="kbRecall" checked> KB recall for default user message
+              </label>
+            </div>
+          </div>
+
           <!-- System prompt override -->
           <div class="adv-section">
             <div class="form-group" style="margin-bottom:0">
-              <label>System Prompt Override <span class="tip" data-tip="Completely replaces the agent's default system prompt. Use Preview Prompt to see the default first. Useful for experimenting with different prompting strategies.">ⓘ</span></label>
+              <label>System Prompt Override <span class="tip" data-tip="Completely replaces the agent's default system prompt. Use Load defaults or Preview to see the built-in prompt.">ⓘ</span></label>
               <textarea id="systemPrompt" rows="8" placeholder="Leave empty for agent defaults."></textarea>
             </div>
           </div>
@@ -154,6 +133,7 @@
 
         <div class="actions">
           <button class="btn-primary" id="runBtn" onclick="runTask()">Run Task</button>
+          <button class="btn-secondary" onclick="loadPromptDefaults()" id="loadDefaultsBtn" type="button">Load defaults</button>
           <button class="btn-secondary" onclick="previewPrompt()" id="previewBtn">Preview Prompt</button>
         </div>
 
