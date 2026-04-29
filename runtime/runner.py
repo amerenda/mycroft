@@ -258,6 +258,38 @@ class AgentRunner:
                 await self._persist_conversation()
                 continue
 
+            # No API tool calls — check if model wrote a tool call as JSON text
+            if not response.tool_calls and response.content:
+                parsed = self._parse_text_tool_call(response.content)
+                if parsed:
+                    name, arguments = parsed
+                    log.info("Parsed text tool call: %s(%s)", name, arguments[:100])
+                    import uuid as _uuid
+                    fake_id = f"text-{_uuid.uuid4().hex[:8]}"
+                    self.messages.append({
+                        "role": "assistant",
+                        "content": response.content,
+                        "tool_calls": [{
+                            "id": fake_id,
+                            "type": "function",
+                            "function": {"name": name, "arguments": arguments},
+                        }],
+                    })
+                    agent_tool_calls_total.labels(
+                        agent_type=self.manifest.name, tool=name).inc()
+                    result = await self.tools.execute(name, arguments)
+                    if name in ("finish", "submit_report"):
+                        log.info("Text tool call terminated via %s (%d chars)", name, len(result))
+                        return result
+                    self.messages.append({
+                        "role": "tool",
+                        "tool_call_id": fake_id,
+                        "content": result,
+                    })
+                    self.iteration += 1
+                    await self._persist_conversation()
+                    continue
+
             # No tool calls — either the agent is done or it got confused
             if not response.content or not response.content.strip():
                 self._consecutive_empty += 1
@@ -328,6 +360,45 @@ class AgentRunner:
         )
 
         return last_content
+
+    def _parse_text_tool_call(self, text: str) -> tuple[str, str] | None:
+        """Detect tool calls written as JSON text instead of API tool calls.
+
+        Some models output {"name": "finish", "parameters": {...}} in a code
+        block rather than making a real API tool call. Parse and execute these.
+        Returns (tool_name, arguments_json) or None.
+        """
+        import re as _re
+        known = {t["function"]["name"] for t in self.tools.schemas()}
+
+        def _try(raw: str) -> tuple[str, str] | None:
+            try:
+                obj = json.loads(raw.strip())
+            except (json.JSONDecodeError, ValueError):
+                return None
+            if not isinstance(obj, dict):
+                return None
+            name = obj.get("name") or obj.get("function") or obj.get("tool")
+            params = obj.get("parameters") or obj.get("arguments") or obj.get("input") or {}
+            if isinstance(name, str) and name in known:
+                return name, json.dumps(params)
+            return None
+
+        # Prefer finish/submit_report hits first, then any tool
+        candidates: list[tuple[str, str]] = []
+        for block in _re.findall(r"```(?:json)?\s*(.*?)\s*```", text, _re.DOTALL):
+            r = _try(block)
+            if r:
+                candidates.append(r)
+        if not candidates:
+            r = _try(text)
+            if r:
+                candidates.append(r)
+
+        for name, args in candidates:
+            if name in ("finish", "submit_report"):
+                return name, args
+        return candidates[0] if candidates else None
 
     async def _persist_conversation(self) -> None:
         """Save conversation history to KB for restart safety."""
