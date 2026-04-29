@@ -1,5 +1,16 @@
 # Mycroft — AI Agent Platform
 
+## THIS IS A WORKFLOW FACTORY
+
+Any work done here is meant to be configured in the UI, not in code.
+
+**NEVER add prompt content to code.** All prompt changes go in the Agents UI.
+
+**NEVER make code changes that restrict or fix behavior for one agent in a way
+that locks other agents out of a path.** This is a factory and playground for
+building arbitrary agentic workflows — not a system hardcoded for research or
+coding. Runtime code must stay generic and unopinionated about what agents do.
+
 Working name. Internal code uses generic terms (coordinator, agent, platform) for easy renaming.
 
 ## Repo Structure

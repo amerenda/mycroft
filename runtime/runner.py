@@ -182,30 +182,15 @@ class AgentRunner:
 
             self.messages.append({"role": "user", "content": user_content})
 
-        _TERMINAL_TOOLS = {"finish", "submit_report", "scratch_write"}
-
         while self.iteration < self.max_iterations:
             model_name = self.llm.model
             log.info("Iteration %d/%d model=%s",
                      self.iteration + 1, self.max_iterations, model_name)
             agent_iterations_total.labels(agent_type=self.manifest.name).inc()
 
-            # On the final iteration restrict the tool list to terminal tools so
-            # the agent is forced to finish rather than start another research round.
-            # Falls back to all tools if the agent has no terminal tools at all.
-            all_schemas = self.tools.schemas()
-            if self.iteration == self.max_iterations - 1:
-                terminal = [s for s in all_schemas
-                            if s["function"]["name"] in _TERMINAL_TOOLS]
-                schemas = terminal if terminal else all_schemas
-                log.info("Final iteration — tool list restricted to: %s",
-                         [s["function"]["name"] for s in schemas])
-            else:
-                schemas = all_schemas
-
             # Call LLM
             response = await self.llm.chat(
-                self.messages, tools=schemas,
+                self.messages, tools=self.tools.schemas(),
                 max_tokens=self._max_tokens, temperature=self._temperature,
             )
 
