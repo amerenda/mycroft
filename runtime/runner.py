@@ -165,13 +165,10 @@ class AgentRunner:
             user_content = build_user_message(self.task.instruction, context)
             if self.task.context_injection:
                 workflow_name = self.task.config.get("workflow", "")
-                step_desc = self.task.config.get("step_description", "")
 
                 header = "You are one step in a multi-step pipeline."
                 if workflow_name:
                     header += f" Workflow: {workflow_name}."
-                if step_desc:
-                    header += f"\nYour role in this step: {step_desc}"
 
                 parts = [header]
                 if original_brief:
