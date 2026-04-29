@@ -231,53 +231,59 @@ async def _wait_for_pipeline_task(task_id: str, timeout: int = 3600) -> str:
     raise _PipelineTaskFailed(f"Task {task_id[:8]} timed out after {timeout}s")
 
 
-async def _start_dynamic_pipeline(
+async def _decompose_instruction(
+    instruction: str, n: int, model: str, prompt_template: str,
+) -> list[str]:
+    """Call LLM to split an instruction into N focused angles. Falls back to N copies on error."""
+    import re as _re
+    from common.llm import LLMClient
+
+    prompt = prompt_template.format(instruction=instruction, n=n)
+    llm = LLMClient(config.llm_manager_url, config.llm_manager_api_key, model)
+    try:
+        response = await llm.chat(
+            [{"role": "user", "content": prompt}],
+            tools=None,
+            max_tokens=512,
+        )
+        text = response.content or ""
+        match = _re.search(r'\[.*?\]', text, _re.DOTALL)
+        if match:
+            parsed = json.loads(match.group())
+            if isinstance(parsed, list) and parsed:
+                return [str(a) for a in parsed[:n]]
+        log.warning("Decompose: no JSON array in response: %s", text[:200])
+    except Exception as e:
+        log.warning("Decompose LLM call failed: %s — using original instruction x%d", e, n)
+    finally:
+        await llm.close()
+    return [instruction] * n
+
+
+async def _submit_pipeline_agent(
+    *,
+    step: dict,
     instruction: str,
+    system_suffix_extra: str = "",
     workflow_name: str,
-    steps: list[dict],
+    run_id: str,
+    original_scope: str,
+    scratch_scope: str,
+    context_injection: list[str],
+    phase: str,
+    is_last: bool,
+    parent_task_id: str | None = None,
 ) -> str:
-    """Start an N-step dynamic pipeline from a DB-stored workflow definition. Returns first task ID."""
-    if not steps:
-        raise ValueError(f"Workflow '{workflow_name}' has no pipeline steps")
-
-    step = steps[0]
-    is_last = len(steps) == 1
+    """Create and submit one pipeline agent task. Returns task_id."""
     agent_type = step.get("agent", "researcher")
-
-    # Write the original brief to KB so every step can reference it directly (no telephone effect).
-    # Use first task_id as the run anchor — generated here so we can write before creating task.
-    import uuid as _uuid
-    run_id = str(_uuid.uuid4())
-    original_scope = f"/runs/{run_id}/original"
-    await db.kb.pool.execute(
-        """
-        INSERT INTO memory_records
-            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, false,
-                NOW() + INTERVAL '7 days')
-        """,
-        str(_uuid.uuid4()), instruction, original_scope, [], "{}", 0.5, "coordinator",
-    )
-
-    scratch_scope = f"/runs/{run_id}/scratch"
-    await db.kb.pool.execute(
-        """
-        INSERT INTO memory_records
-            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-        VALUES ($1, $2, $3, $4, $5, $6, $7, false,
-                NOW() + INTERVAL '7 days')
-        """,
-        str(_uuid.uuid4()), "", scratch_scope, [], "{}", 0.5, "coordinator",
-    )
-
     step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
 
-    # Build system_suffix: agent prompt + per-step override + platform pipeline prompt
     from coordinator.editor_store import get_setting as _get_setting
     platform_step_prompt = await _get_setting(db.kb.pool, "pipeline_step_prompt")
     iteration_warning_message = await _get_setting(db.kb.pool, "iteration_warning_message")
     base_prompt_template = await _get_setting(db.kb.pool, "base_system_prompt_template")
-    suffix_parts = [p for p in [step_prompt, step.get("system_suffix"), platform_step_prompt] if p]
+
+    suffix_parts = [p for p in [step_prompt, step.get("system_suffix"), platform_step_prompt, system_suffix_extra] if p]
     combined_suffix = "\n\n".join(suffix_parts) or None
 
     task_config = {
@@ -286,24 +292,23 @@ async def _start_dynamic_pipeline(
         "max_iterations_override": step.get("max_iterations") or None,
         "max_tokens": step.get("max_tokens") or None,
         "tools_override": step.get("tools") or None,
-        "context_injection": [original_scope],
+        "context_injection": context_injection,
         "scratch_scope": scratch_scope,
         "step_description": step.get("description") or None,
         "system_suffix": combined_suffix,
         "iteration_warning_message": iteration_warning_message or None,
         "base_system_prompt_template": base_prompt_template or None,
-        "phase": "pipeline-step-0",
+        "phase": phase,
         "is_last_step": is_last,
         "workflow": workflow_name,
         "run_id": run_id,
     }
+    if parent_task_id:
+        task_config["parent_task_id"] = parent_task_id
 
     task_id = await task_manager.create_task(
-        agent_type=agent_type,
-        instruction=instruction,
-        trigger="pipeline",
-        repo="",
-        config=task_config,
+        agent_type=agent_type, instruction=instruction,
+        trigger="pipeline", repo="", config=task_config,
     )
     tasks_created_total.labels(agent_type=agent_type, trigger="pipeline").inc()
     tasks_active.labels(agent_type=agent_type).inc()
@@ -318,122 +323,217 @@ async def _start_dynamic_pipeline(
         on_update=_on_workflow_update,
     )
     await db.kb.update_task(task_id, argo_workflow_name=wf_name)
-
-    log.info("Dynamic pipeline started: step=1/%d agent=%s workflow=%s task=%s run=%s",
-             len(steps), agent_type, workflow_name, task_id[:8], run_id[:8])
-
-    if not is_last:
-        asyncio.create_task(
-            _run_dynamic_pipeline_steps(task_id, agent_type, instruction, workflow_name, steps, 1,
-                                        run_id=run_id, original_scope=original_scope,
-                                        scratch_scope=scratch_scope)
-        )
-
     return task_id
 
 
-async def _run_dynamic_pipeline_steps(
-    prev_task_id: str,
-    prev_agent_type: str,
-    original_instruction: str,
-    workflow_name: str,
+async def _wait_and_collect(task_id: str, output_scope: str, agent_type: str) -> str | None:
+    """Wait for one parallel task, copy its result to a /runs/ KB scope. Returns scope or None."""
+    import uuid as _uuid
+    try:
+        await _wait_for_pipeline_task(task_id, timeout=3600)
+    except _PipelineTaskFailed as e:
+        log.warning("Parallel task %s failed: %s", task_id[:8], e)
+        return None
+    task = await task_manager.get_task(task_id)
+    at = task.agent_type if task else agent_type
+    result = await db.kb.get(f"/agents/{at}/results/{task_id}")
+    content = (result.content if result else None) or f"(No output from {task_id[:8]})"
+    await db.kb.pool.execute(
+        """
+        INSERT INTO memory_records
+            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,false, NOW() + INTERVAL '7 days')
+        """,
+        str(_uuid.uuid4()), content, output_scope, [], "{}", 0.5, "coordinator",
+    )
+    log.info("Parallel task %s → %s (%d chars)", task_id[:8], output_scope, len(content))
+    return output_scope
+
+
+async def _run_pipeline_from(
     steps: list[dict],
     step_index: int,
     *,
+    instruction: str,
+    workflow_name: str,
     run_id: str,
     original_scope: str,
     scratch_scope: str,
-) -> None:
-    """Background: wait for previous step to finish, then launch the next step."""
+    context_scopes: list[str],
+    parent_task_id: str | None = None,
+) -> str:
+    """Execute steps[step_index] and background the rest. Returns the first task_id launched.
+
+    Step types:
+      (default)        — sequential: one agent, waits for it, chains to next step
+      type: parallel   — fan-out: N agents in parallel, waits for all, chains with merged context
+        n              — number of parallel agents (default 3)
+        decompose_model, decompose_prompt — optional LLM call to split instruction into N angles
+    """
+    step = steps[step_index]
+    is_last = step_index == len(steps) - 1
+    agent_type = step.get("agent", "researcher")
+
+    if step.get("type") == "parallel":
+        n = int(step.get("n", 3))
+        decompose_model = step.get("decompose_model", "")
+        decompose_prompt_tmpl = step.get("decompose_prompt", "")
+
+        if decompose_model and decompose_prompt_tmpl:
+            angles = await _decompose_instruction(instruction, n, decompose_model, decompose_prompt_tmpl)
+            log.info("Decomposed step %d into %d angles: %s",
+                     step_index, len(angles), [a[:60] for a in angles])
+        else:
+            angles = [instruction] * n
+
+        task_ids_and_scopes: list[tuple[str, str]] = []
+        for i, angle in enumerate(angles):
+            suffix = f"\n\nSearch focus: {angle}" if angle != instruction else ""
+            task_id = await _submit_pipeline_agent(
+                step=step, instruction=instruction,
+                system_suffix_extra=suffix,
+                workflow_name=workflow_name, run_id=run_id,
+                original_scope=original_scope, scratch_scope=scratch_scope,
+                context_injection=context_scopes,
+                phase=f"parallel-{step_index}-{i}",
+                is_last=is_last,
+                parent_task_id=parent_task_id,
+            )
+            output_scope = f"/runs/{run_id}/parallel-{step_index}-{i}"
+            task_ids_and_scopes.append((task_id, output_scope))
+            log.info("Parallel agent %d/%d: agent=%s task=%s angle=%s",
+                     i + 1, n, agent_type, task_id[:8], angle[:60])
+
+        first_task_id = task_ids_and_scopes[0][0]
+
+        if not is_last:
+            async def _parallel_continuation(
+                _tids: list[tuple[str, str]] = task_ids_and_scopes,
+                _sidx: int = step_index,
+                _parent: str = first_task_id,
+            ) -> None:
+                try:
+                    gathered = await asyncio.gather(*[
+                        _wait_and_collect(tid, scope, agent_type)
+                        for tid, scope in _tids
+                    ])
+                    valid = [s for s in gathered if s]
+                    if not valid:
+                        log.error("All parallel agents failed at step %d — aborting", _sidx)
+                        return
+                    log.info("Parallel step %d complete: %d/%d succeeded", _sidx, len(valid), len(_tids))
+                    await _run_pipeline_from(
+                        steps, _sidx + 1,
+                        instruction=instruction,
+                        workflow_name=workflow_name,
+                        run_id=run_id,
+                        original_scope=original_scope,
+                        scratch_scope=scratch_scope,
+                        context_scopes=[original_scope] + valid,
+                        parent_task_id=_parent,
+                    )
+                except Exception:
+                    log.exception("Parallel continuation failed at step %d", _sidx)
+
+            asyncio.create_task(_parallel_continuation())
+
+        return first_task_id
+
+    else:
+        # Sequential step
+        task_id = await _submit_pipeline_agent(
+            step=step, instruction=instruction,
+            system_suffix_extra="",
+            workflow_name=workflow_name, run_id=run_id,
+            original_scope=original_scope, scratch_scope=scratch_scope,
+            context_injection=context_scopes,
+            phase=f"pipeline-step-{step_index}",
+            is_last=is_last,
+            parent_task_id=parent_task_id,
+        )
+        log.info("Pipeline step %d/%d: agent=%s workflow=%s task=%s run=%s",
+                 step_index + 1, len(steps), agent_type, workflow_name, task_id[:8], run_id[:8])
+
+        if not is_last:
+            async def _sequential_continuation(
+                _prev_task_id: str = task_id,
+                _sidx: int = step_index,
+                _agent_type: str = agent_type,
+            ) -> None:
+                import uuid as _uuid
+                try:
+                    await _wait_for_pipeline_task(_prev_task_id, timeout=3600)
+                except _PipelineTaskFailed as e:
+                    log.warning("Pipeline aborted at step %d: %s", _sidx, e)
+                    return
+                try:
+                    result_record = await db.kb.get(f"/agents/{_agent_type}/results/{_prev_task_id}")
+                    prev_content = (result_record.content if result_record else None) or f"(No output from step {_sidx})"
+                    prev_scope = f"/runs/{run_id}/step-{_sidx}/output"
+                    await db.kb.pool.execute(
+                        """
+                        INSERT INTO memory_records
+                            (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
+                        VALUES ($1,$2,$3,$4,$5,$6,$7,false, NOW() + INTERVAL '7 days')
+                        """,
+                        str(_uuid.uuid4()), prev_content, prev_scope, [], "{}", 0.5, "coordinator",
+                    )
+                    await _run_pipeline_from(
+                        steps, _sidx + 1,
+                        instruction=instruction,
+                        workflow_name=workflow_name,
+                        run_id=run_id,
+                        original_scope=original_scope,
+                        scratch_scope=scratch_scope,
+                        context_scopes=[original_scope, prev_scope],
+                        parent_task_id=_prev_task_id,
+                    )
+                except Exception:
+                    log.exception("Sequential continuation failed at step %d", _sidx)
+
+            asyncio.create_task(_sequential_continuation())
+
+        return task_id
+
+
+async def _start_dynamic_pipeline(
+    instruction: str,
+    workflow_name: str,
+    steps: list[dict],
+) -> str:
+    """Start an N-step dynamic pipeline from a DB-stored workflow definition. Returns first task ID."""
+    if not steps:
+        raise ValueError(f"Workflow '{workflow_name}' has no pipeline steps")
+
     import uuid as _uuid
+    run_id = str(_uuid.uuid4())
+    original_scope = f"/runs/{run_id}/original"
+    scratch_scope = f"/runs/{run_id}/scratch"
 
-    try:
-        await _wait_for_pipeline_task(prev_task_id, timeout=3600)
-    except _PipelineTaskFailed as e:
-        log.warning("Pipeline aborted at step %d: %s", step_index, e)
-        return
-
-    try:
-
-        # Mirror the previous step's full output into /runs/ (short-term, 7d TTL) so the
-        # next agent reads it directly from KB — no coordinator truncation.
-        result_record = await db.kb.get(f"/agents/{prev_agent_type}/results/{prev_task_id}")
-        prev_content = (result_record.content if result_record else None) or f"(No output from step {step_index - 1})"
-        prev_scope = f"/runs/{run_id}/step-{step_index - 1}/output"
+    for scope, content in [(original_scope, instruction), (scratch_scope, "")]:
         await db.kb.pool.execute(
             """
             INSERT INTO memory_records
                 (id, content, scope, categories, metadata, importance, source, needs_embedding, expires_at)
-            VALUES ($1, $2, $3, $4, $5, $6, $7, false,
-                    NOW() + INTERVAL '7 days')
+            VALUES ($1, $2, $3, $4, $5, $6, $7, false, NOW() + INTERVAL '7 days')
             """,
-            str(_uuid.uuid4()), prev_content, prev_scope, [], "{}", 0.5, "coordinator",
+            str(_uuid.uuid4()), content, scope, [], "{}", 0.5, "coordinator",
         )
 
-        step = steps[step_index]
-        is_last = step_index == len(steps) - 1
-        agent_type = step.get("agent", "researcher")
-        step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
+    first_task_id = await _run_pipeline_from(
+        steps, 0,
+        instruction=instruction,
+        workflow_name=workflow_name,
+        run_id=run_id,
+        original_scope=original_scope,
+        scratch_scope=scratch_scope,
+        context_scopes=[original_scope],
+        parent_task_id=None,
+    )
 
-        from coordinator.editor_store import get_setting as _get_setting
-        platform_step_prompt = await _get_setting(db.kb.pool, "pipeline_step_prompt")
-        iteration_warning_message = await _get_setting(db.kb.pool, "iteration_warning_message")
-        base_prompt_template = await _get_setting(db.kb.pool, "base_system_prompt_template")
-        suffix_parts = [p for p in [step_prompt, step.get("system_suffix"), platform_step_prompt] if p]
-        combined_suffix = "\n\n".join(suffix_parts) or None
-
-        task_config = {
-            "instruction": original_instruction,
-            "model_override": step.get("model") or None,
-            "max_iterations_override": step.get("max_iterations") or None,
-            "tools_override": step.get("tools") or None,
-            "context_injection": [original_scope, prev_scope],
-            "scratch_scope": scratch_scope,
-            "step_description": step.get("description") or None,
-            "system_suffix": combined_suffix,
-            "iteration_warning_message": iteration_warning_message or None,
-            "base_system_prompt_template": base_prompt_template or None,
-            "phase": f"pipeline-step-{step_index}",
-            "is_last_step": is_last,
-            "workflow": workflow_name,
-            "run_id": run_id,
-            "parent_task_id": prev_task_id,
-        }
-
-        task_id = await task_manager.create_task(
-            agent_type=agent_type,
-            instruction=original_instruction,
-            trigger="pipeline",
-            repo="",
-            config=task_config,
-        )
-        tasks_created_total.labels(agent_type=agent_type, trigger="pipeline").inc()
-        tasks_active.labels(agent_type=agent_type).inc()
-
-        model = step.get("model") or None
-        params: dict = {"instruction": original_instruction}
-        if model:
-            params["model_override"] = model
-        wf_name = await argo.submit(
-            agent_type=agent_type, task_id=task_id, params=params,
-            manifest=trigger_router.get_manifest(agent_type),
-            on_update=_on_workflow_update,
-        )
-        await db.kb.update_task(task_id, argo_workflow_name=wf_name)
-
-        log.info("Dynamic pipeline step %d/%d: agent=%s workflow=%s task=%s run=%s",
-                 step_index + 1, len(steps), agent_type, workflow_name, task_id[:8], run_id[:8])
-
-        if not is_last:
-            asyncio.create_task(
-                _run_dynamic_pipeline_steps(task_id, agent_type, original_instruction, workflow_name,
-                                            steps, step_index + 1,
-                                            run_id=run_id, original_scope=original_scope,
-                                            scratch_scope=scratch_scope)
-            )
-
-    except Exception:
-        log.exception("Dynamic pipeline step %d failed (prev_task=%s)", step_index, prev_task_id[:8])
+    log.info("Pipeline started: workflow=%s steps=%d run=%s first_task=%s",
+             workflow_name, len(steps), run_id[:8], first_task_id[:8])
+    return first_task_id
 
 
 # ---------------------------------------------------------------------------
