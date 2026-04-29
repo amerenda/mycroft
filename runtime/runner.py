@@ -186,11 +186,7 @@ class AgentRunner:
             self.messages.append({"role": "user", "content": user_content})
 
         _warn_at = max(2, round(self.max_iterations * 0.25))
-        _default_warning = (
-            "You have {remaining} rounds left. Write any unsaved findings to scratch now, "
-            "then call finish with your output."
-        )
-        _warning_template = self.task.config.get("iteration_warning_message") or _default_warning
+        _warning_template = self.task.config.get("iteration_warning_message") or ""
 
         while self.iteration < self.max_iterations:
             model_name = self.llm.model
@@ -199,7 +195,7 @@ class AgentRunner:
             agent_iterations_total.labels(agent_type=self.manifest.name).inc()
 
             remaining = self.max_iterations - self.iteration
-            if remaining == _warn_at:
+            if remaining == _warn_at and _warning_template:
                 self.messages.append({
                     "role": "user",
                     "content": _warning_template.format(remaining=remaining),
