@@ -272,10 +272,11 @@ async def _start_dynamic_pipeline(
 
     step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
 
-    # Build system_suffix: per-step override + platform pipeline prompt (UI-editable)
+    # Build system_suffix: agent prompt + per-step override + platform pipeline prompt
     from coordinator.editor_store import get_setting as _get_setting
     platform_step_prompt = await _get_setting(db.kb.pool, "pipeline_step_prompt")
-    suffix_parts = [p for p in [step.get("system_suffix"), platform_step_prompt] if p]
+    iteration_warning_message = await _get_setting(db.kb.pool, "iteration_warning_message")
+    suffix_parts = [p for p in [step_prompt, step.get("system_suffix"), platform_step_prompt] if p]
     combined_suffix = "\n\n".join(suffix_parts) or None
 
     task_config = {
@@ -284,11 +285,11 @@ async def _start_dynamic_pipeline(
         "max_iterations_override": step.get("max_iterations") or None,
         "max_tokens": step.get("max_tokens") or None,
         "tools_override": step.get("tools") or None,
-        "system_prompt_override": step_prompt,
         "context_injection": [original_scope],
         "scratch_scope": scratch_scope,
         "step_description": step.get("description") or None,
         "system_suffix": combined_suffix,
+        "iteration_warning_message": iteration_warning_message or None,
         "phase": "pipeline-step-0",
         "is_last_step": is_last,
         "workflow": workflow_name,
@@ -372,16 +373,22 @@ async def _run_dynamic_pipeline_steps(
         agent_type = step.get("agent", "researcher")
         step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
 
+        from coordinator.editor_store import get_setting as _get_setting
+        platform_step_prompt = await _get_setting(db.kb.pool, "pipeline_step_prompt")
+        iteration_warning_message = await _get_setting(db.kb.pool, "iteration_warning_message")
+        suffix_parts = [p for p in [step_prompt, step.get("system_suffix"), platform_step_prompt] if p]
+        combined_suffix = "\n\n".join(suffix_parts) or None
+
         task_config = {
             "instruction": original_instruction,
             "model_override": step.get("model") or None,
             "max_iterations_override": step.get("max_iterations") or None,
             "tools_override": step.get("tools") or None,
-            "system_prompt_override": step_prompt,
             "context_injection": [original_scope, prev_scope],
             "scratch_scope": scratch_scope,
             "step_description": step.get("description") or None,
-            "system_suffix": step.get("system_suffix") or None,
+            "system_suffix": combined_suffix,
+            "iteration_warning_message": iteration_warning_message or None,
             "phase": f"pipeline-step-{step_index}",
             "is_last_step": is_last,
             "workflow": workflow_name,
@@ -444,20 +451,26 @@ async def _handle_engineering_task(
     if not manifest:
         raise ValueError(f"Unknown agent type: {agent_type}")
 
-    # Inject DB-stored prompts as system_prompt_override if none explicitly set
-    if not system_prompt_override:
-        system_prompt_override = trigger_router.get_prompts(agent_type) or None
-
     # Check concurrency
     if not await task_manager.can_launch(agent_type, manifest.max_concurrent):
         raise ValueError(f"Max concurrent tasks reached for {agent_type}")
+
+    from coordinator.editor_store import get_setting as _get_setting
+    iteration_warning_message = await _get_setting(db.kb.pool, "iteration_warning_message")
 
     # Build task config
     task_config: dict[str, Any] = {}
     if model_override:
         task_config["model_override"] = model_override
+    # Explicit API override stays as override; DB-stored prompt goes to suffix so base prompt runs
     if system_prompt_override:
         task_config["system_prompt_override"] = system_prompt_override
+    else:
+        db_prompt = trigger_router.get_prompts(agent_type) or None
+        if db_prompt:
+            task_config["system_suffix"] = db_prompt
+    if iteration_warning_message:
+        task_config["iteration_warning_message"] = iteration_warning_message
     if max_tokens is not None:
         task_config["max_tokens"] = max_tokens
     if temperature is not None:

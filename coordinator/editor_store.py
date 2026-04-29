@@ -209,6 +209,14 @@ _SETTING_DEFAULTS: dict[str, dict] = {
             "Your output becomes the input to the next step in the pipeline."
         ),
     },
+    "iteration_warning_message": {
+        "label": "Iteration Warning Message",
+        "description": "Injected as a user message when the agent is nearing its iteration limit. Use {remaining} for the count. Sent at 25% of max_iterations remaining.",
+        "value": (
+            "You have {remaining} rounds left. Write any unsaved findings to scratch now, "
+            "then call finish with your output."
+        ),
+    },
 }
 
 
