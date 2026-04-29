@@ -62,6 +62,7 @@ class AgentRunner:
         self.messages: list[dict[str, Any]] = []
         self.iteration = 0
         self._consecutive_empty = 0
+        self._consecutive_text_exit = 0
         self.max_iterations = min(
             task.max_iterations_override or manifest.max_iterations,
             platform.global_max_iterations,
@@ -276,6 +277,33 @@ class AgentRunner:
                 })
                 continue
 
+            # If require_tool_exit is set and a terminal tool is available,
+            # nudge the model to call it rather than accepting the text response.
+            terminal_tools = [
+                t["function"]["name"] for t in self.tools.schemas()
+                if t["function"]["name"] in ("finish", "submit_report")
+            ]
+            if self.manifest.require_tool_exit and terminal_tools:
+                self._consecutive_text_exit += 1
+                self.messages.append({"role": "assistant", "content": response.content})
+                if self._consecutive_text_exit >= 3:
+                    log.warning("Model ignored tool-exit nudge %d times — force-finishing",
+                                self._consecutive_text_exit)
+                    return response.content
+                exit_options = " or ".join(f"`{t}`" for t in terminal_tools)
+                self.messages.append({
+                    "role": "user",
+                    "content": (
+                        f"You must call {exit_options} to deliver your output. "
+                        "A text-only response is not accepted. "
+                        f"Call the tool now with your full output in the `content` argument."
+                    ),
+                })
+                self.iteration += 1
+                await self._persist_conversation()
+                continue
+
+            self._consecutive_text_exit = 0
             self.messages.append({"role": "assistant", "content": response.content})
             log.info("Agent finished: %s", response.content[:200])
             return response.content

@@ -1037,6 +1037,8 @@ async function selectAgent(name) {
     document.getElementById('agentWebReadMax').value = _extractYamlField(a.manifest, 'web_read_max_chars');
     const thinkingVal = _extractYamlField(a.manifest, 'thinking');
     document.getElementById('agentThinking').value = thinkingVal === null || thinkingVal === undefined ? '' : String(thinkingVal);
+    const rteVal = _extractYamlField(a.manifest, 'require_tool_exit');
+    document.getElementById('agentRequireToolExit').value = String(rteVal) === 'true' ? 'true' : 'false';
     document.getElementById('agentMemory').value = _extractResourceField(a.manifest, 'memory');
     document.getElementById('agentCpu').value = _extractResourceField(a.manifest, 'cpu');
     document.getElementById('agentScratch').value = _extractResourceField(a.manifest, 'scratch');
@@ -1075,6 +1077,7 @@ function newAgent() {
   document.getElementById('agentMaxConcurrent').value = '';
   document.getElementById('agentWebReadMax').value = '';
   document.getElementById('agentThinking').value = '';
+  document.getElementById('agentRequireToolExit').value = 'false';
   document.getElementById('agentMemory').value = '';
   document.getElementById('agentCpu').value = '';
   document.getElementById('agentScratch').value = '';
@@ -1109,6 +1112,9 @@ async function saveAgent() {
   if (thinkingSelect === 'true') manifest = _updateYamlField(manifest, 'thinking', true);
   else if (thinkingSelect === 'false') manifest = _updateYamlField(manifest, 'thinking', false);
   else manifest = _removeYamlField(manifest, 'thinking');
+  const rteSelect = document.getElementById('agentRequireToolExit').value;
+  if (rteSelect === 'true') manifest = _updateYamlField(manifest, 'require_tool_exit', true);
+  else manifest = _removeYamlField(manifest, 'require_tool_exit');
   const memory = document.getElementById('agentMemory').value.trim();
   const cpu = document.getElementById('agentCpu').value.trim();
   const scratch = document.getElementById('agentScratch').value.trim();
