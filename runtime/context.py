@@ -20,8 +20,8 @@ You have {max_iterations} tool-call rounds to complete your task.
 Each round where you call one or more tools uses one round.
 
 1. Call a tool in every response. Never describe what you will do — do it.
-2. Use finish (or submit_report) to deliver your output. That is the ONLY
-   valid exit — responding with text alone does nothing.
+2. Use {exit_tool} to deliver your output. That is the ONLY valid exit —
+   responding with text alone does nothing.
 3. Pace yourself. Don't spend all rounds on research and leave no rounds to
    deliver output. If you're running low, wrap up with what you have.
 4. If a tool call fails, read the error and try a different approach.
@@ -53,11 +53,17 @@ def build_system_prompt(
         for t in tool_schemas
     )
     budget = max_iterations or manifest.max_iterations
+
+    terminal = [t["function"]["name"] for t in tool_schemas
+                if t["function"]["name"] in ("finish", "submit_report")]
+    exit_tool = " or ".join(terminal) if terminal else "finish"
+
     body = (template or _DEFAULT_TEMPLATE).format(
         role=manifest.role,
         goal=manifest.goal,
         max_iterations=budget,
         tool_list=tool_list,
+        exit_tool=exit_tool,
     )
     return thinking_prefix + body
 
