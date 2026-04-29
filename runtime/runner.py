@@ -16,7 +16,17 @@ from common.metrics import (
     agent_tool_call_seconds, llm_metrics_callback,
 )
 from common.models import AgentManifest, TaskConfig, TaskStatus
-from runtime.context import build_system_prompt, build_user_message, count_tool_rounds
+from runtime.context import (
+    DEFAULT_EMPTY_RESPONSE_NUDGE,
+    count_tool_rounds,
+    default_iteration_limit_message,
+)
+from runtime.task_prompts import (
+    resolve_initial_user_message,
+    resolve_permissions,
+    resolve_system_prompt,
+    resolve_tool_names,
+)
 from runtime.tools.base import ToolRegistry, load_tools
 
 log = logging.getLogger(__name__)
@@ -38,15 +48,16 @@ class AgentRunner:
         model = task.model_override or manifest.model
         self.llm = LLMClient(platform.llm_manager_url, platform.llm_manager_api_key, model)
         self.llm.set_metrics_callback(llm_metrics_callback)
-        self.kb = KBClient(platform.kb_dsn, manifest.permissions, use_embeddings=True)
+        perms = resolve_permissions(task, manifest)
+        self.kb = KBClient(platform.kb_dsn, perms, use_embeddings=True)
 
-        # Tools: task config can override the manifest tool list (for pipeline phases)
-        tools_override = task.config.get("tools_override")
+        # Tools: task.config["tools"] / tools_override or manifest list (pipeline phases)
+        tool_names = resolve_tool_names(task, manifest)
         scratch_scope = task.config.get("scratch_scope")
         extra_groups = task.config.get("_tool_groups")  # DB-resolved groups from entrypoint
         is_last_step = bool(task.config.get("is_last_step", False))
         self.tools = load_tools(
-            tools_override or manifest.tools,
+            tool_names,
             kb_dsn=platform.kb_dsn if scratch_scope else None,
             scratch_scope=scratch_scope,
             extra_groups=extra_groups,
@@ -132,16 +143,12 @@ class AgentRunner:
 
         # Build initial prompt (only if fresh start)
         if not self.messages:
-            context = await self.kb.recall(
-                self.task.instruction,
-                scopes=self.manifest.permissions.read,
-                limit=5,
-            )
-
-            system_prompt = self.task.system_prompt_override or build_system_prompt(
-                self.manifest, self.tools.schemas(), effort=self._effort,
+            system_prompt = resolve_system_prompt(
+                self.task,
+                self.manifest,
+                self.tools.schemas(),
                 max_iterations=self.max_iterations,
-                template=self.task.config.get("base_system_prompt_template"))
+            )
             system_suffix = self.task.config.get("system_suffix")
             if system_suffix:
                 system_prompt = system_prompt.rstrip() + "\n\n" + system_suffix
@@ -163,7 +170,9 @@ class AgentRunner:
                         step_label = scope.rstrip("/").rsplit("/", 1)[-1]
                         prior_sections.append(f"[PIPELINE INPUT]\n{record.content}")
 
-            user_content = build_user_message(self.task.instruction, context)
+            user_content = await resolve_initial_user_message(
+                self.task, self.manifest, self.kb,
+            )
             if self.task.context_injection:
                 workflow_name = self.task.config.get("workflow", "")
 
@@ -305,7 +314,9 @@ class AgentRunner:
                             self._consecutive_empty)
                 self.messages.append({
                     "role": "user",
-                    "content": "You returned an empty response. You must call a tool to continue. What is the next step? Call the appropriate tool now.",
+                    "content": self.task.config.get(
+                        "empty_response_nudge", DEFAULT_EMPTY_RESPONSE_NUDGE
+                    ),
                 })
                 continue
 
@@ -349,11 +360,19 @@ class AgentRunner:
         log.warning("Max iterations (%d) reached without finish call — force-finishing (%d chars)",
                     self.max_iterations, len(last_content))
 
+        preview = (self.task.instruction or "").strip() or str(
+            self.task.config.get("user_message") or ""
+        )
+        limit_note = self.task.config.get("iteration_limit_reply")
+        if not limit_note:
+            limit_note = default_iteration_limit_message(
+                self.max_iterations, preview or "(no instruction)"
+            )
         await self.kb.write(
             scope=f"/notifications/alex/{self.task.id}",
             content=(
                 f"Agent {self.manifest.name} hit iteration limit ({self.max_iterations}) "
-                f"without calling finish. Force-finished. Task: {self.task.instruction[:100]}"
+                f"without calling finish. Force-finished. {limit_note}"
             ),
             needs_embedding=False,
             source=f"{self.manifest.name}/{self.task.id}",

@@ -1,0 +1,19 @@
+# Shell for Argo WorkflowTemplate agent-playground. Prompts/tools come from task.config (UI/DB).
+name: playground
+role: ""
+goal: ""
+model: qwen3:14b
+backend: k8s
+max_concurrent: 4
+max_iterations: 30
+tools: []
+permissions:
+  read:
+    - /tasks
+    - /agents/playground/inbox
+    - /agents/playground/results
+  write:
+    - /tasks
+    - /agents/playground/inbox
+    - /agents/playground/results
+    - /notifications/alex

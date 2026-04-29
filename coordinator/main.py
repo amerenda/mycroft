@@ -549,6 +549,7 @@ async def _handle_engineering_task(
     workflow: str | None = None,
     notify: bool = True,
     effort: str | None = None,  # unused, kept for call-site compat during transition
+    extra_config: dict[str, Any] | None = None,
 ) -> str:
     """Handle an engineering task from Telegram or API."""
     manifest = trigger_router.get_manifest(agent_type)
@@ -567,9 +568,11 @@ async def _handle_engineering_task(
     task_config: dict[str, Any] = {}
     if model_override:
         task_config["model_override"] = model_override
-    # Explicit API override stays as override; DB-stored prompt goes to suffix so base prompt runs
+    # Explicit API override: canonical JSON keys + TaskConfig field for entrypoint
     if system_prompt_override:
-        task_config["system_prompt_override"] = system_prompt_override
+        sp = system_prompt_override.strip()
+        task_config["system_prompt"] = sp
+        task_config["system_prompt_override"] = sp
     else:
         db_prompt = trigger_router.get_prompts(agent_type) or None
         if db_prompt:
@@ -590,6 +593,10 @@ async def _handle_engineering_task(
         task_config["tools_override"] = tools_override
     if not notify:
         task_config["notify"] = False
+    if extra_config:
+        for k, v in extra_config.items():
+            if v is not None:
+                task_config[k] = v
 
     import uuid as _uuid
     task_config["scratch_scope"] = f"/scratch/{_uuid.uuid4()}"
@@ -922,17 +929,52 @@ async def forge_run_status(run_id: str):
 
 class CreateTaskRequest(BaseModel):
     agent_type: str = ""
-    instruction: str
+    instruction: str = ""
     repo: str = ""
     trigger: str = "manual"
     model: str | None = None
     system_prompt: str | None = None
+    user_message: str | None = None
     max_tokens: int | None = None
     temperature: float | None = None
     max_iterations: int | None = None
     workflow: str | None = None
+    tools: list[str] | None = None
     tools_override: list[str] | None = None
+    permissions: dict[str, Any] | None = None
+    kb_recall: bool | None = None
+    kb_recall_scopes: list[str] | None = None
+    kb_recall_limit: int | None = None
+    effort: str | None = None
+    empty_response_nudge: str | None = None
+    iteration_limit_reply: str | None = None
     notify: bool = True
+
+
+def _extra_task_config_from_playground(req: CreateTaskRequest) -> dict[str, Any]:
+    """Fields stored in agent_tasks.config / inbox metadata (UI overrides)."""
+    extra: dict[str, Any] = {}
+    if req.user_message is not None:
+        extra["user_message"] = req.user_message
+    if req.tools is not None:
+        extra["tools"] = req.tools
+    elif req.tools_override is not None:
+        extra["tools_override"] = req.tools_override
+    if req.permissions is not None:
+        extra["permissions"] = req.permissions
+    if req.kb_recall is not None:
+        extra["kb_recall"] = req.kb_recall
+    if req.kb_recall_scopes is not None:
+        extra["kb_recall_scopes"] = req.kb_recall_scopes
+    if req.kb_recall_limit is not None:
+        extra["kb_recall_limit"] = req.kb_recall_limit
+    if req.effort is not None:
+        extra["effort"] = req.effort
+    if req.empty_response_nudge is not None:
+        extra["empty_response_nudge"] = req.empty_response_nudge
+    if req.iteration_limit_reply is not None:
+        extra["iteration_limit_reply"] = req.iteration_limit_reply
+    return extra
 
 
 @app.post("/api/tasks")
@@ -957,6 +999,10 @@ async def create_task(req: CreateTaskRequest):
         agent_type = req.agent_type
         if not agent_type:
             raise ValueError("workflow or agent_type is required")
+        if not (req.instruction or "").strip() and not (req.user_message or "").strip():
+            raise HTTPException(400, "Provide non-empty instruction or user_message")
+        extra = _extra_task_config_from_playground(req)
+        tools_for_handle = None if req.tools is not None else req.tools_override
         task_id = await _handle_engineering_task(
             instruction=req.instruction,
             agent_type=agent_type,
@@ -966,9 +1012,10 @@ async def create_task(req: CreateTaskRequest):
             max_tokens=req.max_tokens,
             temperature=req.temperature,
             max_iterations=req.max_iterations,
-            tools_override=req.tools_override,
+            tools_override=tools_for_handle,
             workflow=None,
             notify=req.notify,
+            extra_config=extra,
         )
         return {"task_id": task_id}
     except ValueError as e:
@@ -1200,16 +1247,35 @@ async def get_task_prompt(task_id: str):
 
 
 class TestTaskRequest(BaseModel):
-    agent_type: str = "coder"
-    instruction: str
+    agent_type: str = "playground"
+    instruction: str = ""
     model: str | None = None
+    system_prompt: str | None = None
+    user_message: str | None = None
+    tools: list[str] | None = None
+    tools_override: list[str] | None = None
+    permissions: dict[str, Any] | None = None
+    kb_recall: bool | None = None
+    kb_recall_scopes: list[str] | None = None
+    kb_recall_limit: int | None = None
+    effort: str | None = None
+    empty_response_nudge: str | None = None
+    iteration_limit_reply: str | None = None
 
 
 @app.post("/api/tasks/test")
 async def test_task(req: TestTaskRequest):
-    """Preview the prompt that would be sent to an agent. Does not create a task."""
-    from runtime.context import build_system_prompt, build_user_message
+    """Preview resolved system/user prompts and tools (same resolution as runtime)."""
+    from coordinator.editor_store import get_setting as _get_setting
+    from runtime.task_prompts import (
+        resolve_initial_user_message_sync,
+        resolve_system_prompt,
+        resolve_tool_names,
+    )
     from runtime.tools.base import load_tools
+
+    if not (req.instruction or "").strip() and not (req.user_message or "").strip():
+        raise HTTPException(400, "Provide non-empty instruction or user_message")
 
     manifest = trigger_router.get_manifest(req.agent_type)
     if not manifest:
@@ -1219,12 +1285,65 @@ async def test_task(req: TestTaskRequest):
         manifest = manifest.model_copy()
         manifest.model = req.model
 
-    # Build prompt preview — use DB prompts as system override if available
-    db_prompts = trigger_router.get_prompts(req.agent_type)
-    tools = load_tools(manifest.tools, web_read_max_chars=manifest.web_read_max_chars)
-    source = "db" if db_prompts else "built-in"
-    system_prompt = db_prompts or build_system_prompt(manifest, tools.schemas())
-    user_message = build_user_message(req.instruction, [])
+    platform_cfg = PlatformConfig()
+    max_iter = min(manifest.max_iterations, platform_cfg.global_max_iterations)
+    base_tpl = await _get_setting(db.kb.pool, "base_system_prompt_template")
+
+    task = TaskConfig(
+        id="preview",
+        agent_type=req.agent_type,
+        instruction=req.instruction or "",
+        model_override=req.model,
+        config={},
+    )
+    if base_tpl:
+        task.config["base_system_prompt_template"] = base_tpl
+
+    extra = _extra_task_config_from_playground(
+        CreateTaskRequest(
+            agent_type=req.agent_type,
+            instruction=req.instruction or "",
+            model=req.model,
+            system_prompt=req.system_prompt,
+            user_message=req.user_message,
+            tools=req.tools,
+            tools_override=req.tools_override,
+            permissions=req.permissions,
+            kb_recall=req.kb_recall,
+            kb_recall_scopes=req.kb_recall_scopes,
+            kb_recall_limit=req.kb_recall_limit,
+            effort=req.effort,
+            empty_response_nudge=req.empty_response_nudge,
+            iteration_limit_reply=req.iteration_limit_reply,
+        )
+    )
+    task.config.update(extra)
+
+    if req.system_prompt and req.system_prompt.strip():
+        sp = req.system_prompt.strip()
+        task.config["system_prompt"] = sp
+        task.config["system_prompt_override"] = sp
+        task.system_prompt_override = sp
+    else:
+        db_prompt = trigger_router.get_prompts(req.agent_type) or None
+        if db_prompt:
+            task.config["system_suffix"] = db_prompt
+
+    tool_names = resolve_tool_names(task, manifest)
+    tools = load_tools(tool_names, web_read_max_chars=manifest.web_read_max_chars)
+    system_prompt = resolve_system_prompt(
+        task, manifest, tools.schemas(), max_iterations=max_iter,
+    )
+    if task.config.get("system_suffix"):
+        system_prompt = system_prompt.rstrip() + "\n\n" + task.config["system_suffix"]
+    user_message = resolve_initial_user_message_sync(task, [])
+
+    if task.config.get("system_prompt") or task.system_prompt_override:
+        source = "override"
+    elif task.config.get("system_suffix"):
+        source = "built-in+db_suffix"
+    else:
+        source = "built-in"
 
     return {
         "agent_type": req.agent_type,

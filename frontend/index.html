@@ -59,6 +59,11 @@
           <textarea id="instruction" rows="3" placeholder="e.g. How does Cilium replace kube-proxy?"></textarea>
         </div>
 
+        <div class="form-group">
+          <label>User message override <span class="tip" data-tip="If set, replaces the built default user message (including KB recall). Leave empty to build from Instruction.">ⓘ</span></label>
+          <textarea id="userMessage" rows="3" placeholder="Optional"></textarea>
+        </div>
+
         <details id="advancedOptions">
           <summary>Advanced Options</summary>
 
@@ -74,6 +79,15 @@
             <div class="form-group">
               <label>Max Iterations <span class="tip" data-tip="Max tool-call rounds. Light default: 6. Regular gather: 5, write: 3. Higher = more thorough but slower. Agent exits early when done.">ⓘ</span></label>
               <input id="maxIterations" type="number" value="" min="1" max="50" placeholder="Default">
+            </div>
+            <div class="form-group">
+              <label>Preview / defaults agent type</label>
+              <input id="previewAgentType" type="text" placeholder="e.g. playground" value="playground" autocomplete="off">
+            </div>
+            <div class="form-group">
+              <label class="tool-label" style="display:flex;align-items:center;gap:8px">
+                <input type="checkbox" id="kbRecall" checked> KB recall for default user message
+              </label>
             </div>
           </div>
 
@@ -131,6 +145,7 @@
 
         <div class="actions">
           <button class="btn-primary" id="runBtn" onclick="runTask()">Run Task</button>
+          <button type="button" class="btn-secondary" onclick="loadPromptDefaults()" id="loadDefaultsBtn">Load defaults</button>
           <button class="btn-secondary" onclick="previewPrompt()" id="previewBtn">Preview Prompt</button>
           <label class="notify-label"><input type="checkbox" id="notifyRun" checked> Notify</label>
         </div>

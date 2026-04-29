@@ -3,6 +3,28 @@ name = "mycroft"
 version = "0.1.0"
 description = "AI agent platform — coordinator + thin agent loop"
 requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "apprise>=1.9.0",
+    "kubernetes>=31.0.0",
+    "asyncpg>=0.30.0",
+    "httpx>=0.28.0",
+    "pydantic>=2.10.0",
+    "pydantic-settings>=2.7.0",
+    "prometheus-client>=0.21.0",
+    "pyjwt[crypto]>=2.9.0",
+    "pyyaml>=6.0",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.24.0",
+]
+
+[tool.uv]
+default-groups = ["dev"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

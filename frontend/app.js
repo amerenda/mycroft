@@ -76,7 +76,8 @@ let pollTimer = null;
 
 async function runTask() {
   const instruction = document.getElementById('instruction').value.trim();
-  if (!instruction) return;
+  const userMessage = (document.getElementById('userMessage')?.value || '').trim();
+  if (!instruction && !userMessage) return;
 
   const btn = document.getElementById('runBtn');
   btn.disabled = true;
@@ -96,7 +97,7 @@ async function runTask() {
     if (activeRunner === 'forge') {
       await runForge(instruction);
     } else {
-      await runMycroft(instruction);
+      await runMycroft(instruction, userMessage);
     }
   } catch (e) {
     traceEl.innerHTML = `<p style="color:#da3633">Error: ${esc(e.message)}</p>`;
@@ -216,17 +217,16 @@ function renderForgeResult(r) {
 
 // ── Mycroft runner ────────────────────────────────────────────────────────────
 
-async function runMycroft(instruction) {
+async function runMycroft(instruction, userMessage) {
   const workflow = document.getElementById('workflow').value;
   const systemPrompt = document.getElementById('systemPrompt').value.trim();
   const maxTokens = document.getElementById('maxTokens').value;
   const temperature = document.getElementById('temperature').value;
   const maxIterations = document.getElementById('maxIterations').value;
 
-  // Send tool override only when not all tools are checked
   const allCbs = [...document.querySelectorAll('.tool-cb')];
   const checkedValues = allCbs.filter(cb => cb.checked).map(cb => cb.value);
-  const toolsOverride = checkedValues.length < allCbs.length ? checkedValues : null;
+  const partialTools = checkedValues.length < allCbs.length ? checkedValues : null;
 
   if (!workflow) { alert('Select a workflow first'); return; }
 
@@ -236,10 +236,13 @@ async function runMycroft(instruction) {
     system_prompt: systemPrompt || null,
     notify: document.getElementById('notifyRun').checked,
   };
+  if (userMessage) body.user_message = userMessage;
   if (maxTokens) body.max_tokens = parseInt(maxTokens);
   if (temperature) body.temperature = parseFloat(temperature);
   if (maxIterations) body.max_iterations = parseInt(maxIterations);
-  if (toolsOverride) body.tools_override = toolsOverride;
+  if (partialTools) body.tools = partialTools;
+  const kbRecallEl = document.getElementById('kbRecall');
+  if (kbRecallEl && !kbRecallEl.checked) body.kb_recall = false;
 
   const r = await api('/api/tasks', {
     method: 'POST',
@@ -453,36 +456,83 @@ function renderTrace(messages, task) {
 
 // ── Prompt preview ────────────────────────────────────────────────────────────
 
-
-async function previewPrompt() {
+function buildTestTaskBody({ omitOverrides } = {}) {
+  const agentType = (document.getElementById('previewAgentType')?.value || 'playground').trim();
   const instruction = document.getElementById('instruction').value.trim();
-  if (!instruction) return;
+  const userMessage = (document.getElementById('userMessage')?.value || '').trim();
+  const model = document.getElementById('model')?.value || null;
+  const systemPrompt = document.getElementById('systemPrompt').value.trim();
+  const allCbs = [...document.querySelectorAll('.tool-cb')];
+  const checkedValues = allCbs.filter(cb => cb.checked).map(cb => cb.value);
+  const partialTools = checkedValues.length < allCbs.length ? checkedValues : null;
+  const kbRecallEl = document.getElementById('kbRecall');
 
-  const workflow = document.getElementById('workflow').value;
-  const agentType = 'researcher';
+  const body = { agent_type: agentType, instruction, model };
+  if (!omitOverrides) {
+    if (systemPrompt) body.system_prompt = systemPrompt;
+    if (userMessage) body.user_message = userMessage;
+    if (partialTools) body.tools = partialTools;
+  }
+  if (kbRecallEl && !kbRecallEl.checked) body.kb_recall = false;
+  return body;
+}
+
+async function loadPromptDefaults() {
+  const agentType = (document.getElementById('previewAgentType')?.value || '').trim();
+  if (!agentType) {
+    alert('Set Preview / defaults agent type (e.g. playground).');
+    return;
+  }
+  const instruction = document.getElementById('instruction').value.trim();
+  const userMessage = (document.getElementById('userMessage')?.value || '').trim();
+  if (!instruction && !userMessage) {
+    alert('Enter an instruction or user message first.');
+    return;
+  }
 
   try {
+    const body = buildTestTaskBody({ omitOverrides: true });
     const r = await api('/api/tasks/test', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        agent_type: agentType,
-        instruction,
-        model: document.getElementById('model')?.value || null,
-      }),
+      body: JSON.stringify(body),
+    });
+    document.getElementById('systemPrompt').value = r.system_prompt || '';
+    document.getElementById('userMessage').value = r.user_message || '';
+  } catch (e) {
+    alert('Error: ' + e.message);
+  }
+}
+
+async function previewPrompt() {
+  const instruction = document.getElementById('instruction').value.trim();
+  const userMessage = (document.getElementById('userMessage')?.value || '').trim();
+  if (!instruction && !userMessage) return;
+
+  try {
+    const body = buildTestTaskBody({ omitOverrides: false });
+    const r = await api('/api/tasks/test', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
     });
 
     const panel = document.getElementById('promptPanel');
     panel.style.display = 'block';
-    const srcLabel = r.system_prompt_source === 'db'
-      ? '<span style="color:#3fb950">✓ DB prompt</span>'
-      : '<span style="color:#e3b341">⚠ built-in default (no DB prompt set)</span>';
-    panel.querySelector('#promptContent').innerHTML = `
+    let srcLabel = '<span style="color:#8b949e">built-in</span>';
+    if (r.system_prompt_source === 'override') {
+      srcLabel = '<span style="color:#79c0ff">override</span>';
+    } else if (r.system_prompt_source === 'built-in+db_suffix') {
+      srcLabel = '<span style="color:#3fb950">built-in + DB suffix</span>';
+    } else if (r.system_prompt_source === 'db') {
+      srcLabel = '<span style="color:#3fb950">✓ DB prompt</span>';
+    } else if (r.system_prompt_source === 'built-in') {
+      srcLabel = '<span style="color:#e3b341">built-in default</span>';
+    }
+    document.getElementById('promptContent').innerHTML = `
       <div class="msg msg-system"><div class="role">System Prompt — ${srcLabel}</div><pre>${esc(r.system_prompt)}</pre></div>
       <div class="msg msg-user"><div class="role">User Message</div><pre>${esc(r.user_message)}</pre></div>
-      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${r.tools.join(', ')} | Model: ${r.model}</p>`;
-    const spEl = document.getElementById('systemPrompt');
-    if (!spEl.value.trim()) spEl.value = r.system_prompt;
+      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${(r.tools || []).join(', ') || '(none)'} | Model: ${esc(String(r.model || ''))}</p>`;
   } catch (e) {
     alert('Error: ' + e.message);
   }

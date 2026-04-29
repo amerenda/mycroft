@@ -63,6 +63,20 @@ def build_user_message(instruction: str, context_records: list[MemoryRecord]) ->
     return "\n".join(parts)
 
 
+# Defaults for loop edge cases — UI may override via task.config keys of the same name.
+DEFAULT_EMPTY_RESPONSE_NUDGE = (
+    "You returned an empty response. You must call a tool to continue. "
+    "What is the next step? Call the appropriate tool now."
+)
+
+
+def default_iteration_limit_message(max_iterations: int, instruction_preview: str) -> str:
+    return (
+        f"Hit iteration limit ({max_iterations}). "
+        f"Task: {instruction_preview[:100]}"
+    )
+
+
 def count_tool_rounds(messages: list[dict[str, Any]]) -> int:
     """Count the number of completed tool execution rounds in a conversation."""
     rounds = 0
