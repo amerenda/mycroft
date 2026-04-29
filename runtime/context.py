@@ -10,11 +10,34 @@ from common.models import AgentManifest, MemoryRecord
 log = logging.getLogger(__name__)
 
 
+_DEFAULT_TEMPLATE = """\
+You are {role}.
+Your goal: {goal}
+
+─── RULES ────────────────────────────────────────────
+
+You have {max_iterations} tool-call rounds to complete your task.
+Each round where you call one or more tools uses one round.
+
+1. Call a tool in every response. Never describe what you will do — do it.
+2. Use finish (or submit_report) to deliver your output. That is the ONLY
+   valid exit — responding with text alone does nothing.
+3. Pace yourself. Don't spend all rounds on research and leave no rounds to
+   deliver output. If you're running low, wrap up with what you have.
+4. If a tool call fails, read the error and try a different approach.
+
+─── AVAILABLE TOOLS ──────────────────────────────────────────
+
+{tool_list}
+"""
+
+
 def build_system_prompt(
     manifest: AgentManifest,
     tool_schemas: list[dict[str, Any]],
     effort: str | None = None,
     max_iterations: int | None = None,
+    template: str | None = None,
 ) -> str:
     """Build the default system prompt from manifest and available tools."""
     # Prepend thinking control token for models that support it (e.g. qwen3).
@@ -30,26 +53,13 @@ def build_system_prompt(
         for t in tool_schemas
     )
     budget = max_iterations or manifest.max_iterations
-
-    return thinking_prefix + f"""You are {manifest.role}.
-Your goal: {manifest.goal}
-
-─── RULES ──────────────────────────────────────────────────
-
-You have {budget} tool-call rounds to complete your task.
-Each round where you call one or more tools uses one round.
-
-1. Call a tool in every response. Never describe what you will do — do it.
-2. Use finish (or submit_report) to deliver your output. That is the ONLY
-   valid exit — responding with text alone does nothing.
-3. Pace yourself. Don't spend all rounds on research and leave no rounds to
-   deliver output. If you're running low, wrap up with what you have.
-4. If a tool call fails, read the error and try a different approach.
-
-─── AVAILABLE TOOLS ────────────────────────────────────────
-
-{tool_list}
-"""
+    body = (template or _DEFAULT_TEMPLATE).format(
+        role=manifest.role,
+        goal=manifest.goal,
+        max_iterations=budget,
+        tool_list=tool_list,
+    )
+    return thinking_prefix + body
 
 
 def build_user_message(instruction: str, context_records: list[MemoryRecord]) -> str:

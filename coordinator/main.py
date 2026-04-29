@@ -276,6 +276,7 @@ async def _start_dynamic_pipeline(
     from coordinator.editor_store import get_setting as _get_setting
     platform_step_prompt = await _get_setting(db.kb.pool, "pipeline_step_prompt")
     iteration_warning_message = await _get_setting(db.kb.pool, "iteration_warning_message")
+    base_prompt_template = await _get_setting(db.kb.pool, "base_system_prompt_template")
     suffix_parts = [p for p in [step_prompt, step.get("system_suffix"), platform_step_prompt] if p]
     combined_suffix = "\n\n".join(suffix_parts) or None
 
@@ -290,6 +291,7 @@ async def _start_dynamic_pipeline(
         "step_description": step.get("description") or None,
         "system_suffix": combined_suffix,
         "iteration_warning_message": iteration_warning_message or None,
+        "base_system_prompt_template": base_prompt_template or None,
         "phase": "pipeline-step-0",
         "is_last_step": is_last,
         "workflow": workflow_name,
@@ -376,6 +378,7 @@ async def _run_dynamic_pipeline_steps(
         from coordinator.editor_store import get_setting as _get_setting
         platform_step_prompt = await _get_setting(db.kb.pool, "pipeline_step_prompt")
         iteration_warning_message = await _get_setting(db.kb.pool, "iteration_warning_message")
+        base_prompt_template = await _get_setting(db.kb.pool, "base_system_prompt_template")
         suffix_parts = [p for p in [step_prompt, step.get("system_suffix"), platform_step_prompt] if p]
         combined_suffix = "\n\n".join(suffix_parts) or None
 
@@ -389,6 +392,7 @@ async def _run_dynamic_pipeline_steps(
             "step_description": step.get("description") or None,
             "system_suffix": combined_suffix,
             "iteration_warning_message": iteration_warning_message or None,
+            "base_system_prompt_template": base_prompt_template or None,
             "phase": f"pipeline-step-{step_index}",
             "is_last_step": is_last,
             "workflow": workflow_name,
@@ -457,6 +461,7 @@ async def _handle_engineering_task(
 
     from coordinator.editor_store import get_setting as _get_setting
     iteration_warning_message = await _get_setting(db.kb.pool, "iteration_warning_message")
+    base_prompt_template = await _get_setting(db.kb.pool, "base_system_prompt_template")
 
     # Build task config
     task_config: dict[str, Any] = {}
@@ -471,6 +476,8 @@ async def _handle_engineering_task(
             task_config["system_suffix"] = db_prompt
     if iteration_warning_message:
         task_config["iteration_warning_message"] = iteration_warning_message
+    if base_prompt_template:
+        task_config["base_system_prompt_template"] = base_prompt_template
     if max_tokens is not None:
         task_config["max_tokens"] = max_tokens
     if temperature is not None:

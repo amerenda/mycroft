@@ -200,7 +200,36 @@ async def delete_workflow(pool: asyncpg.Pool, name: str) -> bool:
 # Platform settings
 # ---------------------------------------------------------------------------
 
+_BASE_PROMPT_TEMPLATE_DEFAULT = """\
+You are {role}.
+Your goal: {goal}
+
+─── RULES ────────────────────────────────────────────
+
+You have {max_iterations} tool-call rounds to complete your task.
+Each round where you call one or more tools uses one round.
+
+1. Call a tool in every response. Never describe what you will do — do it.
+2. Use finish (or submit_report) to deliver your output. That is the ONLY
+   valid exit — responding with text alone does nothing.
+3. Pace yourself. Don't spend all rounds on research and leave no rounds to
+   deliver output. If you're running low, wrap up with what you have.
+4. If a tool call fails, read the error and try a different approach.
+
+─── AVAILABLE TOOLS ──────────────────────────────────────────
+
+{tool_list}
+"""
+
 _SETTING_DEFAULTS: dict[str, dict] = {
+    "base_system_prompt_template": {
+        "label": "Base System Prompt Template",
+        "description": (
+            "Template rendered for every agent task. "
+            "Variables: {role}, {goal}, {max_iterations}, {tool_list}."
+        ),
+        "value": _BASE_PROMPT_TEMPLATE_DEFAULT,
+    },
     "pipeline_step_prompt": {
         "label": "Pipeline Step Prompt",
         "description": "Injected into the system prompt of every pipeline step. Use this to give all agents universal pipeline instructions — e.g. how to signal completion.",
