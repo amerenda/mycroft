@@ -151,9 +151,10 @@ async def lifespan(app: FastAPI):
     # Schema migrations (idempotent)
     await db.kb.ensure_tasks_table()
 
-    from coordinator.tool_schemas import ensure_schema_table, seed_default_schemas
+    from coordinator.tool_schemas import ensure_schema_table, seed_default_schemas, ensure_builtin_schemas
     await ensure_schema_table(db.kb.pool)
     await seed_default_schemas(db.kb.pool)
+    await ensure_builtin_schemas(db.kb.pool)
 
     from coordinator.reports import ensure_reports_table
     await ensure_reports_table(db.kb.pool)

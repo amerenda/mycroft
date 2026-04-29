@@ -181,6 +181,7 @@ _SEED_GROUPS = {
     "web_read": "web", "web_search": "web", "wiki_read": "web",
     "todo_list_projects": "todo", "todo_get_tasks": "todo",
     "todo_create_task": "todo", "todo_update_task": "todo",
+    "finish": "pipeline", "submit_report": "pipeline",
 }
 
 
@@ -210,3 +211,36 @@ async def seed_default_schemas(pool: asyncpg.Pool) -> None:
         )
 
     log.info("Seeded %d tool schemas", len(registry.schemas()))
+
+
+async def ensure_builtin_schemas(pool: asyncpg.Pool) -> None:
+    """Upsert finish and submit_report schemas unconditionally.
+
+    These tools are injected by the runtime and never appear in load_tools()
+    group lists, so seed_default_schemas misses them. This runs on every
+    startup to keep their descriptions in sync with the code.
+    """
+    from runtime.tools.base import Finish, SubmitReport
+
+    for tool in (Finish(), SubmitReport()):
+        schema = {
+            "type": "function",
+            "function": {
+                "name": tool.name,
+                "description": tool.description,
+                "parameters": tool.parameters,
+            },
+        }
+        existing = await get_schema(pool, tool.name)
+        if existing and existing["schema"] == schema:
+            continue
+        await upsert_schema(
+            pool,
+            name=tool.name,
+            schema=schema,
+            schema_version="1.0.0",
+            changelog="Auto-synced from runtime on startup",
+            updated_by="seed",
+            group="pipeline",
+        )
+        log.info("Upserted builtin tool schema: %s", tool.name)
