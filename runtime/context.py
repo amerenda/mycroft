@@ -14,15 +14,11 @@ def build_system_prompt(
     manifest: AgentManifest,
     tool_schemas: list[dict[str, Any]],
     effort: str | None = None,
+    max_iterations: int | None = None,
 ) -> str:
+    """Build the default system prompt from manifest and available tools."""
     # Prepend thinking control token for models that support it (e.g. qwen3).
     # Only injected when explicitly set in the manifest — absent = model default.
-    """Build the default system prompt from manifest and available tools.
-
-    This is only used when no system_prompt_override is set on the task.
-    All agent-specific prompt content should live in the DB (set via the
-    Agents UI), not in baked-image files.
-    """
     thinking_prefix = ""
     if manifest.thinking is True:
         thinking_prefix = "/think\n\n"
@@ -33,29 +29,26 @@ def build_system_prompt(
         f"- {t['function']['name']}: {t['function']['description']}"
         for t in tool_schemas
     )
+    budget = max_iterations or manifest.max_iterations
 
     return thinking_prefix + f"""You are {manifest.role}.
 Your goal: {manifest.goal}
 
-# CRITICAL RULE
+─── RULES ──────────────────────────────────────────────────
 
-You MUST call a tool in every response. The ONLY time you respond without a tool call is when the entire task is finished and you are giving your final summary. A response without a tool call ends your session immediately.
+You have {budget} tool-call rounds to complete your task.
+Each round where you call one or more tools uses one round.
 
-WRONG — this ends your session:
-"I'll start by looking into this."
+1. Call a tool in every response. Never describe what you will do — do it.
+2. Use finish (or submit_report) to deliver your output. That is the ONLY
+   valid exit — responding with text alone does nothing.
+3. Pace yourself. Don't spend all rounds on research and leave no rounds to
+   deliver output. If you're running low, wrap up with what you have.
+4. If a tool call fails, read the error and try a different approach.
 
-RIGHT — this keeps you going:
-Call one of your tools to take action.
-
-# Available Tools
+─── AVAILABLE TOOLS ────────────────────────────────────────
 
 {tool_list}
-
-# Rules
-
-1. ALWAYS call a tool. Never describe what you would do — do it.
-2. If a tool call fails, read the error and try a different approach. Do not give up.
-3. Only respond without a tool call when the ENTIRE task is complete.
 """
 
 

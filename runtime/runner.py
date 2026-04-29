@@ -57,6 +57,7 @@ class AgentRunner:
         # LLM call params from task config (overridable via API/UI)
         self._max_tokens = task.config.get("max_tokens") or 4096
         self._temperature = task.config.get("temperature")
+        self._effort = task.config.get("effort")
 
         self.messages: list[dict[str, Any]] = []
         self.iteration = 0
@@ -137,7 +138,8 @@ class AgentRunner:
             )
 
             system_prompt = self.task.system_prompt_override or build_system_prompt(
-                self.manifest, self.tools.schemas(), effort=self._effort)
+                self.manifest, self.tools.schemas(), effort=self._effort,
+                max_iterations=self.max_iterations)
             system_suffix = self.task.config.get("system_suffix")
             if system_suffix:
                 system_prompt = system_prompt.rstrip() + "\n\n" + system_suffix
