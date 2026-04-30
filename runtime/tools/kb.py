@@ -50,7 +50,7 @@ class ScratchWrite:
         "Write to the shared scratch space for this workflow run. "
         "All agents in this pipeline can read it. "
         "Use it to leave key facts, URLs, or partial findings for later steps. "
-        "Set append=true to add to existing notes; omit or set false to overwrite."
+        "By default it appends to existing notes. Set overwrite=true to replace all content."
     )
     parameters = {
         "type": "object",
@@ -61,7 +61,11 @@ class ScratchWrite:
             },
             "append": {
                 "type": "boolean",
-                "description": "If true, append to existing scratch content. If false (default), overwrite.",
+                "description": "If true, append to existing scratch content (default behavior when omitted).",
+            },
+            "overwrite": {
+                "type": "boolean",
+                "description": "If true, replace existing scratch content instead of appending.",
             },
         },
         "required": ["content"],
@@ -74,8 +78,12 @@ class ScratchWrite:
     async def execute(self, args: dict[str, Any]) -> str:
         import uuid
         import asyncpg
-        content = args.get("content", "")
-        append = args.get("append", False)
+        content = str(args.get("content", ""))
+        overwrite = bool(args.get("overwrite", False))
+        if "append" in args:
+            append = bool(args.get("append")) and not overwrite
+        else:
+            append = not overwrite
         conn = await asyncpg.connect(self._kb_dsn)
         try:
             async with conn.transaction():
@@ -101,8 +109,8 @@ class ScratchWrite:
                     str(uuid.uuid4()), content, self._scope,
                     [], json.dumps({}), 0.5, "agent-scratch",
                 )
-            log.info("Scratch %s: scope=%s len=%d", "appended" if append else "updated",
-                     self._scope, len(content))
-            return f"Scratch {'appended' if append else 'updated'} ({len(content)} chars)."
+            mode = "appended" if append else "updated"
+            log.info("Scratch %s: scope=%s len=%d", mode, self._scope, len(content))
+            return f"Scratch {mode} ({len(content)} chars)."
         finally:
             await conn.close()

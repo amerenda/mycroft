@@ -14,6 +14,7 @@ function _argoLink(wfName) {
 
 document.querySelectorAll('.tab').forEach(btn => {
   btn.addEventListener('click', () => {
+    if (!_guardUnsavedAgentChanges()) return;
     document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
     btn.classList.add('active');
@@ -22,6 +23,7 @@ document.querySelectorAll('.tab').forEach(btn => {
 });
 
 function switchTab(name) {
+  if (!_guardUnsavedAgentChanges()) return;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.querySelectorAll('.tab-content').forEach(c => c.classList.toggle('active', c.id === 'tab-' + name));
 }
@@ -787,6 +789,120 @@ let _currentAgent = null;
 let _agentTestTimer = null;
 let _agentNames = [];
 let _agentModels = {}; // name → default model from manifest
+let _agentEditorHydrating = false;
+const _agentEditorState = {
+  isDirty: false,
+  isSaving: false,
+  lastSavedAt: null,
+  lastError: '',
+  readbackMismatch: false,
+  baselineHash: '',
+  currentHash: '',
+};
+
+function _normalizeText(v) {
+  return String(v ?? '').replace(/\r\n/g, '\n').trim();
+}
+
+function _agentEditorPayloadForHash() {
+  return {
+    name: _normalizeText(document.getElementById('agentName')?.value || ''),
+    manifest: _normalizeText(document.getElementById('agentManifest')?.value || ''),
+    prompts: _normalizeText(document.getElementById('agentSystemPrompt')?.value || ''),
+  };
+}
+
+function _hashPayload(obj) {
+  return JSON.stringify(obj);
+}
+
+function _formatSavedAt(ts) {
+  if (!ts) return '';
+  try {
+    return new Date(ts).toLocaleTimeString();
+  } catch (_) {
+    return '';
+  }
+}
+
+function _renderAgentSaveStatus() {
+  const el = document.getElementById('agentSaveStatus');
+  const btn = document.getElementById('agentSaveBtn');
+  if (!el) return;
+  if (btn) btn.disabled = _agentEditorState.isSaving;
+
+  if (_agentEditorState.isSaving) {
+    el.textContent = 'Saving...';
+    el.style.color = '#58a6ff';
+    return;
+  }
+  if (_agentEditorState.lastError) {
+    el.textContent = 'Save failed';
+    el.style.color = '#f85149';
+    return;
+  }
+  if (_agentEditorState.readbackMismatch) {
+    el.textContent = 'Saved, but loaded value differs';
+    el.style.color = '#e3b341';
+    return;
+  }
+  if (_agentEditorState.isDirty) {
+    el.textContent = 'Unsaved changes';
+    el.style.color = '#e3b341';
+    return;
+  }
+  if (_agentEditorState.lastSavedAt) {
+    el.textContent = `Saved ${_formatSavedAt(_agentEditorState.lastSavedAt)}`;
+    el.style.color = '#3fb950';
+    return;
+  }
+  el.textContent = '';
+  el.style.color = '#8b949e';
+}
+
+function _recomputeAgentDirtyState() {
+  if (_agentEditorHydrating) return;
+  _agentEditorState.currentHash = _hashPayload(_agentEditorPayloadForHash());
+  _agentEditorState.isDirty = _agentEditorState.currentHash !== _agentEditorState.baselineHash;
+  _agentEditorState.lastError = '';
+  _agentEditorState.readbackMismatch = false;
+  _renderAgentSaveStatus();
+}
+
+function _setAgentBaselineFromCurrent(savedAt = null) {
+  _agentEditorState.baselineHash = _hashPayload(_agentEditorPayloadForHash());
+  _agentEditorState.currentHash = _agentEditorState.baselineHash;
+  _agentEditorState.isDirty = false;
+  _agentEditorState.lastError = '';
+  _agentEditorState.readbackMismatch = false;
+  _agentEditorState.lastSavedAt = savedAt || new Date().toISOString();
+  _renderAgentSaveStatus();
+}
+
+function _guardUnsavedAgentChanges() {
+  if (!_agentEditorState.isDirty || _agentEditorState.isSaving) return true;
+  return confirm('You have unsaved changes. Continue without saving?');
+}
+
+function _initAgentEditorDirtyTracking() {
+  const ids = [
+    'agentName', 'agentManifest', 'agentModel', 'agentMaxIterations', 'agentMaxConcurrent',
+    'agentWebReadMax', 'agentThinking', 'agentRequireToolExit', 'agentMemory', 'agentCpu',
+    'agentScratch', 'agentSystemPrompt', 'agentToolsList', 'agentPermsRead', 'agentPermsWrite',
+  ];
+  ids.forEach((id) => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener('input', _recomputeAgentDirtyState);
+    el.addEventListener('change', _recomputeAgentDirtyState);
+  });
+  window.addEventListener('beforeunload', (e) => {
+    if (!_agentEditorState.isDirty) return;
+    e.preventDefault();
+    e.returnValue = '';
+  });
+  _renderAgentSaveStatus();
+}
 
 function _extractYamlField(yaml, field) {
   const m = yaml.match(new RegExp(`^${field}:\\s*(.+)`, 'm'));
@@ -955,8 +1071,10 @@ async function loadAgents() {
 }
 
 async function selectAgent(name) {
+  if (!_guardUnsavedAgentChanges()) return;
   try {
     const a = await api('/api/agents/' + name);
+    _agentEditorHydrating = true;
     _currentAgent = name;
     document.getElementById('agentName').value = name;
     document.getElementById('agentManifest').value = a.manifest;
@@ -1000,12 +1118,18 @@ async function selectAgent(name) {
     document.getElementById('agentEditor').style.display = '';
     document.getElementById('agentEmpty').style.display = 'none';
     loadAgents();
+    _setAgentBaselineFromCurrent(a.updated_at || null);
   } catch (e) {
     alert('Error loading agent: ' + e.message);
+  } finally {
+    _agentEditorHydrating = false;
+    _renderAgentSaveStatus();
   }
 }
 
 function newAgent() {
+  if (!_guardUnsavedAgentChanges()) return;
+  _agentEditorHydrating = true;
   _currentAgent = null;
   document.getElementById('agentName').value = '';
   document.getElementById('agentManifest').value = AGENT_MANIFEST_TEMPLATE;
@@ -1028,6 +1152,9 @@ function newAgent() {
   document.getElementById('agentEmpty').style.display = 'none';
   document.getElementById('agentName').focus();
   loadAgents();
+  _setAgentBaselineFromCurrent(null);
+  _agentEditorHydrating = false;
+  _renderAgentSaveStatus();
 }
 
 async function saveAgent() {
@@ -1077,6 +1204,9 @@ async function saveAgent() {
   document.getElementById('agentManifest').value = manifest;
 
   try {
+    _agentEditorState.isSaving = true;
+    _agentEditorState.lastError = '';
+    _renderAgentSaveStatus();
     const result = await api('/api/agents/' + name, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
@@ -1085,14 +1215,30 @@ async function saveAgent() {
     const canonical = result.name || name;
     _currentAgent = canonical;
     document.getElementById('agentName').value = canonical;
+    const savedAgent = await api('/api/agents/' + canonical);
+    const savedManifest = _normalizeText(savedAgent.manifest || '');
+    const savedPrompt = _normalizeText(_extractSystemPrompt(savedAgent.prompts || ''));
+    const expectedManifest = _normalizeText(manifest);
+    const expectedPrompt = _normalizeText(prompts);
+    _setAgentBaselineFromCurrent(result.updated_at || savedAgent.updated_at || null);
+    _agentEditorState.readbackMismatch =
+      savedManifest !== expectedManifest || savedPrompt !== expectedPrompt;
+    _renderAgentSaveStatus();
     loadAgents();
     loadWorkflowDropdown();
   } catch (e) {
+    _agentEditorState.lastError = e.message || 'Save failed';
+    _agentEditorState.isDirty = true;
+    _renderAgentSaveStatus();
     alert('Save failed: ' + e.message);
+  } finally {
+    _agentEditorState.isSaving = false;
+    _renderAgentSaveStatus();
   }
 }
 
 async function cloneAgent() {
+  if (!_guardUnsavedAgentChanges()) return;
   if (!_currentAgent) return;
   const newName = prompt(`Clone "${_currentAgent}" as:`, _currentAgent + '-copy');
   if (!newName || !newName.trim()) return;
@@ -1113,6 +1259,7 @@ async function cloneAgent() {
 }
 
 async function deleteAgent() {
+  if (!_guardUnsavedAgentChanges()) return;
   if (!_currentAgent) return;
   if (!confirm(`Delete agent "${_currentAgent}"?`)) return;
   try {
@@ -1120,6 +1267,13 @@ async function deleteAgent() {
     _currentAgent = null;
     document.getElementById('agentEditor').style.display = 'none';
     document.getElementById('agentEmpty').style.display = '';
+    _agentEditorState.isDirty = false;
+    _agentEditorState.lastSavedAt = null;
+    _agentEditorState.lastError = '';
+    _agentEditorState.readbackMismatch = false;
+    _agentEditorState.baselineHash = '';
+    _agentEditorState.currentHash = '';
+    _renderAgentSaveStatus();
     loadAgents();
   } catch (e) {
     alert('Delete failed: ' + e.message);
@@ -2499,3 +2653,4 @@ loadWorkflowDropdown();
 loadSchemas();
 loadSettings();
 connectSSE();
+_initAgentEditorDirtyTracking();

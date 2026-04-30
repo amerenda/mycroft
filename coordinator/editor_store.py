@@ -121,23 +121,24 @@ async def list_agents(pool: asyncpg.Pool) -> list[dict]:
 
 async def get_agent(pool: asyncpg.Pool, name: str) -> dict | None:
     row = await pool.fetchrow(
-        "SELECT name, manifest, prompts FROM agent_definitions WHERE name = $1", name
+        "SELECT name, manifest, prompts, updated_at FROM agent_definitions WHERE name = $1", name
     )
     return dict(row) if row else None
 
 
-async def save_agent(pool: asyncpg.Pool, name: str, manifest: str, prompts: str) -> str:
-    """Save agent definition. Returns the canonical (slugified) name."""
+async def save_agent(pool: asyncpg.Pool, name: str, manifest: str, prompts: str) -> dict:
+    """Save agent definition. Returns canonical name + updated timestamp."""
     canonical = slugify(name)
-    await pool.execute(
+    row = await pool.fetchrow(
         """
         INSERT INTO agent_definitions (name, manifest, prompts, updated_at)
         VALUES ($1, $2, $3, NOW())
         ON CONFLICT (name) DO UPDATE SET manifest = $2, prompts = $3, updated_at = NOW()
+        RETURNING name, updated_at
         """,
         canonical, manifest, prompts,
     )
-    return canonical
+    return dict(row)
 
 
 async def delete_agent(pool: asyncpg.Pool, name: str) -> bool:

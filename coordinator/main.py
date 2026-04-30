@@ -1507,9 +1507,14 @@ async def agent_effective_prompt(
 async def save_agent(name: str, payload: AgentPayload):
     _safe_name(name)
     from coordinator.editor_store import save_agent as _save_agent, slugify
-    canonical = await _save_agent(db.kb.pool, name, payload.manifest, payload.prompts)
+    saved = await _save_agent(db.kb.pool, name, payload.manifest, payload.prompts)
+    canonical = saved.get("name") or slugify(name)
     trigger_router.register(canonical, payload.manifest, payload.prompts or "")
-    return {"status": "saved", "name": canonical}
+    return {
+        "status": "saved",
+        "name": canonical,
+        "updated_at": str(saved.get("updated_at")) if saved.get("updated_at") else None,
+    }
 
 
 @app.delete("/api/agents/{name}")

@@ -194,6 +194,8 @@ class AgentRunner:
 
         _warn_at = max(2, round(self.max_iterations * 0.25))
         _warning_template = self.task.config.get("iteration_warning_message") or ""
+        _tool_names = {t["function"]["name"] for t in self.tools.schemas()}
+        _has_scratch = "scratch_read" in _tool_names and "scratch_write" in _tool_names
 
         while self.iteration < self.max_iterations:
             model_name = self.llm.model
@@ -203,9 +205,16 @@ class AgentRunner:
 
             remaining = self.max_iterations - self.iteration
             if remaining == _warn_at and _warning_template:
+                warning = _warning_template.format(remaining=remaining)
+                if _has_scratch:
+                    warning = (
+                        warning.rstrip()
+                        + "\n\nImportant: do not call scratch_read unless you have already written scratch in this run. "
+                        + "If scratch is empty, continue collecting sources and then call finish with your best available output."
+                    )
                 self.messages.append({
                     "role": "user",
-                    "content": _warning_template.format(remaining=remaining),
+                    "content": warning,
                 })
 
             # Call LLM

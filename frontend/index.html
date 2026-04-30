@@ -207,8 +207,9 @@
         <div class="editor-pane-header">
           <input id="agentName" class="editor-name-input" type="text" placeholder="agent-name">
           <div class="editor-pane-actions">
+            <span id="agentSaveStatus" style="font-size:0.8em;color:#8b949e;min-width:170px;text-align:right"></span>
             <button class="btn-tool-ctrl" onclick="cloneAgent()" title="Duplicate this agent with a new name">Clone</button>
-            <button class="btn-primary" onclick="saveAgent()">Save</button>
+            <button class="btn-primary" id="agentSaveBtn" onclick="saveAgent()">Save</button>
             <button class="btn-danger" onclick="deleteAgent()">Delete</button>
           </div>
         </div>
