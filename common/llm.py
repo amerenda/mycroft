@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -11,6 +12,18 @@ from typing import Any, Optional
 import httpx
 
 log = logging.getLogger(__name__)
+
+
+def _scrub_json_value(obj: Any) -> Any:
+    """Make structures safe for JSON → PostgreSQL jsonb (no NaN/Inf)."""
+    if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
+        return None
+    if isinstance(obj, dict):
+        return {str(k): _scrub_json_value(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_scrub_json_value(v) for v in obj]
+    return obj
+
 
 JOB_TIMEOUT = 3600       # 1 hour — total timeout for inference under GPU contention
 QUEUE_WAIT_TIMEOUT = 300 # 5 min — if still queued after this, no runner is available
@@ -80,18 +93,33 @@ class LLMClient:
         if temperature is not None:
             payload["temperature"] = temperature
 
+        payload = _scrub_json_value(payload)
+
         log.debug("LLM request: model=%s messages=%d tools=%d",
                    effective_model, len(messages), len(tools or []))
 
         t_submit = time.monotonic()
 
-        # Submit to queue
-        resp = await self._client.post("/api/queue/submit", json=payload)
+        # Submit to queue (llm-manager persists JSONB — must be strict JSON)
+        try:
+            resp = await self._client.post("/api/queue/submit", json=payload)
+        except TypeError as e:
+            log.error("LLM payload not JSON-serializable: %s", e)
+            raise RuntimeError(f"LLM request serialization failed: {e}") from e
         if resp.status_code == 422:
             detail = resp.json()
             raise RuntimeError(f"Queue rejected job: {detail.get('message', detail)}")
         if resp.status_code == 429:
             raise RuntimeError(f"Queue rate limited: {resp.text}")
+        if resp.status_code >= 500:
+            snippet = (resp.text or "")[:4000]
+            log.error(
+                "LLM queue submit HTTP %s model=%s: %s",
+                resp.status_code, effective_model, snippet or "(empty body)",
+            )
+            raise RuntimeError(
+                f"LLM queue submit failed ({resp.status_code}): {snippet or resp.reason_phrase}"
+            )
         resp.raise_for_status()
 
         job = resp.json()

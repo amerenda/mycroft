@@ -124,6 +124,12 @@ class ToolRegistry:
         try:
             result = await tool.execute(args)
             log.info("Tool %s executed successfully", name)
+            if not isinstance(result, str):
+                return (
+                    json.dumps(result, ensure_ascii=False)
+                    if isinstance(result, (dict, list))
+                    else str(result)
+                )
             return result
         except Exception as e:
             log.error("Tool %s failed: %s", name, e)
