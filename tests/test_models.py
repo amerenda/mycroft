@@ -26,6 +26,11 @@ class TestAgentManifest:
         assert m.tools == []
         assert m.permissions.read == []
         assert m.web_read_max_chars is None
+        assert m.max_tokens is None
+
+    def test_max_tokens(self):
+        m = AgentManifest(name="x", max_tokens=8192)
+        assert m.max_tokens == 8192
 
     def test_none_coercion(self):
         m = AgentManifest(name="test", role=None, goal=None, model=None, backend=None)

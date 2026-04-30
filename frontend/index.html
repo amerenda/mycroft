@@ -225,6 +225,10 @@
               <label>Max Iterations</label>
               <input id="agentMaxIterations" type="number" min="1" max="50" placeholder="10">
             </div>
+            <div class="form-group" style="margin-bottom:0;max-width:100px">
+              <label>Max Tokens <span class="tip" data-tip="LLM completion budget per call. Empty = runtime default (4096) unless set in YAML.">ⓘ</span></label>
+              <input id="agentMaxTokens" type="number" min="1" max="131072" step="1" placeholder="">
+            </div>
             <div class="form-group" style="margin-bottom:0;max-width:90px">
               <label>Memory <span class="tip" data-tip="Pod memory request (e.g. 512Mi, 2Gi)">ⓘ</span></label>
               <input id="agentMemory" type="text" placeholder="512Mi">
@@ -288,6 +292,7 @@
             <div style="margin-top:6px;font-size:0.78em;color:#8b949e">
               Tools: <span id="agentPromptTools" style="color:#c9d1d9"></span>
             </div>
+            <div id="agentPromptLimits" style="margin-top:4px;font-size:0.78em;color:#8b949e"></div>
             <div id="agentAutoInjectedRow" style="margin-top:2px;font-size:0.78em;color:#8b949e;display:none">
               Auto-injected (pipeline): <span id="agentAutoInjectedTools" style="color:#58a6ff"></span>
             </div>

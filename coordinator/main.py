@@ -288,11 +288,28 @@ async def _submit_pipeline_agent(
         resolved_mi = int(step_manifest.max_iterations) if step_manifest else 10
     resolved_mi = min(max(1, resolved_mi), int(_pcap.global_max_iterations))
 
+    resolved_mt: int | None = None
+    _step_mt = step.get("max_tokens")
+    if _step_mt not in (None, "", False):
+        try:
+            _mti = int(_step_mt)
+            if _mti > 0:
+                resolved_mt = _mti
+        except (TypeError, ValueError):
+            pass
+    if resolved_mt is None and step_manifest and step_manifest.max_tokens is not None:
+        try:
+            _mm = int(step_manifest.max_tokens)
+            if _mm > 0:
+                resolved_mt = _mm
+        except (TypeError, ValueError):
+            pass
+
     task_config = {
         "instruction": instruction,
         "model_override": step.get("model") or None,
         "max_iterations_override": resolved_mi,
-        "max_tokens": step.get("max_tokens") or None,
+        "max_tokens": resolved_mt,
         "tools_override": step.get("tools") or None,
         "context_injection": context_injection,
         "scratch_scope": scratch_scope,
@@ -588,8 +605,16 @@ async def _handle_engineering_task(
         task_config["iteration_warning_message"] = iteration_warning_message
     if base_prompt_template:
         task_config["base_system_prompt_template"] = base_prompt_template
-    if max_tokens is not None:
-        task_config["max_tokens"] = max_tokens
+    _mt = max_tokens
+    if _mt is None and manifest.max_tokens is not None:
+        _mt = manifest.max_tokens
+    if _mt is not None:
+        try:
+            _mti = int(_mt)
+            if _mti > 0:
+                task_config["max_tokens"] = _mti
+        except (TypeError, ValueError):
+            pass
     if temperature is not None:
         task_config["temperature"] = temperature
     if workflow:
@@ -1162,6 +1187,7 @@ class TestTaskRequest(BaseModel):
     instruction: str = ""
     model: str | None = None
     max_iterations: int | None = None
+    max_tokens: int | None = None
     system_prompt: str | None = None
     user_message: str | None = None
     tools: list[str] | None = None
@@ -1203,6 +1229,15 @@ async def test_task(req: TestTaskRequest):
     else:
         _raw_prev = int(manifest.max_iterations)
     max_iter = min(max(1, _raw_prev), int(platform_cfg.global_max_iterations))
+    if req.max_tokens is not None and req.max_tokens > 0:
+        max_tokens_eff = int(req.max_tokens)
+    elif manifest.max_tokens is not None:
+        try:
+            max_tokens_eff = max(1, int(manifest.max_tokens))
+        except (TypeError, ValueError):
+            max_tokens_eff = 4096
+    else:
+        max_tokens_eff = 4096
     base_tpl = await _get_setting(db.kb.pool, "base_system_prompt_template")
 
     task = TaskConfig(
@@ -1270,6 +1305,7 @@ async def test_task(req: TestTaskRequest):
         "user_message": user_message,
         "tools": [t["function"]["name"] for t in tools.schemas()],
         "max_iterations_effective": max_iter,
+        "max_tokens_effective": max_tokens_eff,
     }
 
 
@@ -1490,6 +1526,13 @@ async def agent_effective_prompt(
 
     manifest_tools = list(manifest.tools)
     auto_injected = ["scratch_read", "scratch_write", "finish"] if pipeline else []
+    if manifest.max_tokens is not None:
+        try:
+            max_tokens_eff = max(1, int(manifest.max_tokens))
+        except (TypeError, ValueError):
+            max_tokens_eff = 4096
+    else:
+        max_tokens_eff = 4096
 
     return {
         "agent": name,
@@ -1500,6 +1543,7 @@ async def agent_effective_prompt(
         "auto_injected_tools": auto_injected,
         "pipeline": pipeline,
         "is_last_step": is_last_step,
+        "max_tokens_effective": max_tokens_eff,
     }
 
 

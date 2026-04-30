@@ -58,6 +58,7 @@ class AgentManifest(BaseModel):
         return v if v is not None else ""
     max_concurrent: int = 2
     max_iterations: int = 10
+    max_tokens: int | None = None
     web_read_max_chars: int | None = None
     thinking: bool | None = None
     require_tool_exit: bool = False

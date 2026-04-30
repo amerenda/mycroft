@@ -408,7 +408,7 @@ async function previewPrompt() {
     document.getElementById('promptContent').innerHTML = `
       <div class="msg msg-system"><div class="role">System Prompt — ${srcLabel}</div><pre>${esc(r.system_prompt)}</pre></div>
       <div class="msg msg-user"><div class="role">User Message</div><pre>${esc(r.user_message)}</pre></div>
-      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${(r.tools || []).join(', ') || '(none)'} | Model: ${esc(String(r.model || ''))} | Max iterations (effective): ${esc(String(r.max_iterations_effective ?? ''))}</p>`;
+      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${(r.tools || []).join(', ') || '(none)'} | Model: ${esc(String(r.model || ''))} | Max iterations (effective): ${esc(String(r.max_iterations_effective ?? ''))} | Max tokens (effective): ${esc(String(r.max_tokens_effective ?? ''))}</p>`;
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -809,6 +809,8 @@ function _agentEditorPayloadForHash() {
     name: _normalizeText(document.getElementById('agentName')?.value || ''),
     manifest: _normalizeText(document.getElementById('agentManifest')?.value || ''),
     prompts: _normalizeText(document.getElementById('agentSystemPrompt')?.value || ''),
+    maxIterations: _normalizeText(document.getElementById('agentMaxIterations')?.value || ''),
+    maxTokens: _normalizeText(document.getElementById('agentMaxTokens')?.value || ''),
   };
 }
 
@@ -886,7 +888,7 @@ function _guardUnsavedAgentChanges() {
 
 function _initAgentEditorDirtyTracking() {
   const ids = [
-    'agentName', 'agentManifest', 'agentModel', 'agentMaxIterations', 'agentMaxConcurrent',
+    'agentName', 'agentManifest', 'agentModel', 'agentMaxIterations', 'agentMaxTokens', 'agentMaxConcurrent',
     'agentWebReadMax', 'agentThinking', 'agentRequireToolExit', 'agentMemory', 'agentCpu',
     'agentScratch', 'agentSystemPrompt', 'agentToolsList', 'agentPermsRead', 'agentPermsWrite',
   ];
@@ -920,6 +922,14 @@ function _maxIterationsForAgentRun() {
   if (fromInput !== null) return fromInput;
   const yaml = document.getElementById('agentManifest')?.value || '';
   return _positiveIntOrNull(_extractYamlField(yaml, 'max_iterations'));
+}
+
+/** Run Agent: prefer Max tokens field; else parse manifest YAML (unsaved editor text). */
+function _maxTokensForAgentRun() {
+  const fromInput = _positiveIntOrNull(document.getElementById('agentMaxTokens')?.value);
+  if (fromInput !== null) return fromInput;
+  const yaml = document.getElementById('agentManifest')?.value || '';
+  return _positiveIntOrNull(_extractYamlField(yaml, 'max_tokens'));
 }
 
 function _updateYamlField(yaml, field, value) {
@@ -1040,6 +1050,10 @@ async function previewAgentPrompt() {
         autoRow.style.display = 'none';
       }
     }
+    const limitsEl = document.getElementById('agentPromptLimits');
+    if (limitsEl) {
+      limitsEl.textContent = `Max tokens (effective): ${r.max_tokens_effective ?? '4096'}`;
+    }
   } catch (e) {
     alert('Preview failed: ' + e.message);
   }
@@ -1088,6 +1102,7 @@ async function selectAgent(name) {
     }
     agentModelEl.value = model;
     document.getElementById('agentMaxIterations').value = _extractYamlField(a.manifest, 'max_iterations');
+    document.getElementById('agentMaxTokens').value = _extractYamlField(a.manifest, 'max_tokens');
     document.getElementById('agentMaxConcurrent').value = _extractYamlField(a.manifest, 'max_concurrent');
     document.getElementById('agentWebReadMax').value = _extractYamlField(a.manifest, 'web_read_max_chars');
     const thinkingVal = _extractYamlField(a.manifest, 'thinking');
@@ -1135,6 +1150,7 @@ function newAgent() {
   document.getElementById('agentManifest').value = AGENT_MANIFEST_TEMPLATE;
   document.getElementById('agentModel').value = '';
   document.getElementById('agentMaxIterations').value = '10';
+  document.getElementById('agentMaxTokens').value = '';
   document.getElementById('agentMaxConcurrent').value = '';
   document.getElementById('agentWebReadMax').value = '';
   document.getElementById('agentThinking').value = '';
@@ -1168,6 +1184,9 @@ async function saveAgent() {
   if (model) manifest = _updateYamlField(manifest, 'model', model);
   if (maxIter) manifest = _updateYamlField(manifest, 'max_iterations', maxIter);
   else manifest = _removeYamlField(manifest, 'max_iterations');
+  const maxTok = document.getElementById('agentMaxTokens').value.trim();
+  if (maxTok) manifest = _updateYamlField(manifest, 'max_tokens', maxTok);
+  else manifest = _removeYamlField(manifest, 'max_tokens');
   const maxConcurrent = document.getElementById('agentMaxConcurrent').value;
   if (maxConcurrent) manifest = _updateYamlField(manifest, 'max_concurrent', maxConcurrent);
   const webReadMax = document.getElementById('agentWebReadMax').value;
@@ -1319,6 +1338,10 @@ async function testAgent() {
           const v = _maxIterationsForAgentRun();
           return v !== null ? { max_iterations: v } : {};
         })(),
+        ...(() => {
+          const v = _maxTokensForAgentRun();
+          return v !== null ? { max_tokens: v } : {};
+        })(),
       }),
     });
     if (r.task_id) _pollAgentTest(r.task_id);
@@ -1343,7 +1366,13 @@ function _pollAgentTest(taskId) {
         statusEl.textContent = task.status;
         statusEl.className = 'status-badge status-' + task.status;
         const result = task.result || {};
-        const text = result.summary || result.error || 'No output';
+        let text = result.summary || result.error || 'No output';
+        if (task.status === 'completed') {
+          try {
+            const kb = await api('/api/tasks/' + taskId + '/kb-result');
+            if (kb.content) text = kb.content;
+          } catch (_) { /* use summary */ }
+        }
         contentEl.innerHTML = `<pre>${esc(text)}</pre>`;
       }
     } catch (e) { /* still running */ }

@@ -31,6 +31,9 @@ from runtime.tools.base import ToolRegistry, load_tools
 
 log = logging.getLogger(__name__)
 
+# Cap stored in agent_tasks.result.summary (full output remains in KB results path).
+_TASK_RESULT_SUMMARY_MAX_CHARS = 32_000
+
 
 class AgentRunner:
     """The thin agent loop. Handles one task end-to-end."""
@@ -106,7 +109,7 @@ class AgentRunner:
                 self.task.id,
                 status=TaskStatus.completed,
                 completed_at=datetime.now(timezone.utc),
-                result={"summary": result[:1000]},
+                result={"summary": result[:_TASK_RESULT_SUMMARY_MAX_CHARS]},
             )
 
             return result
