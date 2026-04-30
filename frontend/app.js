@@ -333,6 +333,7 @@ function buildTestTaskBody({ omitOverrides } = {}) {
   const instruction = document.getElementById('instruction').value.trim();
   const userMessage = (document.getElementById('userMessage')?.value || '').trim();
   const model = document.getElementById('model')?.value || null;
+  const maxIterRun = parseInt(document.getElementById('maxIterations')?.value || '', 10);
   const systemPrompt = document.getElementById('systemPrompt').value.trim();
   const allCbs = [...document.querySelectorAll('.tool-cb')];
   const checkedValues = allCbs.filter(cb => cb.checked).map(cb => cb.value);
@@ -340,6 +341,7 @@ function buildTestTaskBody({ omitOverrides } = {}) {
   const kbRecallEl = document.getElementById('kbRecall');
 
   const body = { agent_type: agentType, instruction, model };
+  if (Number.isFinite(maxIterRun) && maxIterRun > 0) body.max_iterations = maxIterRun;
   if (!omitOverrides) {
     if (systemPrompt) body.system_prompt = systemPrompt;
     if (userMessage) body.user_message = userMessage;
@@ -404,7 +406,7 @@ async function previewPrompt() {
     document.getElementById('promptContent').innerHTML = `
       <div class="msg msg-system"><div class="role">System Prompt — ${srcLabel}</div><pre>${esc(r.system_prompt)}</pre></div>
       <div class="msg msg-user"><div class="role">User Message</div><pre>${esc(r.user_message)}</pre></div>
-      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${(r.tools || []).join(', ') || '(none)'} | Model: ${esc(String(r.model || ''))}</p>`;
+      <p style="margin-top:8px;font-size:0.82em;color:#8b949e">Tools: ${(r.tools || []).join(', ') || '(none)'} | Model: ${esc(String(r.model || ''))} | Max iterations (effective): ${esc(String(r.max_iterations_effective ?? ''))}</p>`;
   } catch (e) {
     alert('Error: ' + e.message);
   }
@@ -791,6 +793,19 @@ function _extractYamlField(yaml, field) {
   return m ? m[1].trim() : '';
 }
 
+function _positiveIntOrNull(v) {
+  const n = parseInt(String(v ?? '').trim(), 10);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** Run Agent: prefer Max iterations field; else parse manifest YAML (unsaved editor text). */
+function _maxIterationsForAgentRun() {
+  const fromInput = _positiveIntOrNull(document.getElementById('agentMaxIterations')?.value);
+  if (fromInput !== null) return fromInput;
+  const yaml = document.getElementById('agentManifest')?.value || '';
+  return _positiveIntOrNull(_extractYamlField(yaml, 'max_iterations'));
+}
+
 function _updateYamlField(yaml, field, value) {
   const re = new RegExp(`^(${field}:\\s*).*`, 'm');
   return re.test(yaml) ? yaml.replace(re, `$1${value}`) : yaml + `\n${field}: ${value}`;
@@ -1022,9 +1037,10 @@ async function saveAgent() {
   // Sync structured fields → raw textareas
   let manifest = document.getElementById('agentManifest').value;
   const model = document.getElementById('agentModel').value;
-  const maxIter = document.getElementById('agentMaxIterations').value;
+  const maxIter = document.getElementById('agentMaxIterations').value.trim();
   if (model) manifest = _updateYamlField(manifest, 'model', model);
   if (maxIter) manifest = _updateYamlField(manifest, 'max_iterations', maxIter);
+  else manifest = _removeYamlField(manifest, 'max_iterations');
   const maxConcurrent = document.getElementById('agentMaxConcurrent').value;
   if (maxConcurrent) manifest = _updateYamlField(manifest, 'max_concurrent', maxConcurrent);
   const webReadMax = document.getElementById('agentWebReadMax').value;
@@ -1145,7 +1161,10 @@ async function testAgent() {
         agent_type: _currentAgent,
         instruction,
         model: document.getElementById('agentModel').value || null,
-        max_iterations: 6,
+        ...(() => {
+          const v = _maxIterationsForAgentRun();
+          return v !== null ? { max_iterations: v } : {};
+        })(),
       }),
     });
     if (r.task_id) _pollAgentTest(r.task_id);

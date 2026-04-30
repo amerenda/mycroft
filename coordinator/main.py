@@ -257,9 +257,11 @@ async def _submit_pipeline_agent(
     phase: str,
     is_last: bool,
     parent_task_id: str | None = None,
+    pipeline_max_iter_fallback: int | None = None,
 ) -> str:
     """Create and submit one pipeline agent task. Returns task_id."""
     agent_type = step.get("agent", "playground")
+    step_manifest = trigger_router.get_manifest(agent_type)
     step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
 
     from coordinator.editor_store import get_setting as _get_setting
@@ -270,10 +272,26 @@ async def _submit_pipeline_agent(
     suffix_parts = [p for p in [step_prompt, step.get("system_suffix"), platform_step_prompt, system_suffix_extra] if p]
     combined_suffix = "\n\n".join(suffix_parts) or None
 
+    from common.config import PlatformConfig as _PCap
+    _pcap = _PCap()
+    step_mi = step.get("max_iterations")
+    sm = None if step_mi in (None, "", False) else step_mi
+    try:
+        step_mi_int = int(sm) if sm is not None else None
+    except (TypeError, ValueError):
+        step_mi_int = None
+    if step_mi_int is not None and step_mi_int >= 1:
+        resolved_mi = step_mi_int
+    elif pipeline_max_iter_fallback is not None:
+        resolved_mi = int(pipeline_max_iter_fallback)
+    else:
+        resolved_mi = int(step_manifest.max_iterations) if step_manifest else 10
+    resolved_mi = min(max(1, resolved_mi), int(_pcap.global_max_iterations))
+
     task_config = {
         "instruction": instruction,
         "model_override": step.get("model") or None,
-        "max_iterations_override": step.get("max_iterations") or None,
+        "max_iterations_override": resolved_mi,
         "max_tokens": step.get("max_tokens") or None,
         "tools_override": step.get("tools") or None,
         "context_injection": context_injection,
@@ -303,7 +321,7 @@ async def _submit_pipeline_agent(
         params["model_override"] = model
     wf_name = await argo.submit(
         agent_type=agent_type, task_id=task_id, params=params,
-        manifest=trigger_router.get_manifest(agent_type),
+        manifest=step_manifest,
         on_update=_on_workflow_update,
     )
     await db.kb.update_task(task_id, argo_workflow_name=wf_name)
@@ -345,6 +363,7 @@ async def _run_pipeline_from(
     scratch_scope: str,
     context_scopes: list[str],
     parent_task_id: str | None = None,
+    pipeline_max_iter_fallback: int | None = None,
 ) -> str:
     """Execute steps[step_index] and background the rest. Returns the first task_id launched.
 
@@ -382,6 +401,7 @@ async def _run_pipeline_from(
                 phase=f"parallel-{step_index}-{i}",
                 is_last=is_last,
                 parent_task_id=parent_task_id,
+                pipeline_max_iter_fallback=pipeline_max_iter_fallback,
             )
             output_scope = f"/runs/{run_id}/parallel-{step_index}-{i}"
             task_ids_and_scopes.append((task_id, output_scope))
@@ -415,6 +435,7 @@ async def _run_pipeline_from(
                         scratch_scope=scratch_scope,
                         context_scopes=[original_scope] + valid,
                         parent_task_id=_parent,
+                        pipeline_max_iter_fallback=pipeline_max_iter_fallback,
                     )
                 except Exception:
                     log.exception("Parallel continuation failed at step %d", _sidx)
@@ -433,6 +454,7 @@ async def _run_pipeline_from(
             context_injection=context_scopes,
             phase=f"pipeline-step-{step_index}",
             is_last=is_last,
+            pipeline_max_iter_fallback=pipeline_max_iter_fallback,
             parent_task_id=parent_task_id,
         )
         log.info("Pipeline step %d/%d: agent=%s workflow=%s task=%s run=%s",
@@ -471,6 +493,7 @@ async def _run_pipeline_from(
                         scratch_scope=scratch_scope,
                         context_scopes=[original_scope, prev_scope],
                         parent_task_id=_prev_task_id,
+                        pipeline_max_iter_fallback=pipeline_max_iter_fallback,
                     )
                 except Exception:
                     log.exception("Sequential continuation failed at step %d", _sidx)
@@ -484,6 +507,7 @@ async def _start_dynamic_pipeline(
     instruction: str,
     workflow_name: str,
     steps: list[dict],
+    runner_max_iterations: int | None = None,
 ) -> str:
     """Start an N-step dynamic pipeline from a DB-stored workflow definition. Returns first task ID."""
     if not steps:
@@ -513,6 +537,7 @@ async def _start_dynamic_pipeline(
         scratch_scope=scratch_scope,
         context_scopes=[original_scope],
         parent_task_id=None,
+        pipeline_max_iter_fallback=runner_max_iterations,
     )
 
     log.info("Pipeline started: workflow=%s steps=%d run=%s first_task=%s",
@@ -567,8 +592,6 @@ async def _handle_engineering_task(
         task_config["max_tokens"] = max_tokens
     if temperature is not None:
         task_config["temperature"] = temperature
-    if max_iterations is not None:
-        task_config["max_iterations_override"] = max_iterations
     if workflow:
         task_config["workflow"] = workflow
     if tools_override:
@@ -580,6 +603,15 @@ async def _handle_engineering_task(
 
     import uuid as _uuid
     task_config["scratch_scope"] = f"/scratch/{_uuid.uuid4()}"
+
+    from common.config import PlatformConfig as _PCo
+    _pco = _PCo()
+    _raw_mi = max_iterations if max_iterations is not None else manifest.max_iterations
+    try:
+        _mi = int(_raw_mi)
+    except (TypeError, ValueError):
+        _mi = int(manifest.max_iterations)
+    task_config["max_iterations_override"] = min(max(1, _mi), int(_pco.global_max_iterations))
 
     # Create task
     task_id = await task_manager.create_task(
@@ -870,7 +902,9 @@ async def create_task(req: CreateTaskRequest):
             steps = pipeline_json.get("steps", [])
             if not steps:
                 raise ValueError(f"Workflow '{workflow}' has no pipeline steps defined")
-            first_task_id = await _start_dynamic_pipeline(req.instruction, workflow, steps)
+            first_task_id = await _start_dynamic_pipeline(
+                req.instruction, workflow, steps, runner_max_iterations=req.max_iterations,
+            )
             return {"task_id": first_task_id}
 
         # Direct agent task (test button, API callers)
@@ -1127,6 +1161,7 @@ class TestTaskRequest(BaseModel):
     agent_type: str = "playground"
     instruction: str = ""
     model: str | None = None
+    max_iterations: int | None = None
     system_prompt: str | None = None
     user_message: str | None = None
     tools: list[str] | None = None
@@ -1163,7 +1198,11 @@ async def test_task(req: TestTaskRequest):
         manifest.model = req.model
 
     platform_cfg = PlatformConfig()
-    max_iter = min(manifest.max_iterations, platform_cfg.global_max_iterations)
+    if req.max_iterations is not None:
+        _raw_prev = int(req.max_iterations)
+    else:
+        _raw_prev = int(manifest.max_iterations)
+    max_iter = min(max(1, _raw_prev), int(platform_cfg.global_max_iterations))
     base_tpl = await _get_setting(db.kb.pool, "base_system_prompt_template")
 
     task = TaskConfig(
@@ -1171,6 +1210,7 @@ async def test_task(req: TestTaskRequest):
         agent_type=req.agent_type,
         instruction=req.instruction or "",
         model_override=req.model,
+        max_iterations_override=req.max_iterations,
         config={},
     )
     if base_tpl:
@@ -1229,6 +1269,7 @@ async def test_task(req: TestTaskRequest):
         "system_prompt_source": source,
         "user_message": user_message,
         "tools": [t["function"]["name"] for t in tools.schemas()],
+        "max_iterations_effective": max_iter,
     }
 
 

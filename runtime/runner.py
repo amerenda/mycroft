@@ -351,12 +351,10 @@ class AgentRunner:
             log.info("Agent finished: %s", response.content[:200])
             return response.content
 
-        # Force-finish: return the last substantive assistant message as output
-        last_content = next(
-            (m["content"] for m in reversed(self.messages)
-             if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()),
-            "",
-        )
+        # Force-finish: prefer last assistant message with text; if the model only
+        # emitted tool calls (empty content), assemble recent tool outputs so the
+        # run does not return a blank result to KB/UI.
+        last_content = self._force_finish_fallback_text()
         log.warning("Max iterations (%d) reached without finish call — force-finishing (%d chars)",
                     self.max_iterations, len(last_content))
 
@@ -379,6 +377,44 @@ class AgentRunner:
         )
 
         return last_content
+
+    def _force_finish_fallback_text(self) -> str:
+        """Best-effort final text when the loop hits max iterations without finish/submit_report."""
+        last_assistant = next(
+            (m["content"] for m in reversed(self.messages)
+             if m.get("role") == "assistant" and isinstance(m.get("content"), str) and m["content"].strip()),
+            "",
+        )
+        if last_assistant.strip():
+            return last_assistant
+
+        chunks: list[str] = []
+        for m in reversed(self.messages):
+            if m.get("role") != "tool":
+                continue
+            c = m.get("content")
+            if not isinstance(c, str) or not c.strip():
+                continue
+            piece = c.strip()
+            if len(piece) > 12_000:
+                piece = piece[:12_000] + "\n...[truncated]"
+            chunks.append(piece)
+            if len(chunks) >= 8:
+                break
+        if not chunks:
+            return ""
+        chunks.reverse()
+        header = (
+            "[Iteration limit reached without calling the exit tool; "
+            "below is text recovered from the most recent tool outputs.]\n\n"
+        )
+        body = "\n\n--- tool output ---\n\n".join(chunks)
+        out = header + body
+        max_out = 150_000
+        if len(out) > max_out:
+            out = out[:max_out] + "\n...[truncated]"
+        log.warning("Force-finish fallback: assembled %d tool snippets (%d chars)", len(chunks), len(out))
+        return out
 
     def _parse_text_tool_call(self, text: str) -> tuple[str, str] | None:
         """Detect tool calls written as JSON text instead of API tool calls.

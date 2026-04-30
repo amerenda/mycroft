@@ -128,10 +128,9 @@ def main():
             return
         asyncio.run(_run_cli(manifest, task, platform))
     else:
-        effective_max_iter = min(task.max_iterations_override or manifest.max_iterations,
-                                 platform.global_max_iterations)
-        log.info("Starting agent: type=%s task=%s model=%s max_iter=%d",
-                 agent_type, task_id[:8], manifest.model, effective_max_iter)
+        # max_iterations comes from KB task metadata — log it after _run_argo loads the task.
+        log.info("Starting agent (Argo): type=%s task=%s model=%s",
+                 agent_type, task_id[:8], manifest.model)
         asyncio.run(_run_argo(manifest, task, platform))
 
 
@@ -293,6 +292,18 @@ async def _run_argo(manifest: AgentManifest, task: TaskConfig, platform: Platfor
 
     preview = (task.instruction or "").strip() or (str(task.config.get("user_message") or "")[:200])
     log.info("Task instruction/user preview: %s", preview[:200] if preview else "(empty)")
+
+    eff_max = min(
+        task.max_iterations_override or manifest.max_iterations,
+        platform.global_max_iterations,
+    )
+    log.info(
+        "Effective max_iter=%d (manifest.max_iterations=%s task.max_iterations_override=%s global_cap=%s)",
+        eff_max,
+        manifest.max_iterations,
+        task.max_iterations_override,
+        platform.global_max_iterations,
+    )
 
     await _discover_llm_key(manifest, platform)
 
