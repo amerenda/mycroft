@@ -1,31 +1,35 @@
+# Unified agent runtime image — one container for all agent types (playground, researcher,
+# DB-defined agents, etc.). Behavior comes from manifest + task config at run time
+# (MYCROFT_AGENT_TYPE, TASK_ID, KB_DSN, …). ENTRYPOINT is `python -m runtime` (see Dockerfile.agent-base).
+#
+# Optional build args:
+#   BASE_TAG — tag of amerenda/mycroft:agent-base-* (must match CI manifest-base output).
+
 ARG BASE_TAG=latest
 
-# Coder — adds language runtimes and gh CLI
-FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-coder
+FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent
+
 USER root
+
+# Node — used by some tooling / future JS steps in repo workspaces
 RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
+
+# GitHub CLI — PRs, comments, repo workflows
 RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
     | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
     && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
     | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
+    && apt-get update && apt-get install -y --no-install-recommends gh \
+    && rm -rf /var/lib/apt/lists/*
+
+# Handy for agent-side checks / smoke tests in CI or ad-hoc pods
 RUN pip install --no-cache-dir pytest
+
 USER agent
 
-# QA — httpx only (Phase 2)
-FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-qa
+# ── Back-compat names (same layers; GitOps may still reference these tags) ─────
 
-# PR Reviewer (Phase 2)
-FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-pr-reviewer
-USER root
-RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-    | dd of=/usr/share/keyrings/githubcli-archive-keyring.gpg \
-    && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-    | tee /etc/apt/sources.list.d/github-cli.list > /dev/null \
-    && apt-get update && apt-get install -y gh && rm -rf /var/lib/apt/lists/*
-USER agent
-
-# Documenter — minimal (Phase 2)
-FROM amerenda/mycroft:agent-base-${BASE_TAG} AS agent-documenter
+FROM agent AS agent-coder
+FROM agent AS agent-researcher

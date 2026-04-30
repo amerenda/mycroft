@@ -26,9 +26,6 @@ permissions:
     - /tasks
     - /notifications/alex
 triggers:
-  - event: telegram
-    filter:
-      intent: engineering
   - event: task_completed
     filter:
       agent_type: researcher

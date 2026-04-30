@@ -1,5 +1,5 @@
 """
-Mycroft Tool Bridge — Open WebUI Toolset
+Mycroft Open WebUI toolset — calls coordinator synchronous tool API.
 
 Install in Open WebUI: Workspace → Tools → New Tool → paste this file.
 
@@ -14,11 +14,11 @@ from typing import Any
 MYCROFT_URL = "https://mycroft.amer.dev"
 
 
-def _call_bridge(tool: str, args: dict) -> str:
-    """POST to Mycroft bridge and return the result string."""
+def _call_tools(tool: str, args: dict) -> str:
+    """POST to coordinator tools API and return the result string."""
     payload = json.dumps({"tool": tool, "args": args}).encode()
     req = urllib.request.Request(
-        f"{MYCROFT_URL}/api/bridge/run-tool",
+        f"{MYCROFT_URL}/api/tools/run-tool",
         data=payload,
         headers={"Content-Type": "application/json"},
         method="POST",
@@ -68,7 +68,7 @@ class Tools:
         scope_list = [s.strip() for s in scopes.split(",") if s.strip()]
         if not scope_list:
             scope_list = ["/"]
-        return _call_bridge("kb_search", {
+        return _call_tools("kb_search", {
             "query": query,
             "scopes": scope_list,
             "limit": min(max(1, limit), 20),
@@ -81,7 +81,7 @@ class Tools:
         :param query: The search query.
         :return: Web search results as formatted text.
         """
-        return _call_bridge("web_search", {"query": query})
+        return _call_tools("web_search", {"query": query})
 
     def web_read(self, url: str, extract: str = "") -> str:
         """
@@ -94,21 +94,21 @@ class Tools:
         args: dict[str, Any] = {"url": url}
         if extract:
             args["extract"] = extract
-        return _call_bridge("web_read", args)
+        return _call_tools("web_read", args)
 
     def run_command(self, command: str, cwd: str = "") -> str:
         """
-        Run a shell command on the Mycroft coordinator host (murderbot).
+        Run a shell command on the Mycroft coordinator host.
         Use for quick diagnostics, file inspection, or running scripts.
 
         :param command: The shell command to run.
-        :param cwd: Optional working directory (relative to /tmp/bridge-workspace).
+        :param cwd: Optional working directory (relative to /tmp/mycroft-tools-workspace).
         :return: Command stdout/stderr output.
         """
         args: dict[str, Any] = {"command": command}
         if cwd:
             args["cwd"] = cwd
-        return _call_bridge("run_command", args)
+        return _call_tools("run_command", args)
 
     def start_task(self, agent_type: str, prompt: str, model: str = "") -> str:
         """

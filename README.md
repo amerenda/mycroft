@@ -13,7 +13,6 @@ Browser
 Coordinator (FastAPI)
 ├── Task Manager  ─────────────────► PostgreSQL (agent-kb)
 ├── Argo Submitter ────────────────► k3s / Argo Workflows
-├── Telegram Bot (notify-only)
 └── Report Store
                                               │
                                              pods
@@ -28,7 +27,7 @@ Coordinator (FastAPI)
 
 | Directory | Purpose |
 |-----------|---------|
-| `coordinator/` | FastAPI service: task API, Telegram notifications, Argo submission, Forge runner, report storage |
+| `coordinator/` | FastAPI service: task API, Argo submission, report storage |
 | `runtime/` | Thin agent loop that runs inside Argo Workflow pods |
 | `agents/` | Agent definitions: `manifest.yaml` + `prompts.py` per agent type |
 | `common/` | Shared libraries: KB client, LLM client, config, models |
@@ -176,7 +175,7 @@ GitOps via ArgoCD. CI builds Docker images and creates deploy PRs to `k3s-dean-g
 Images:
 - `amerenda/mycroft:coordinator-{sha}` — coordinator service
 - `amerenda/mycroft:agent-researcher-{sha}` — researcher/writer/extractor/web_search pods
-- `amerenda/mycroft:agent-coder-{sha}` — coder pods (larger image with git tooling)
+- `amerenda/mycroft:agent-{sha}` — agent runtime (Python loop + tools; Node + `gh` included). Tags `agent-coder-*` / `agent-researcher-*` are the same image for GitOps compatibility.
 
 ---
 
@@ -222,4 +221,3 @@ The DB version always overwrites the file version. Prompts only enter the system
 - Agents communicate via KB paths, never directly to each other
 - Conversation history is persisted to the KB each iteration (restart safety)
 - Don't hardcode "mycroft" in business logic — use generic terms (`coordinator`, `agent`, `platform`)
-- **Forge runner** (`POST /api/forge/run`): alternative execution path for coder tasks — clones a repo, runs the Forge CLI with a custom agent prompt, returns a git diff; does not use Argo or the KB

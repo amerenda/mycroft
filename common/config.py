@@ -10,8 +10,6 @@ class PlatformConfig(BaseSettings):
     llm_manager_url: str = "http://llm-manager-backend.llm-manager.svc:8081"
     llm_manager_api_key: str = ""
     llm_registration_secret: str = ""
-    telegram_bot_token: str = ""
-    telegram_chat_id: str = ""
     global_max_iterations: int = 30
     agent_image_tag: str = "latest"
     agent_image_repo: str = "amerenda/mycroft"

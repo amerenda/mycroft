@@ -1,7 +1,5 @@
 const API = '';
 
-let activeRunner = 'mycroft';
-
 // Runtime config fetched from /api/config at startup
 let _cfg = { argo_ui_url: '', argo_namespace: 'mycroft' };
 async function _loadConfig() {
@@ -37,21 +35,6 @@ function setRightTab(name) {
   document.querySelectorAll('.rtab-content').forEach(c => {
     c.classList.toggle('active', c.id === 'rtab-' + name);
   });
-}
-
-// ── Runner toggle ─────────────────────────────────────────────────────────────
-
-function setRunner(runner) {
-  activeRunner = runner;
-  const btn = document.getElementById('runBtn');
-  const previewBtn = document.getElementById('previewBtn');
-  if (runner === 'forge') {
-    btn.textContent = 'Run with Forge';
-    previewBtn.style.display = 'none';
-  } else {
-    btn.textContent = 'Run Task';
-    previewBtn.style.display = '';
-  }
 }
 
 // ── API helpers ───────────────────────────────────────────────────────────────
@@ -94,125 +77,15 @@ async function runTask() {
   _stopTracePoll();
 
   try {
-    if (activeRunner === 'forge') {
-      await runForge(instruction);
-    } else {
-      await runMycroft(instruction, userMessage);
-    }
+    await runMycroft(instruction, userMessage);
   } catch (e) {
     traceEl.innerHTML = `<p style="color:#da3633">Error: ${esc(e.message)}</p>`;
     statusEl.textContent = 'error';
     statusEl.className = 'status-badge status-failed';
   } finally {
     btn.disabled = false;
-    btn.textContent = activeRunner === 'forge' ? 'Run with Forge' : 'Run Task';
+    btn.textContent = 'Run Task';
   }
-}
-
-// ── Forge runner ──────────────────────────────────────────────────────────────
-
-async function runForge(instruction) {
-  const model = document.getElementById('model')?.value || '';
-  const repo = document.getElementById('repo').value.trim();
-  const systemPrompt = document.getElementById('systemPrompt').value.trim();
-
-  if (!repo) throw new Error('Repo is required for Forge runs');
-
-  const r = await api('/api/forge/run', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ instruction, repo, model, system_prompt: systemPrompt || null }),
-  });
-
-  if (r.run_id) {
-    const statusEl = document.getElementById('traceStatus');
-    statusEl.textContent = 'running';
-    statusEl.className = 'status-badge status-running';
-    document.getElementById('traceContent').innerHTML =
-      '<p class="empty">Forge is cloning repo and running...</p>';
-    pollForgeRun(r.run_id);
-  }
-}
-
-function pollForgeRun(runId) {
-  _stopTracePoll();
-  if (pollTimer) clearInterval(pollTimer);
-  pollTimer = setInterval(async () => {
-    try {
-      const r = await api('/api/forge/runs/' + runId);
-      renderForgeResult(r);
-      if (r.status === 'completed' || r.status === 'failed') {
-        clearInterval(pollTimer);
-        pollTimer = null;
-        const statusEl = document.getElementById('traceStatus');
-        statusEl.textContent = r.status;
-        statusEl.className = 'status-badge status-' + r.status;
-      }
-    } catch (e) { /* still running */ }
-  }, 2000);
-}
-
-function renderForgeResult(r) {
-  const el = document.getElementById('traceContent');
-  const cards = [];
-
-  if (r.status === 'running') {
-    el.innerHTML = '<p class="empty">Forge is working... (cloning, running LLM calls)</p>';
-    return;
-  }
-
-  if (r.error) {
-    cards.push(`
-      <div class="trace-card" style="border-left:3px solid #da3633">
-        <div class="trace-card-header" onclick="this.parentElement.classList.toggle('expanded')">
-          <span style="color:#da3633">Error: ${esc(r.error)}</span>
-        </div>
-        <div class="trace-card-body">${esc(r.stderr)}</div>
-      </div>`);
-  }
-
-  if (r.git_diff) {
-    cards.push(`
-      <div class="trace-card tool-call expanded" onclick="this.classList.toggle('expanded')">
-        <div class="trace-card-header">
-          <span><span class="trace-tool-name">git diff</span> (${r.files_changed.length} file${r.files_changed.length !== 1 ? 's' : ''})</span>
-          <span class="trace-meta">${r.git_diff.length} bytes</span>
-        </div>
-        <div class="trace-card-body">${esc(r.git_diff)}</div>
-      </div>`);
-  }
-
-  if (r.files_changed && r.files_changed.length) {
-    cards.push(`
-      <div class="trace-card llm-response">
-        <div class="trace-card-header">
-          <span class="trace-content">Files changed: ${r.files_changed.join(', ')}</span>
-        </div>
-      </div>`);
-  }
-
-  if (r.stdout) {
-    cards.push(`
-      <div class="trace-card" onclick="this.classList.toggle('expanded')">
-        <div class="trace-card-header">
-          <span>Forge output</span>
-          <span class="trace-meta">${r.stdout.length} chars</span>
-        </div>
-        <div class="trace-card-body">${esc(r.stdout)}</div>
-      </div>`);
-  }
-
-  if (!cards.length) cards.push('<p class="empty">No changes made</p>');
-
-  const statsEl = document.getElementById('queueStats');
-  statsEl.style.display = 'flex';
-  statsEl.innerHTML = `
-    <span>Exit: <strong>${r.exit_code}</strong></span>
-    <span>Duration: <strong>${r.duration_seconds.toFixed(1)}s</strong></span>
-    <span>Files: <strong>${r.files_changed.length}</strong></span>
-    <span>Status: <strong>${r.status}</strong></span>`;
-
-  el.innerHTML = cards.join('');
 }
 
 // ── Mycroft runner ────────────────────────────────────────────────────────────
@@ -234,7 +107,6 @@ async function runMycroft(instruction, userMessage) {
     workflow,
     instruction,
     system_prompt: systemPrompt || null,
-    notify: document.getElementById('notifyRun').checked,
   };
   if (userMessage) body.user_message = userMessage;
   if (maxTokens) body.max_tokens = parseInt(maxTokens);
@@ -1274,7 +1146,6 @@ async function testAgent() {
         instruction,
         model: document.getElementById('agentModel').value || null,
         max_iterations: 6,
-        notify: document.getElementById('notifyTest').checked,
       }),
     });
     if (r.task_id) _pollAgentTest(r.task_id);

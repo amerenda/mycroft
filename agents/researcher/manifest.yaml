@@ -24,7 +24,4 @@ permissions:
     - /agents/coder/inbox
     - /tasks
     - /notifications/alex
-triggers:
-  - event: telegram
-    filter:
-      intent: research
+triggers: []

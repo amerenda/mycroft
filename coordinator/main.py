@@ -11,7 +11,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -20,13 +20,11 @@ from common.config import PlatformConfig
 from common.metrics import (
     coordinator_info, tasks_created_total, tasks_completed_total,
     tasks_active, task_duration_seconds, argo_submissions_total,
-    telegram_messages_total,
 )
 from common.models import TaskConfig, TaskStatus
 from coordinator.argo_submitter import ArgoSubmitter
 from coordinator.db import CoordinatorDB
 from coordinator.task_manager import TaskManager
-from coordinator.telegram import TelegramBot
 from coordinator.trigger_router import TriggerRouter
 
 logging.basicConfig(
@@ -43,7 +41,6 @@ config: PlatformConfig
 db: CoordinatorDB
 task_manager: TaskManager
 argo: ArgoSubmitter
-telegram_bot: TelegramBot
 trigger_router: TriggerRouter
 
 # SSE client queues — one per connected browser tab
@@ -112,7 +109,7 @@ async def _llm_heartbeat_loop(llm_url: str, api_key: str):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global config, db, task_manager, argo, telegram_bot, trigger_router
+    global config, db, task_manager, argo, trigger_router
 
     config = PlatformConfig()
 
@@ -137,16 +134,6 @@ async def lifespan(app: FastAPI):
         image_tag=config.agent_image_tag,
         llm_manager_url=config.llm_manager_url,
     )
-
-    # Telegram bot
-    telegram_bot = TelegramBot(
-        token=config.telegram_bot_token,
-        chat_id=config.telegram_chat_id,
-    )
-    if config.telegram_bot_token:
-        await telegram_bot.setup()
-        await telegram_bot.start_polling()
-        log.info("Telegram bot initialized (polling mode)")
 
     # Schema migrations (idempotent)
     await db.kb.ensure_tasks_table()
@@ -203,8 +190,6 @@ async def lifespan(app: FastAPI):
     _cleanup_task.cancel()
     if _heartbeat_task:
         _heartbeat_task.cancel()
-    if config.telegram_bot_token:
-        await telegram_bot.stop_polling()
     await db.close()
     log.info("Coordinator stopped")
 
@@ -547,11 +532,10 @@ async def _handle_engineering_task(
     max_iterations: int | None = None,
     tools_override: list[str] | None = None,
     workflow: str | None = None,
-    notify: bool = True,
     effort: str | None = None,  # unused, kept for call-site compat during transition
     extra_config: dict[str, Any] | None = None,
 ) -> str:
-    """Handle an engineering task from Telegram or API."""
+    """Handle an engineering task from the API (or dispatch)."""
     manifest = trigger_router.get_manifest(agent_type)
     if not manifest:
         raise ValueError(f"Unknown agent type: {agent_type}")
@@ -591,8 +575,6 @@ async def _handle_engineering_task(
         task_config["workflow"] = workflow
     if tools_override:
         task_config["tools_override"] = tools_override
-    if not notify:
-        task_config["notify"] = False
     if extra_config:
         for k, v in extra_config.items():
             if v is not None:
@@ -680,39 +662,12 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
         if task:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="completed").inc()
-        if telegram_bot and (not task or task.config.get("notify", True)):
-            try:
-                await telegram_bot.send(f"Task {task_id[:8]} completed: {message}")
-            except Exception:
-                log.warning("Failed to send Telegram update for task %s", task_id[:8])
         await _broadcast_sse("task_update", {"task_id": task_id, "status": "completed",
                                              "agent_type": task.agent_type if task else ""})
 
 
-async def _handle_status_query(text: str) -> str:
-    """Handle a status query — look up recent tasks."""
-    tasks = await task_manager.list_tasks(limit=5)
-    if not tasks:
-        return "No tasks found."
-
-    lines = []
-    for t in tasks:
-        status_icon = {"pending": "...", "running": ">>", "completed": "OK", "failed": "XX"}
-        icon = status_icon.get(t.status.value, "??")
-        summary = ""
-        if t.result:
-            summary = t.result.get("summary", t.result.get("error", ""))[:100]
-        lines.append(f"[{icon}] {t.id[:8]} {t.agent_type} — {summary or t.trigger}")
-
-    return "\n".join(lines)
-
-
 async def _on_agent_event(event: dict[str, Any]) -> None:
-    """Handle PG NOTIFY from agent completion.
-
-    Only sends Telegram messages for successful completions with results.
-    Failures, iteration limits, and other noise go to logs + metrics only.
-    """
+    """Handle PG NOTIFY from agent completion (reports, logging)."""
     scope = event.get("scope", "")
     source = event.get("source", "")
 
@@ -731,25 +686,11 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
             await _handle_researcher_result(record, source)
             return
 
-        # Researcher results → save locally, optionally post to Sazed, notify Telegram
+        # Researcher results → save locally, optionally post to Sazed
         if is_researcher:
             await _handle_researcher_result(record, source)
-        elif telegram_bot and (not task_hint or task_hint.config.get("notify", True)):
-            # Other agents (coder, etc.) → Telegram directly
-            pr_url = ""
-            if record.metadata:
-                pr_url = record.metadata.get("pr_url", "")
 
-            msg = f"Agent finished: {source}\n{record.content[:500]}"
-            if pr_url:
-                msg += f"\nPR: {pr_url}"
-
-            try:
-                await telegram_bot.send(msg)
-            except Exception:
-                log.warning("Failed to send Telegram notification", exc_info=True)
-
-    # Notifications — log only, don't send to Telegram
+    # Notifications — log only
     elif scope.startswith("/notifications/alex/"):
         record = await db.kb.get(scope)
         if record:
@@ -787,7 +728,7 @@ def _extract_title_summary(content: str) -> tuple[str, str]:
 
 
 async def _handle_researcher_result(record, source: str) -> None:
-    """Save researcher result to local DB and optionally post to Sazed + Telegram."""
+    """Save researcher result to local DB and optionally post to Sazed."""
     from coordinator.reports import create_report
 
     content = record.content or ""
@@ -863,66 +804,6 @@ async def _handle_researcher_result(record, source: str) -> None:
         except Exception as e:
             log.error("Failed to post report to Sazed: %s", e)
 
-    # Notify Telegram
-    if telegram_bot and (not task or task.config.get("notify", True)):
-        try:
-            msg = f"{summary}"
-            if report_url:
-                msg += f"\n\nFull report: {report_url}"
-            await telegram_bot.send(msg)
-        except Exception:
-            pass
-
-
-# ---------------------------------------------------------------------------
-# Forge Runner API
-# ---------------------------------------------------------------------------
-
-from coordinator.forge_runner import run_forge, get_run, ForgeResult
-
-
-class ForgeRunRequest(BaseModel):
-    instruction: str
-    repo: str = ""
-    model: str = ""
-    system_prompt: str | None = None
-
-
-@app.post("/api/forge/run")
-async def forge_run(req: ForgeRunRequest):
-    if not req.repo:
-        raise HTTPException(400, "repo is required (e.g. 'amerenda/mycroft')")
-
-    llm_api_key = config.llm_manager_api_key
-    run_id = await run_forge(
-        instruction=req.instruction,
-        repo=req.repo,
-        model=req.model,
-        system_prompt=req.system_prompt,
-        llm_url=config.llm_manager_url,
-        llm_api_key=llm_api_key,
-    )
-    return {"run_id": run_id}
-
-
-@app.get("/api/forge/runs/{run_id}")
-async def forge_run_status(run_id: str):
-    result = get_run(run_id)
-    if not result:
-        raise HTTPException(404, "Run not found")
-    return {
-        "run_id": result.run_id,
-        "status": result.status,
-        "exit_code": result.exit_code,
-        "git_diff": result.git_diff,
-        "files_changed": result.files_changed,
-        "stdout": result.stdout,
-        "stderr": result.stderr,
-        "duration_seconds": result.duration_seconds,
-        "error": result.error,
-    }
-
-
 # ---------------------------------------------------------------------------
 # API Endpoints
 # ---------------------------------------------------------------------------
@@ -948,7 +829,6 @@ class CreateTaskRequest(BaseModel):
     effort: str | None = None
     empty_response_nudge: str | None = None
     iteration_limit_reply: str | None = None
-    notify: bool = True
 
 
 def _extra_task_config_from_playground(req: CreateTaskRequest) -> dict[str, Any]:
@@ -1014,7 +894,6 @@ async def create_task(req: CreateTaskRequest):
             max_iterations=req.max_iterations,
             tools_override=tools_for_handle,
             workflow=None,
-            notify=req.notify,
             extra_config=extra,
         )
         return {"task_id": task_id}
@@ -1353,19 +1232,6 @@ async def test_task(req: TestTaskRequest):
         "user_message": user_message,
         "tools": [t["function"]["name"] for t in tools.schemas()],
     }
-
-
-@app.post("/webhooks/telegram")
-async def telegram_webhook(request: Request):
-    """Telegram webhook endpoint (for future use with Cloudflare Tunnel)."""
-    if not telegram_bot.app:
-        raise HTTPException(503, "Telegram bot not configured")
-
-    from telegram import Update
-    data = await request.json()
-    update = Update.de_json(data, telegram_bot.app.bot)
-    await telegram_bot.app.process_update(update)
-    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------
@@ -1783,16 +1649,16 @@ async def kb_for_task(task_id: str):
 
 
 # ---------------------------------------------------------------------------
-# Tool Bridge — synchronous tool execution without Argo pods
+# Open WebUI / chat — synchronous tool execution in coordinator (no Argo pods)
 # ---------------------------------------------------------------------------
 
-class BridgeToolRequest(BaseModel):
+class ToolsRunRequest(BaseModel):
     tool: str
     args: dict[str, Any] = {}
 
 
-@app.post("/api/bridge/run-tool")
-async def bridge_run_tool(req: BridgeToolRequest):
+@app.post("/api/tools/run-tool")
+async def tools_run_tool(req: ToolsRunRequest):
     """Execute a tool synchronously in-process. For use by Open WebUI / chat clients."""
     from runtime.tools.web import WebSearch, WebRead, WikiRead
     from runtime.tools.shell import RunCommand
@@ -1813,7 +1679,7 @@ async def bridge_run_tool(req: BridgeToolRequest):
         result = await tool.execute(args)
 
     elif tool_name == "run_command":
-        workspace = args.pop("workspace", "/tmp/bridge-workspace")
+        workspace = args.pop("workspace", "/tmp/mycroft-tools-workspace")
         import os
         os.makedirs(workspace, exist_ok=True)
         tool = RunCommand(workspace=workspace)
@@ -1837,13 +1703,16 @@ async def bridge_run_tool(req: BridgeToolRequest):
             scope,
             content,
             importance=float(args.get("importance", 0.5)),
-            source="bridge",
+            source="tools_api",
         )
         result = f"Written to KB: {scope} (id={record_id})"
 
     else:
-        raise HTTPException(400, f"Unknown tool: {tool_name!r}. "
-                            f"Available: web_search, web_read, wiki_read, run_command, kb_search, kb_write")
+        raise HTTPException(
+            400,
+            f"Unknown tool: {tool_name!r}. "
+            "Available: web_search, web_read, wiki_read, run_command, kb_search, kb_write",
+        )
 
     return {"tool": tool_name, "result": result}
 

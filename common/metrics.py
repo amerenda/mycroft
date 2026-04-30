@@ -37,12 +37,6 @@ argo_submissions_total = Counter(
     ["agent_type", "result"],  # result: success, failure
 )
 
-telegram_messages_total = Counter(
-    "mycroft_telegram_messages_total",
-    "Telegram messages",
-    ["direction"],  # inbound, outbound
-)
-
 # ── LLM metrics (shared by coordinator + agent runtime) ─────────────────────
 
 llm_calls_total = Counter(

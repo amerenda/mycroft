@@ -12,12 +12,10 @@ log = logging.getLogger(__name__)
 # Workflow is stale if no phase change in this many seconds
 STALE_TIMEOUT = 300  # 5 minutes
 
-# Agent type → Docker image target. Agents not listed use the researcher image,
-# which includes all agents/ code and web tools.
-_AGENT_IMAGE: dict[str, str] = {
-    "coder": "agent-coder",
-}
-_DEFAULT_IMAGE = "agent-researcher"
+# Agent type → Docker image name prefix (before -${image_tag}). Default is the unified
+# `agent` image; optional overrides if we split heavy/light images again.
+_AGENT_IMAGE: dict[str, str] = {}
+_DEFAULT_IMAGE = "agent"
 
 
 class ArgoSubmitter:

@@ -104,6 +104,6 @@ Hits UAT endpoints, runs integration tests, verifies the deployment works. Repor
 - Adding a new agent = create `agents/{name}/manifest.yaml` + optional `prompts.py`
 - **Directory naming**: use underscores (`web_search/`), manifest `name` can use hyphens (`web-search`). The runtime imports `agents.{name.replace("-","_")}.prompts` — hyphenated directory names are not importable by Python.
 - Argo WorkflowTemplate per agent in k3s-dean-gitops
-- All agents use the same Docker image (`agent-coder`) — the manifest determines behavior
+- All agents use the same Docker image (`amerenda/mycroft:agent-*`) — the manifest determines behavior
 - Intent classification routes Telegram messages to the right agent
 - The coordinator's `/api/tasks` endpoint accepts any agent_type
