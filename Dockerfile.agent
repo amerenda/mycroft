@@ -1,4 +1,4 @@
-# Unified agent runtime image — one container for all agent types (playground, researcher,
+# Unified agent runtime image — one container for all agent types (playground, coder,
 # DB-defined agents, etc.). Behavior comes from manifest + task config at run time
 # (MYCROFT_AGENT_TYPE, TASK_ID, KB_DSN, …). ENTRYPOINT is `python -m runtime` (see Dockerfile.agent-base).
 #

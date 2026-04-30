@@ -29,32 +29,32 @@ Coordinator (FastAPI)
 |-----------|---------|
 | `coordinator/` | FastAPI service: task API, Argo submission, report storage |
 | `runtime/` | Thin agent loop that runs inside Argo Workflow pods |
-| `agents/` | Agent definitions: `manifest.yaml` + `prompts.py` per agent type |
+| `agents/` | Seed `manifest.yaml` per agent (fallback if no DB row); prompts live in the UI |
 | `common/` | Shared libraries: KB client, LLM client, config, models |
 | `frontend/` | Single-page web UI |
 | `workflows/` | Argo WorkflowTemplate YAMLs (legacy; dynamic workflows now live in DB) |
 
 ### Agents
 
-| Agent | Model | Purpose | Trigger |
-|-------|-------|---------|---------|
-| `researcher` | qwen3:14b | Web research — gathers sources | API, UI, pipeline step |
-| `web-search` | qwen3.5:9b | Lightweight web search sub-agent | Pipeline step |
-| `writer` | llama3.1:8b | Synthesizes gathered findings into a report | Pipeline write phase |
-| `report-writer` | llama3.1:8b | Formats and writes final polished report | Pipeline step, API |
-| `extractor` | qwen3:14b | Extracts structured data from text | Pipeline, API |
-| `coder` | qwen3:14b | Clone repo, implement changes, open PR | API, UI |
+Primary definitions are in the **Agents** UI (database). On-disk seeds under `agents/` supply `manifest.yaml` when no DB row exists yet (e.g. `coder`, `playground`, `web-search`, `writer`, `extractor`, `report-writer`). Pipeline-only types and custom names are created in the UI, not as new git folders.
+
+| Agent (examples) | Typical role |
+|------------------|--------------|
+| `web-search` | Lightweight search sub-agent in pipelines |
+| `writer` / `report-writer` | Synthesis and polished reports |
+| `extractor` | Structured extraction |
+| `coder` | Clone repo, implement changes, open PR |
+| `playground` | Sandboxed runs from the UI |
 
 ### Workflows (Pipelines)
 
 | Workflow | Description |
 |----------|-------------|
-| `research-quick` | Single researcher agent, no pipeline |
-| `research-regular` | researcher (gather) → writer, ~8 min |
-| `research-deep` | researcher (gather) → researcher (review) → writer |
-| `research-new` | web-search → researcher → report-writer (3-step, DB-defined) |
+| `research-quick` / `research-regular` / etc. | Examples of multi-step pipelines — stored in DB; each step sets `agent` explicitly |
 | `coder` | Coder agent, opens a PR |
 | Custom | Multi-step pipelines built in the Workflows editor |
+
+Each pipeline step should set **`agent`** to an agent type that exists in the Agents UI (or seed manifests). If `agent` is omitted, the coordinator defaults to **`playground`**.
 
 ---
 
@@ -151,7 +151,7 @@ uvicorn coordinator.main:app --port 8080 --reload
 
 # Run an agent directly (bypasses Argo, useful for debugging)
 TASK_ID=<uuid> \
-MYCROFT_AGENT_TYPE=researcher \
+MYCROFT_AGENT_TYPE=playground \
 KB_DSN=postgresql://user:pass@host/agent-kb \
 LLM_MANAGER_URL=http://llm-manager.amer.dev \
 python -m runtime
@@ -174,8 +174,7 @@ GitOps via ArgoCD. CI builds Docker images and creates deploy PRs to `k3s-dean-g
 
 Images:
 - `amerenda/mycroft:coordinator-{sha}` — coordinator service
-- `amerenda/mycroft:agent-researcher-{sha}` — researcher/writer/extractor/web_search pods
-- `amerenda/mycroft:agent-{sha}` — agent runtime (Python loop + tools; Node + `gh` included). Tags `agent-coder-*` / `agent-researcher-*` are the same image for GitOps compatibility.
+- `amerenda/mycroft:agent-{sha}` — unified agent runtime (Python loop + tools; Node + `gh` included). Tags `agent-coder-*` and `agent-researcher-*` are the **same image** (legacy GitOps names); any agent type is selected at run time via `MYCROFT_AGENT_TYPE` and task config.
 
 ---
 

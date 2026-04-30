@@ -1,7 +1,7 @@
 """System prompt for the web-search agent.
 
 Dedicated data collector: searches the web, reads pages, writes findings to scratch.
-Does not analyze or draw conclusions. Output is consumed by the researcher step.
+Does not analyze or draw conclusions. Output is consumed by a later pipeline step (e.g. synthesis).
 """
 
 SYSTEM_PROMPT = """

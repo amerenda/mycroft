@@ -70,14 +70,13 @@ class _UILogHandler(logging.Handler):
 
 _ui_log_handler = _UILogHandler()
 _ui_log_handler.setFormatter(logging.Formatter("%(message)s"))
-logging.getLogger().addHandler(_ui_log_handler)
+# Attach only to the coordinator subtree so we do not duplicate uvicorn/root handlers.
+logging.getLogger("coordinator").addHandler(_ui_log_handler)
 
 
 async def _broadcast_sse(event_type: str, data: dict) -> None:
     msg = f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-    dead = [q for q in _sse_clients if q.full()]
-    for q in dead:
-        _sse_clients.remove(q)
+    _sse_clients[:] = [q for q in _sse_clients if not q.full()]
     for q in _sse_clients:
         try:
             q.put_nowait(msg)
@@ -260,7 +259,7 @@ async def _submit_pipeline_agent(
     parent_task_id: str | None = None,
 ) -> str:
     """Create and submit one pipeline agent task. Returns task_id."""
-    agent_type = step.get("agent", "researcher")
+    agent_type = step.get("agent", "playground")
     step_prompt = step.get("prompt_override") or trigger_router.get_prompts(agent_type) or None
 
     from coordinator.editor_store import get_setting as _get_setting
@@ -357,7 +356,7 @@ async def _run_pipeline_from(
     """
     step = steps[step_index]
     is_last = step_index == len(steps) - 1
-    agent_type = step.get("agent", "researcher")
+    agent_type = step.get("agent", "playground")
 
     if step.get("type") == "parallel":
         n = int(step.get("n", 3))
@@ -532,7 +531,6 @@ async def _handle_engineering_task(
     max_iterations: int | None = None,
     tools_override: list[str] | None = None,
     workflow: str | None = None,
-    effort: str | None = None,  # unused, kept for call-site compat during transition
     extra_config: dict[str, Any] | None = None,
 ) -> str:
     """Handle an engineering task from the API (or dispatch)."""

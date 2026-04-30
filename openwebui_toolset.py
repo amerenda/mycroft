@@ -3,15 +3,18 @@ Mycroft Open WebUI toolset — calls coordinator synchronous tool API.
 
 Install in Open WebUI: Workspace → Tools → New Tool → paste this file.
 
-Configure MYCROFT_URL to your coordinator's public URL before saving.
+Set the coordinator base URL with the MYCROFT_URL environment variable
+(or edit the default below). Open WebUI runs tools in a sandbox; configure
+env vars in the tool / function settings where your deployment allows it.
 """
 
 import json
+import os
 import urllib.request
 import urllib.error
 from typing import Any
 
-MYCROFT_URL = "https://mycroft.amer.dev"
+MYCROFT_URL = os.environ.get("MYCROFT_URL", "https://mycroft.amer.dev")
 
 
 def _call_tools(tool: str, args: dict) -> str:
@@ -61,7 +64,7 @@ class Tools:
         Search the Mycroft knowledge base using semantic vector search.
 
         :param query: The search query.
-        :param scopes: Comma-separated KB path prefixes to search (e.g. "/agents/researcher,/tasks"). Defaults to root.
+        :param scopes: Comma-separated KB path prefixes to search (e.g. "/tasks,/wiki"). Defaults to root.
         :param limit: Maximum number of results to return (1-20).
         :return: Matching KB records with their scope paths.
         """
@@ -112,10 +115,10 @@ class Tools:
 
     def start_task(self, agent_type: str, prompt: str, model: str = "") -> str:
         """
-        Start a long-running Mycroft agent task (researcher, coder, etc.) asynchronously.
+        Start a long-running Mycroft agent task (coder, playground, etc.) asynchronously.
         Returns a task_id — use get_task() to poll for completion.
 
-        :param agent_type: Agent type to run (e.g. "researcher", "coder").
+        :param agent_type: Agent type to run (must exist in the coordinator / Agents UI).
         :param prompt: The task description or question.
         :param model: Optional model override (leave blank for agent default).
         :return: JSON with task_id to use with get_task().

@@ -257,6 +257,8 @@ jobs:
 
   # ── Deploy ───────────────────────────────────────────────────────────────────
 
+  # Require manifest success — do not treat "skipped" as OK: when agent image builds
+  # fail, manifest is skipped and we must not open a GitOps PR that bumps AGENT_IMAGE_TAG.
   deploy:
     needs: [set-tag, changes, build-amd64, build-arm64, manifest]
     if: |
@@ -264,7 +266,7 @@ jobs:
       github.event_name != 'pull_request' &&
       needs.build-amd64.result == 'success' &&
       needs.build-arm64.result == 'success' &&
-      (needs.manifest.result == 'success' || needs.manifest.result == 'skipped')
+      needs.manifest.result == 'success'
     runs-on: arc-runner-set
     steps:
       - uses: actions/checkout@v6

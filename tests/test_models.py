@@ -88,8 +88,8 @@ class TestTaskConfig:
             agent_type="coder",
             instruction="Fix the login bug",
             repo="ecdysis",
-            trigger="telegram",
-            trigger_ref="msg-123",
+            trigger="api",
+            trigger_ref="req-123",
         )
         assert t.instruction == "Fix the login bug"
         assert t.repo == "ecdysis"
