@@ -255,8 +255,16 @@ class WebSearch:
 class WebRead:
     """Fetch a URL and return its cleaned text content."""
 
-    def __init__(self, max_chars: int | None = None):
+    def __init__(
+        self,
+        max_chars: int | None = None,
+        *,
+        kb_dsn: str | None = None,
+        run_fetch_root: str | None = None,
+    ):
         self._max_chars = max_chars
+        self._kb_dsn = kb_dsn
+        self._run_fetch_root = run_fetch_root
 
     @property
     def name(self) -> str:
@@ -292,11 +300,28 @@ class WebRead:
         if not content:
             return f"Error: could not fetch content from {url}"
 
+        fetch_scope = ""
+        if self._kb_dsn and self._run_fetch_root:
+            from runtime.tools.run_fetch import persist_web_fetch
+
+            try:
+                fetch_scope = await persist_web_fetch(
+                    self._kb_dsn, self._run_fetch_root, url, content,
+                )
+            except Exception as e:
+                log.warning("web_read KB persist failed for %s: %s", url[:80], e)
+
         if self._max_chars is not None and len(content) > self._max_chars:
             content = content[:self._max_chars] + "\n\n... (truncated)"
 
         elapsed = time.monotonic() - t0
         log.info("WebRead: %s → %d chars in %.1fs", url, len(content), elapsed)
+        if fetch_scope:
+            content = (
+                f"{content}\n\n---\n"
+                f"KB_FETCH_SCOPE: {fetch_scope}\n"
+                f"(Full capture stored at this path for run_fetch_read.)"
+            )
         return content
 
 

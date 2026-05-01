@@ -209,9 +209,20 @@ def load_tools(
         all_tools["run_command"] = RunCommand(workspace)
 
     if selected & {"web_read", "web_search", "wiki_read"}:
+        from runtime.tools.run_fetch import run_root_from_scratch_scope
         from runtime.tools.web import WebRead, WebSearch, WikiRead
+
+        _run_root = (
+            run_root_from_scratch_scope(scratch_scope)
+            if kb_dsn and scratch_scope
+            else None
+        )
         all_tools.update({
-            "web_read": WebRead(max_chars=web_read_max_chars),
+            "web_read": WebRead(
+                max_chars=web_read_max_chars,
+                kb_dsn=kb_dsn if _run_root else None,
+                run_fetch_root=_run_root,
+            ),
             "web_search": WebSearch(),
             "wiki_read": WikiRead(max_chars=web_read_max_chars),
         })
@@ -232,7 +243,16 @@ def load_tools(
 
     if kb_dsn and scratch_scope:
         from runtime.tools.kb import ScratchRead, ScratchWrite
-        tools += [ScratchRead(kb_dsn, scratch_scope), ScratchWrite(kb_dsn, scratch_scope), Finish()]
+        from runtime.tools.run_fetch import RunFetchList, RunFetchRead, run_root_from_scratch_scope
+
+        _run_root = run_root_from_scratch_scope(scratch_scope)
+        tools += [ScratchRead(kb_dsn, scratch_scope), ScratchWrite(kb_dsn, scratch_scope)]
+        if _run_root:
+            tools += [
+                RunFetchList(kb_dsn, _run_root),
+                RunFetchRead(kb_dsn, _run_root),
+            ]
+        tools += [Finish()]
 
     log.info("Loaded %d tools: %s", len(tools), [t.name for t in tools])
     return ToolRegistry(tools)

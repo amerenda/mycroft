@@ -94,6 +94,7 @@ Short-term records carry an `expires_at` timestamp. The coordinator runs hourly 
 /runs/{run_id}/original             original user request for a pipeline run (7d TTL)
 /runs/{run_id}/step-{n}/output      full output of pipeline step N (7d TTL)
 /runs/{run_id}/scratch              shared notepad for all agents in the run (7d TTL)
+/runs/{run_id}/fetch/{uuid}        raw body of each web_read in the run (7d TTL)
 /research, /wiki                    shared read-only reference context
 /skills/                            (planned) shared skill knowledge blocks
 ```
@@ -119,10 +120,12 @@ Every agent sees the original brief verbatim — no telephone effect, no coordin
 
 ### Scratch Space
 
-All agents in a pipeline share a scratch record at `/runs/{run_id}/scratch`. Three tools are auto-injected for all pipeline agents regardless of their manifest `tools:` list:
+All agents in a pipeline share a scratch record at `/runs/{run_id}/scratch`. These tools are auto-injected for all pipeline agents regardless of their manifest `tools:` list:
 
 - **`scratch_read`** — read current scratch content
-- **`scratch_write`** — overwrite scratch entirely (last write wins)
+- **`scratch_write`** — append or replace shared scratch (see tool schema)
+- **`run_fetch_list`** — list KB scopes for raw `web_read` captures in this run
+- **`run_fetch_read`** — load full text for one `/runs/{run_id}/fetch/{uuid}` scope
 - **`submit_report`** — submit the agent's final output and exit the loop immediately
 
 `submit_report` is the correct way for pipeline output steps (e.g. `report-writer`) to return content. The runner intercepts the call and returns its `content` argument directly — no further iterations run. Models reliably prefer calling a tool over emitting plain text, so this is more robust than prompting for a text response.

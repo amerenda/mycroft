@@ -1495,7 +1495,8 @@ async def agent_effective_prompt(
     """Return the exact system prompt and tool list the model would receive.
 
     pipeline=true simulates a pipeline context (adds auto-injected tools).
-    Auto-injected for all pipeline steps: scratch_read, scratch_write, finish.
+    Auto-injected for all pipeline steps: scratch_read, scratch_write,
+    run_fetch_list, run_fetch_read, finish.
     submit_report must be declared explicitly in the agent's tool list.
     """
     _safe_name(name)
@@ -1525,7 +1526,11 @@ async def agent_effective_prompt(
         source = "built-in"
 
     manifest_tools = list(manifest.tools)
-    auto_injected = ["scratch_read", "scratch_write", "finish"] if pipeline else []
+    auto_injected = (
+        ["scratch_read", "scratch_write", "run_fetch_list", "run_fetch_read", "finish"]
+        if pipeline
+        else []
+    )
     if manifest.max_tokens is not None:
         try:
             max_tokens_eff = max(1, int(manifest.max_tokens))
