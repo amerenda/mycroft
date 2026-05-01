@@ -122,13 +122,13 @@ class AgentRunner:
                 completed_at=datetime.now(timezone.utc),
                 result={"error": str(e)},
             )
-            # Write failure notification
-            await self.kb.write(
-                scope=f"/notifications/alex/{self.task.id}",
-                content=f"Task {self.task.id[:8]} ({self.manifest.name}) failed: {e}",
-                needs_embedding=False,
-                source=f"{self.manifest.name}/{self.task.id}",
-            )
+            if self.platform.kb_notifications_enabled:
+                await self.kb.write(
+                    scope=f"/notifications/alex/{self.task.id}",
+                    content=f"Task {self.task.id[:8]} ({self.manifest.name}) failed: {e}",
+                    needs_embedding=False,
+                    source=f"{self.manifest.name}/{self.task.id}",
+                )
             raise
         finally:
             await self.kb.close()
@@ -378,15 +378,16 @@ class AgentRunner:
             limit_note = default_iteration_limit_message(
                 self.max_iterations, preview or "(no instruction)"
             )
-        await self.kb.write(
-            scope=f"/notifications/alex/{self.task.id}",
-            content=(
-                f"Agent {self.manifest.name} hit iteration limit ({self.max_iterations}) "
-                f"without calling finish. Force-finished. {limit_note}"
-            ),
-            needs_embedding=False,
-            source=f"{self.manifest.name}/{self.task.id}",
-        )
+        if self.platform.kb_notifications_enabled:
+            await self.kb.write(
+                scope=f"/notifications/alex/{self.task.id}",
+                content=(
+                    f"Agent {self.manifest.name} hit iteration limit ({self.max_iterations}) "
+                    f"without calling finish. Force-finished. {limit_note}"
+                ),
+                needs_embedding=False,
+                source=f"{self.manifest.name}/{self.task.id}",
+            )
 
         return last_content
 

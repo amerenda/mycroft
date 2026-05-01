@@ -17,5 +17,8 @@ class PlatformConfig(BaseSettings):
     argo_ui_url: str = "https://argo.amer.dev"
     github_token: str = ""
     sazed_url: str = ""  # e.g. http://sazed.sazed.svc:8000 — empty = reports disabled
+    # When True, runtime writes failure / iteration-limit notices to KB under
+    # /notifications/alex/{task_id}. Env: KB_NOTIFICATIONS_ENABLED=true
+    kb_notifications_enabled: bool = False
 
     model_config = {"env_prefix": "", "case_sensitive": False}
