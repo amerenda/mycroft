@@ -14,12 +14,35 @@ import httpx
 log = logging.getLogger(__name__)
 
 
+def _scrub_json_string(text: str) -> str:
+    """Return text safe for JSONB storage in PostgreSQL.
+
+    Removes:
+    - NUL byte (\\x00), rejected by PostgreSQL text/jsonb
+    - Invalid UTF-16 surrogate code points (U+D800..U+DFFF)
+    - Non-whitespace control chars U+0001..U+001F (keeps \\t, \\n, \\r)
+    """
+    out_chars: list[str] = []
+    for ch in text:
+        cp = ord(ch)
+        if cp == 0:
+            continue
+        if 0xD800 <= cp <= 0xDFFF:
+            continue
+        if cp < 0x20 and ch not in ("\t", "\n", "\r"):
+            continue
+        out_chars.append(ch)
+    return "".join(out_chars)
+
+
 def _scrub_json_value(obj: Any) -> Any:
-    """Make structures safe for JSON → PostgreSQL jsonb (no NaN/Inf)."""
+    """Make structures safe for JSON -> PostgreSQL jsonb."""
     if isinstance(obj, float) and (math.isnan(obj) or math.isinf(obj)):
         return None
+    if isinstance(obj, str):
+        return _scrub_json_string(obj)
     if isinstance(obj, dict):
-        return {str(k): _scrub_json_value(v) for k, v in obj.items()}
+        return {_scrub_json_string(str(k)): _scrub_json_value(v) for k, v in obj.items()}
     if isinstance(obj, list):
         return [_scrub_json_value(v) for v in obj]
     return obj
