@@ -14,6 +14,9 @@ from common.llm import LLMClient
 from common.metrics import (
     agent_iterations_total, agent_tool_calls_total,
     agent_tool_call_seconds, llm_metrics_callback,
+    agent_runs_total, agent_iteration_seconds, agent_exit_total,
+    agent_empty_response_total, agent_text_tool_call_total,
+    agent_tool_errors_total,
 )
 from common.models import AgentManifest, TaskConfig, TaskStatus
 from runtime.context import (
@@ -111,6 +114,7 @@ class AgentRunner:
                 completed_at=datetime.now(timezone.utc),
                 result={"summary": result[:_TASK_RESULT_SUMMARY_MAX_CHARS]},
             )
+            agent_runs_total.labels(agent_type=self.manifest.name, status="completed").inc()
 
             return result
 
@@ -129,6 +133,8 @@ class AgentRunner:
                     needs_embedding=False,
                     source=f"{self.manifest.name}/{self.task.id}",
                 )
+            agent_runs_total.labels(agent_type=self.manifest.name, status="failed").inc()
+            agent_exit_total.labels(agent_type=self.manifest.name, reason="failed").inc()
             raise
         finally:
             await self.kb.close()
@@ -201,6 +207,7 @@ class AgentRunner:
         _has_scratch = "scratch_read" in _tool_names and "scratch_write" in _tool_names
 
         while self.iteration < self.max_iterations:
+            t_iter = time.monotonic()
             model_name = self.llm.model
             log.info("Iteration %d/%d model=%s",
                      self.iteration + 1, self.max_iterations, model_name)
@@ -259,12 +266,19 @@ class AgentRunner:
                     agent_tool_calls_total.labels(
                         agent_type=self.manifest.name, tool=tc.name).inc()
                     t_tool = time.monotonic()
-                    result = await self.tools.execute(tc.name, tc.arguments)
+                    try:
+                        result = await self.tools.execute(tc.name, tc.arguments)
+                    except Exception:
+                        agent_tool_errors_total.labels(
+                            agent_type=self.manifest.name, tool=tc.name).inc()
+                        raise
                     agent_tool_call_seconds.labels(tool=tc.name).observe(
                         time.monotonic() - t_tool)
 
                     if tc.name in ("finish", "submit_report"):
                         log.info("Step terminated via %s (%d chars)", tc.name, len(result))
+                        agent_exit_total.labels(
+                            agent_type=self.manifest.name, reason=f"{tc.name}_tool").inc()
                         return result
 
                     self.messages.append({
@@ -274,6 +288,9 @@ class AgentRunner:
                     })
 
                 self.iteration += 1
+                agent_iteration_seconds.labels(agent_type=self.manifest.name).observe(
+                    time.monotonic() - t_iter
+                )
 
                 # Persist conversation for restart safety
                 await self._persist_conversation()
@@ -285,6 +302,8 @@ class AgentRunner:
                 if parsed:
                     name, arguments = parsed
                     log.info("Parsed text tool call: %s(%s)", name, arguments[:100])
+                    agent_text_tool_call_total.labels(
+                        agent_type=self.manifest.name, tool=name).inc()
                     import uuid as _uuid
                     fake_id = f"text-{_uuid.uuid4().hex[:8]}"
                     self.messages.append({
@@ -298,9 +317,16 @@ class AgentRunner:
                     })
                     agent_tool_calls_total.labels(
                         agent_type=self.manifest.name, tool=name).inc()
-                    result = await self.tools.execute(name, arguments)
+                    try:
+                        result = await self.tools.execute(name, arguments)
+                    except Exception:
+                        agent_tool_errors_total.labels(
+                            agent_type=self.manifest.name, tool=name).inc()
+                        raise
                     if name in ("finish", "submit_report"):
                         log.info("Text tool call terminated via %s (%d chars)", name, len(result))
+                        agent_exit_total.labels(
+                            agent_type=self.manifest.name, reason=f"{name}_tool").inc()
                         return result
                     self.messages.append({
                         "role": "tool",
@@ -308,12 +334,16 @@ class AgentRunner:
                         "content": result,
                     })
                     self.iteration += 1
+                    agent_iteration_seconds.labels(agent_type=self.manifest.name).observe(
+                        time.monotonic() - t_iter
+                    )
                     await self._persist_conversation()
                     continue
 
             # No tool calls — either the agent is done or it got confused
             if not response.content or not response.content.strip():
                 self._consecutive_empty += 1
+                agent_empty_response_total.labels(agent_type=self.manifest.name).inc()
                 if self._consecutive_empty >= 3:
                     # Model is stuck — stop wasting iterations
                     log.warning("Model returned %d consecutive empty responses, giving up",
@@ -344,6 +374,8 @@ class AgentRunner:
                 if self._consecutive_text_exit >= 3:
                     log.warning("Model ignored tool-exit nudge %d times — force-finishing",
                                 self._consecutive_text_exit)
+                    agent_exit_total.labels(
+                        agent_type=self.manifest.name, reason="forced_text_exit").inc()
                     return response.content
                 exit_options = " or ".join(f"`{t}`" for t in terminal_tools)
                 self.messages.append({
@@ -355,12 +387,16 @@ class AgentRunner:
                     ),
                 })
                 self.iteration += 1
+                agent_iteration_seconds.labels(agent_type=self.manifest.name).observe(
+                    time.monotonic() - t_iter
+                )
                 await self._persist_conversation()
                 continue
 
             self._consecutive_text_exit = 0
             self.messages.append({"role": "assistant", "content": response.content})
             log.info("Agent finished: %s", response.content[:200])
+            agent_exit_total.labels(agent_type=self.manifest.name, reason="text_response").inc()
             return response.content
 
         # Force-finish: prefer last assistant message with text; if the model only
@@ -369,6 +405,7 @@ class AgentRunner:
         last_content = self._force_finish_fallback_text()
         log.warning("Max iterations (%d) reached without finish call — force-finishing (%d chars)",
                     self.max_iterations, len(last_content))
+        agent_exit_total.labels(agent_type=self.manifest.name, reason="max_iterations").inc()
 
         preview = (self.task.instruction or "").strip() or str(
             self.task.config.get("user_message") or ""

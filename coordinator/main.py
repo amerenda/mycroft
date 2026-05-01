@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, HTTPException
+from fastapi import Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
@@ -20,6 +21,10 @@ from common.config import PlatformConfig
 from common.metrics import (
     coordinator_info, tasks_created_total, tasks_completed_total,
     tasks_active, task_duration_seconds, argo_submissions_total,
+    argo_submission_seconds, task_queue_wait_seconds, task_transitions_total,
+    task_terminal_result_total, workflow_runs_total, workflow_steps_total,
+    coordinator_api_requests_total, coordinator_api_request_seconds,
+    coordinator_sse_clients,
 )
 from common.models import TaskConfig, TaskStatus
 from coordinator.argo_submitter import ArgoSubmitter
@@ -196,6 +201,26 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="Mycroft Coordinator", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def _metrics_http_middleware(request: Request, call_next):
+    t0 = time.monotonic()
+    status_code = 500
+    try:
+        response = await call_next(request)
+        status_code = response.status_code
+        return response
+    finally:
+        route_obj = request.scope.get("route")
+        route = getattr(route_obj, "path", request.url.path)
+        status_class = f"{status_code // 100}xx"
+        coordinator_api_requests_total.labels(
+            method=request.method, route=route, status_class=status_class
+        ).inc()
+        coordinator_api_request_seconds.labels(
+            method=request.method, route=route
+        ).observe(time.monotonic() - t0)
+
+
 class _PipelineTaskFailed(Exception):
     pass
 
@@ -331,18 +356,39 @@ async def _submit_pipeline_agent(
     )
     tasks_created_total.labels(agent_type=agent_type, trigger="pipeline").inc()
     tasks_active.labels(agent_type=agent_type).inc()
+    task_transitions_total.labels(
+        agent_type=agent_type, to_status=TaskStatus.pending.value, source="pipeline_create"
+    ).inc()
 
     model = step.get("model") or None
     params: dict = {"instruction": instruction}
     if model:
         params["model_override"] = model
-    wf_name = await argo.submit(
-        agent_type=agent_type, task_id=task_id, params=params,
-        manifest=step_manifest,
-        on_update=_on_workflow_update,
-    )
-    await db.kb.update_task(task_id, argo_workflow_name=wf_name)
-    return task_id
+    t_submit = time.monotonic()
+    try:
+        wf_name = await argo.submit(
+            agent_type=agent_type, task_id=task_id, params=params,
+            manifest=step_manifest,
+            on_update=_on_workflow_update,
+        )
+        argo_submissions_total.labels(agent_type=agent_type, result="success").inc()
+        argo_submission_seconds.labels(
+            agent_type=agent_type, result="success"
+        ).observe(time.monotonic() - t_submit)
+        await db.kb.update_task(task_id, argo_workflow_name=wf_name)
+        return task_id
+    except Exception:
+        argo_submissions_total.labels(agent_type=agent_type, result="failure").inc()
+        argo_submission_seconds.labels(
+            agent_type=agent_type, result="failure"
+        ).observe(time.monotonic() - t_submit)
+        task_transitions_total.labels(
+            agent_type=agent_type, to_status=TaskStatus.failed.value, source="pipeline_submit"
+        ).inc()
+        tasks_active.labels(agent_type=agent_type).dec()
+        tasks_completed_total.labels(agent_type=agent_type, status="failed").inc()
+        await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": "Pipeline workflow submission failed"})
+        raise
 
 
 async def _wait_and_collect(task_id: str, output_scope: str, agent_type: str) -> str | None:
@@ -393,6 +439,10 @@ async def _run_pipeline_from(
     step = steps[step_index]
     is_last = step_index == len(steps) - 1
     agent_type = step.get("agent", "playground")
+    step_kind = "parallel" if step.get("type") == "parallel" else "sequential"
+    workflow_steps_total.labels(
+        workflow=workflow_name, step_kind=step_kind, event="started"
+    ).inc()
 
     if step.get("type") == "parallel":
         n = int(step.get("n", 3))
@@ -441,8 +491,15 @@ async def _run_pipeline_from(
                     valid = [s for s in gathered if s]
                     if not valid:
                         log.error("All parallel agents failed at step %d — aborting", _sidx)
+                        workflow_steps_total.labels(
+                            workflow=workflow_name, step_kind="parallel", event="failed"
+                        ).inc()
+                        workflow_runs_total.labels(workflow=workflow_name, result="failed").inc()
                         return
                     log.info("Parallel step %d complete: %d/%d succeeded", _sidx, len(valid), len(_tids))
+                    workflow_steps_total.labels(
+                        workflow=workflow_name, step_kind="parallel", event="completed"
+                    ).inc()
                     await _run_pipeline_from(
                         steps, _sidx + 1,
                         instruction=instruction,
@@ -456,6 +513,10 @@ async def _run_pipeline_from(
                     )
                 except Exception:
                     log.exception("Parallel continuation failed at step %d", _sidx)
+                    workflow_steps_total.labels(
+                        workflow=workflow_name, step_kind="parallel", event="failed"
+                    ).inc()
+                    workflow_runs_total.labels(workflow=workflow_name, result="failed").inc()
 
             asyncio.create_task(_parallel_continuation())
 
@@ -488,6 +549,10 @@ async def _run_pipeline_from(
                     await _wait_for_pipeline_task(_prev_task_id, timeout=3600)
                 except _PipelineTaskFailed as e:
                     log.warning("Pipeline aborted at step %d: %s", _sidx, e)
+                    workflow_steps_total.labels(
+                        workflow=workflow_name, step_kind="sequential", event="failed"
+                    ).inc()
+                    workflow_runs_total.labels(workflow=workflow_name, result="failed").inc()
                     return
                 try:
                     result_record = await db.kb.get(f"/agents/{_agent_type}/results/{_prev_task_id}")
@@ -501,6 +566,9 @@ async def _run_pipeline_from(
                         """,
                         str(_uuid.uuid4()), prev_content, prev_scope, [], "{}", 0.5, "coordinator",
                     )
+                    workflow_steps_total.labels(
+                        workflow=workflow_name, step_kind="sequential", event="completed"
+                    ).inc()
                     await _run_pipeline_from(
                         steps, _sidx + 1,
                         instruction=instruction,
@@ -514,6 +582,10 @@ async def _run_pipeline_from(
                     )
                 except Exception:
                     log.exception("Sequential continuation failed at step %d", _sidx)
+                    workflow_steps_total.labels(
+                        workflow=workflow_name, step_kind="sequential", event="failed"
+                    ).inc()
+                    workflow_runs_total.labels(workflow=workflow_name, result="failed").inc()
 
             asyncio.create_task(_sequential_continuation())
 
@@ -529,6 +601,7 @@ async def _start_dynamic_pipeline(
     """Start an N-step dynamic pipeline from a DB-stored workflow definition. Returns first task ID."""
     if not steps:
         raise ValueError(f"Workflow '{workflow_name}' has no pipeline steps")
+    workflow_runs_total.labels(workflow=workflow_name, result="started").inc()
 
     import uuid as _uuid
     run_id = str(_uuid.uuid4())
@@ -648,6 +721,9 @@ async def _handle_engineering_task(
     )
     tasks_created_total.labels(agent_type=agent_type, trigger="manual").inc()
     tasks_active.labels(agent_type=agent_type).inc()
+    task_transitions_total.labels(
+        agent_type=agent_type, to_status=TaskStatus.pending.value, source="create_task"
+    ).inc()
 
     # Submit Argo Workflow with retries
     params: dict[str, Any] = {"instruction": instruction, "repo": repo}
@@ -658,6 +734,7 @@ async def _handle_engineering_task(
     last_error = None
     for attempt in range(1, max_retries + 1):
         try:
+            t_submit = time.monotonic()
             wf_name = await argo.submit(
                 agent_type=agent_type,
                 task_id=task_id,
@@ -668,9 +745,15 @@ async def _handle_engineering_task(
             await db.kb.update_task(task_id, argo_workflow_name=wf_name)
             log.info("Workflow %s submitted for task %s (attempt %d)", wf_name, task_id[:8], attempt)
             argo_submissions_total.labels(agent_type=agent_type, result="success").inc()
+            argo_submission_seconds.labels(
+                agent_type=agent_type, result="success"
+            ).observe(time.monotonic() - t_submit)
             return task_id
         except Exception as e:
             last_error = e
+            argo_submission_seconds.labels(
+                agent_type=agent_type, result="failure"
+            ).observe(time.monotonic() - t_submit)
             log.warning("Argo submission attempt %d/%d failed for task %s: %s", attempt, max_retries, task_id[:8], e)
             if attempt < max_retries:
                 await asyncio.sleep(2 ** attempt)  # 2s, 4s backoff
@@ -681,6 +764,11 @@ async def _handle_engineering_task(
     tasks_active.labels(agent_type=agent_type).dec()
     tasks_completed_total.labels(agent_type=agent_type, status="failed").inc()
     await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": f"Workflow submission failed after {max_retries} attempts: {last_error}"})
+    failed_task = await task_manager.get_task(task_id)
+    task_transitions_total.labels(
+        agent_type=agent_type, to_status=TaskStatus.failed.value, source="argo_submit"
+    ).inc()
+    _observe_task_terminal_metrics(failed_task, "failed", "argo_submit")
     raise last_error
 
 
@@ -701,7 +789,15 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
         if task and not was_already_terminal:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="failed").inc()
+            task_transitions_total.labels(
+                agent_type=task.agent_type, to_status=TaskStatus.failed.value, source="argo_update"
+            ).inc()
+            _observe_task_terminal_metrics(task, "failed", "argo_update")
         log.warning("Task %s failed (Argo): %s", task_id[:8], message)
+        if task and task.config.get("workflow"):
+            workflow_runs_total.labels(
+                workflow=task.config.get("workflow"), result="failed"
+            ).inc()
         await _broadcast_sse("task_update", {
             "task_id": task_id, "status": "failed",
             "agent_type": task.agent_type if task else "",
@@ -717,8 +813,38 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
         if task:
             tasks_active.labels(agent_type=task.agent_type).dec()
             tasks_completed_total.labels(agent_type=task.agent_type, status="completed").inc()
+            task_transitions_total.labels(
+                agent_type=task.agent_type, to_status=TaskStatus.completed.value, source="argo_update"
+            ).inc()
+            _observe_task_terminal_metrics(task, "completed", "argo_update")
+            if task.config.get("workflow") and task.config.get("is_last_step"):
+                workflow_steps_total.labels(
+                    workflow=task.config.get("workflow"), step_kind="sequential", event="completed"
+                ).inc()
+                workflow_runs_total.labels(
+                    workflow=task.config.get("workflow"), result="completed"
+                ).inc()
         await _broadcast_sse("task_update", {"task_id": task_id, "status": "completed",
                                              "agent_type": task.agent_type if task else ""})
+
+
+def _observe_task_terminal_metrics(task: Any | None, status: str, source: str) -> None:
+    """Emit queue/runtime/terminal counters for a task transition."""
+    if not task:
+        return
+    agent_type = task.agent_type
+    task_terminal_result_total.labels(
+        agent_type=agent_type, status=status, source=source
+    ).inc()
+    now = datetime.now(timezone.utc)
+    if task.created_at:
+        total_sec = max(0.0, (now - task.created_at).total_seconds())
+        task_duration_seconds.labels(
+            agent_type=agent_type, status=status
+        ).observe(total_sec)
+    if task.started_at and task.created_at:
+        queue_sec = max(0.0, (task.started_at - task.created_at).total_seconds())
+        task_queue_wait_seconds.labels(agent_type=agent_type).observe(queue_sec)
 
 
 async def _on_agent_event(event: dict[str, Any]) -> None:
@@ -992,6 +1118,13 @@ async def cancel_task(task_id: str):
         raise HTTPException(404, "Task not found")
     await _stop_task_workflow(task)
     await db.kb.update_task(task_id, status=TaskStatus.failed, result={"error": "Cancelled by user"})
+    if task.status not in (TaskStatus.completed, TaskStatus.failed):
+        tasks_active.labels(agent_type=task.agent_type).dec()
+        tasks_completed_total.labels(agent_type=task.agent_type, status="cancelled").inc()
+        task_transitions_total.labels(
+            agent_type=task.agent_type, to_status=TaskStatus.failed.value, source="cancel_api"
+        ).inc()
+        _observe_task_terminal_metrics(task, "cancelled", "cancel_api")
     return {"status": "cancelled"}
 
 
@@ -1000,6 +1133,7 @@ async def sse_stream():
     """Server-Sent Events stream — broadcasts task and report updates to connected clients."""
     queue: asyncio.Queue = asyncio.Queue(maxsize=50)
     _sse_clients.append(queue)
+    coordinator_sse_clients.set(len(_sse_clients))
 
     async def stream():
         try:
@@ -1013,6 +1147,7 @@ async def sse_stream():
         finally:
             try:
                 _sse_clients.remove(queue)
+                coordinator_sse_clients.set(len(_sse_clients))
             except ValueError:
                 pass
 
