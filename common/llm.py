@@ -123,58 +123,75 @@ class LLMClient:
 
         t_submit = time.monotonic()
 
-        # Submit to queue (llm-manager persists JSONB — must be strict JSON)
         try:
-            resp = await self._client.post("/api/queue/submit", json=payload)
-        except TypeError as e:
-            log.error("LLM payload not JSON-serializable: %s", e)
-            raise RuntimeError(f"LLM request serialization failed: {e}") from e
-        if resp.status_code == 422:
-            detail = resp.json()
-            raise RuntimeError(f"Queue rejected job: {detail.get('message', detail)}")
-        if resp.status_code == 429:
-            raise RuntimeError(f"Queue rate limited: {resp.text}")
-        if resp.status_code >= 500:
-            snippet = (resp.text or "")[:4000]
-            log.error(
-                "LLM queue submit HTTP %s model=%s: %s",
-                resp.status_code, effective_model, snippet or "(empty body)",
-            )
-            raise RuntimeError(
-                f"LLM queue submit failed ({resp.status_code}): {snippet or resp.reason_phrase}"
-            )
-        resp.raise_for_status()
+            # Submit to queue (llm-manager persists JSONB — must be strict JSON)
+            try:
+                resp = await self._client.post("/api/queue/submit", json=payload)
+            except TypeError as e:
+                log.error("LLM payload not JSON-serializable: %s", e)
+                raise RuntimeError(f"LLM request serialization failed: {e}") from e
+            if resp.status_code == 422:
+                detail = resp.json()
+                raise RuntimeError(f"Queue rejected job: {detail.get('message', detail)}")
+            if resp.status_code == 429:
+                raise RuntimeError(f"Queue rate limited: {resp.text}")
+            if resp.status_code >= 500:
+                snippet = (resp.text or "")[:4000]
+                log.error(
+                    "LLM queue submit HTTP %s model=%s: %s",
+                    resp.status_code, effective_model, snippet or "(empty body)",
+                )
+                raise RuntimeError(
+                    f"LLM queue submit failed ({resp.status_code}): {snippet or resp.reason_phrase}"
+                )
+            resp.raise_for_status()
 
-        job = resp.json()
-        job_id = job["job_id"]
-        position = job.get("position", 0)
-        warning = job.get("warning")
+            job = resp.json()
+            job_id = job["job_id"]
+            position = job.get("position", 0)
+            warning = job.get("warning")
 
-        log.info("Queue job %s submitted (model=%s, position=%d%s)",
-                 job_id, effective_model, position,
-                 f", warning: {warning}" if warning else "")
+            log.info("Queue job %s submitted (model=%s, position=%d%s)",
+                     job_id, effective_model, position,
+                     f", warning: {warning}" if warning else "")
 
-        if position > 0:
-            self._emit("llm_queue_position", {"model": effective_model}, position)
+            if position > 0:
+                self._emit("llm_queue_position", {"model": effective_model}, position)
 
-        # Poll for completion
-        result, wait_secs, inference_secs = await self._wait_for_job(job_id, effective_model)
+            # Poll for completion
+            result, wait_secs, inference_secs = await self._wait_for_job(job_id, effective_model)
 
-        t_total = time.monotonic() - t_submit
-        self._emit("llm_call_total_seconds", {"model": effective_model}, t_total)
-        self._emit("llm_queue_wait_seconds", {"model": effective_model}, wait_secs)
+            t_total = time.monotonic() - t_submit
+            self._emit("llm_call_total_seconds", {"model": effective_model}, t_total)
+            self._emit("llm_queue_wait_seconds", {"model": effective_model}, wait_secs)
+            self._emit("llm_inference_seconds", {"model": effective_model}, inference_secs)
 
-        response = self._parse_result(result)
-        response.queue_wait_seconds = wait_secs
-        response.inference_seconds = inference_secs
+            response = self._parse_result(result)
+            response.queue_wait_seconds = wait_secs
+            response.inference_seconds = inference_secs
 
-        usage = result.get("usage", {})
-        response.prompt_tokens = usage.get("prompt_tokens", 0)
-        response.completion_tokens = usage.get("completion_tokens", 0)
-        self._emit("llm_tokens", {"model": effective_model, "type": "prompt"}, response.prompt_tokens)
-        self._emit("llm_tokens", {"model": effective_model, "type": "completion"}, response.completion_tokens)
+            usage = result.get("usage", {})
+            response.prompt_tokens = usage.get("prompt_tokens", 0)
+            response.completion_tokens = usage.get("completion_tokens", 0)
+            self._emit("llm_tokens", {"model": effective_model, "type": "prompt"}, response.prompt_tokens)
+            self._emit("llm_tokens", {"model": effective_model, "type": "completion"}, response.completion_tokens)
 
-        return response
+            return response
+        except Exception as e:
+            msg = str(e).lower()
+            reason = "error"
+            if "timed out" in msg:
+                reason = "timeout"
+            elif "rate limited" in msg:
+                reason = "rate_limited"
+            elif "rejected" in msg:
+                reason = "rejected"
+            elif "cancelled" in msg:
+                reason = "cancelled"
+            elif "stuck in queue" in msg:
+                reason = "queue_timeout"
+            self._emit("llm_error", {"model": effective_model, "reason": reason})
+            raise
 
     async def cancel_current_job(self) -> None:
         """Cancel the in-flight llm-manager job, if any. Safe to call with no active job."""

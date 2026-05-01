@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any, Callable, Coroutine
@@ -11,6 +12,11 @@ from typing import Any, Callable, Coroutine
 import asyncpg
 
 from common.models import AgentPermissions, MemoryRecord, TaskRecord, TaskStatus
+from common.metrics import (
+    kb_operations_total,
+    kb_operation_seconds,
+    kb_operation_errors_total,
+)
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +74,17 @@ class KBClient:
         self.use_embeddings = use_embeddings
         self._pool: asyncpg.Pool | None = None
 
+    @staticmethod
+    def _metric_name(op: str) -> str:
+        return op.replace(" ", "_")
+
+    def _observe_op(self, op: str, start: float, ok: bool) -> None:
+        name = self._metric_name(op)
+        kb_operations_total.labels(operation=name).inc()
+        kb_operation_seconds.labels(operation=name).observe(time.monotonic() - start)
+        if not ok:
+            kb_operation_errors_total.labels(operation=name).inc()
+
     async def connect(self) -> None:
         self._pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=5)
         log.info("KB connected to %s", self.dsn.split("@")[-1])
@@ -121,6 +138,8 @@ class KBClient:
 
         ttl_days: if set, the record expires after this many days (short-term memory).
         """
+        t0 = time.monotonic()
+        ok = False
         self._check_permission(scope, "write")
 
         record_id = str(uuid.uuid4())
@@ -155,13 +174,17 @@ class KBClient:
         # Notify listeners
         event = json.dumps({"scope": scope, "record_id": record_id, "source": source})
         await self.pool.execute("SELECT pg_notify('agent_events', $1)", event)
+        ok = True
 
         log.debug("KB write: scope=%s id=%s embed=%s ttl=%s", scope, record_id[:8],
                   embedding is not None, ttl_days)
+        self._observe_op("write", t0, ok)
         return record_id
 
     async def get(self, scope: str) -> MemoryRecord | None:
         """Get a single record by exact scope match (most recent)."""
+        t0 = time.monotonic()
+        ok = False
         self._check_permission(scope, "read")
 
         row = await self.pool.fetchrow(
@@ -177,6 +200,8 @@ class KBClient:
             scope,
         )
         if not row:
+            ok = True
+            self._observe_op("get", t0, ok)
             return None
 
         # Update last_accessed
@@ -185,7 +210,7 @@ class KBClient:
             row["id"],
         )
 
-        return MemoryRecord(
+        result = MemoryRecord(
             id=_str(row["id"]),
             content=row["content"],
             scope=row["scope"],
@@ -196,6 +221,9 @@ class KBClient:
             needs_embedding=row["needs_embedding"],
             created_at=row["created_at"],
         )
+        ok = True
+        self._observe_op("get", t0, ok)
+        return result
 
     async def recall(
         self,
@@ -208,11 +236,15 @@ class KBClient:
 
         Scoring: 0.5 * similarity + 0.3 * recency + 0.2 * importance
         """
+        t0 = time.monotonic()
+        ok = False
         # Enforce read permissions on all requested scopes
         for scope in scopes:
             self._check_permission(scope, "read")
 
         if not self.use_embeddings:
+            ok = True
+            self._observe_op("recall", t0, ok)
             return []
 
         query_embedding = embed(query)
@@ -260,6 +292,8 @@ class KBClient:
             ))
 
         log.debug("KB recall: query='%s...' scopes=%s results=%d", query[:40], scopes, len(results))
+        ok = True
+        self._observe_op("recall", t0, ok)
         return results
 
     # -----------------------------------------------------------------------
@@ -367,6 +401,8 @@ class KBClient:
     ) -> str:
         """Create a new task. Returns task ID."""
         task_id = str(uuid.uuid4())
+        t0 = time.monotonic()
+        ok = False
         await self.pool.execute(
             """
             INSERT INTO agent_tasks (id, agent_type, status, trigger, trigger_ref, config)
@@ -380,10 +416,14 @@ class KBClient:
             json.dumps(config or {}),
         )
         log.info("Task created: id=%s type=%s trigger=%s", task_id[:8], agent_type, trigger)
+        ok = True
+        self._observe_op("create_task", t0, ok)
         return task_id
 
     async def update_task(self, task_id: str, **fields: Any) -> None:
         """Update task fields. Supports: status, result, started_at, completed_at, argo_workflow_name."""
+        t0 = time.monotonic()
+        ok = False
         set_parts = []
         values = [task_id]
         idx = 2
@@ -403,6 +443,8 @@ class KBClient:
             idx += 1
 
         if not set_parts:
+            ok = True
+            self._observe_op("update_task", t0, ok)
             return
 
         try:
@@ -417,14 +459,20 @@ class KBClient:
                 await self.update_task(task_id, **{k: v for k, v in fields.items() if k != "argo_workflow_name"})
             else:
                 raise
+        ok = True
+        self._observe_op("update_task", t0, ok)
 
     async def get_task(self, task_id: str) -> TaskRecord | None:
+        t0 = time.monotonic()
+        ok = False
         row = await self.pool.fetchrow(
             "SELECT * FROM agent_tasks WHERE id = $1", task_id
         )
         if not row:
+            ok = True
+            self._observe_op("get_task", t0, ok)
             return None
-        return TaskRecord(
+        result = TaskRecord(
             id=_str(row["id"]),
             agent_type=row["agent_type"],
             status=TaskStatus(row["status"]),
@@ -437,6 +485,9 @@ class KBClient:
             result=_json(row["result"]) if row["result"] else None,
             argo_workflow_name=row["argo_workflow_name"] if "argo_workflow_name" in row.keys() else None,
         )
+        ok = True
+        self._observe_op("get_task", t0, ok)
+        return result
 
     async def list_tasks(
         self,
@@ -445,6 +496,8 @@ class KBClient:
         status: TaskStatus | None = None,
         limit: int = 20,
     ) -> list[TaskRecord]:
+        t0 = time.monotonic()
+        ok = False
         conditions = []
         values: list[Any] = []
         idx = 1
@@ -464,7 +517,7 @@ class KBClient:
             f"SELECT * FROM agent_tasks {where} ORDER BY created_at DESC LIMIT ${idx}",
             *values, limit,
         )
-        return [
+        results = [
             TaskRecord(
                 id=_str(r["id"]),
                 agent_type=r["agent_type"],
@@ -480,6 +533,9 @@ class KBClient:
             )
             for r in rows
         ]
+        ok = True
+        self._observe_op("list_tasks", t0, ok)
+        return results
 
     async def delete_task(self, task_id: str) -> None:
         """Delete a task by ID."""
