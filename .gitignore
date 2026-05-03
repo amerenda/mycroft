@@ -16,4 +16,9 @@ env/
 .coverage
 htmlcov/
 *.log
-workflows/testing
+
+# Workflow testing harness: keep README + tools/; ignore dated run outputs and other ad-hoc dirs
+workflows/testing/*
+!workflows/testing/README.md
+!workflows/testing/tools/
+!workflows/testing/tools/**

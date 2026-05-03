@@ -6,6 +6,7 @@ The filesystem (agents/, workflows/) is used only as a seed source on startup.
 
 from __future__ import annotations
 
+import json
 import logging
 from pathlib import Path
 
@@ -94,18 +95,46 @@ async def seed_from_filesystem(pool: asyncpg.Pool, agents_dir: Path, workflows_d
                 )
                 log.info("Seeded agent '%s' from filesystem (dir: %s)", agent_name, d.name)
 
-        # Workflows
+        # Workflows — YAML may be legacy plain text or structured { content, pipeline_json }
         if workflows_dir.exists():
             for f in sorted(workflows_dir.glob("*.yaml")):
                 exists = await conn.fetchval(
                     "SELECT 1 FROM workflow_definitions WHERE name = $1", f.stem
                 )
                 if not exists:
-                    await conn.execute(
-                        "INSERT INTO workflow_definitions (name, content) VALUES ($1, $2)",
-                        f.stem, f.read_text(),
-                    )
-                    log.info("Seeded workflow '%s' from filesystem", f.stem)
+                    raw = f.read_text()
+                    content = raw
+                    pipeline_obj: dict | None = None
+                    try:
+                        data = yaml.safe_load(raw)
+                    except yaml.YAMLError:
+                        data = None
+                    if isinstance(data, dict) and "pipeline_json" in data:
+                        pipeline_obj = data.get("pipeline_json") or {}
+                        content = data.get("content") if data.get("content") is not None else ""
+                    elif isinstance(data, dict) and "steps" in data:
+                        pipeline_obj = {
+                            "description": data.get("description") or "",
+                            "steps": data.get("steps") or [],
+                        }
+                        content = data.get("content") if data.get("content") is not None else ""
+                    if pipeline_obj is not None:
+                        await conn.execute(
+                            "INSERT INTO workflow_definitions (name, content, pipeline_json) "
+                            "VALUES ($1, $2, $3::jsonb)",
+                            f.stem, content, json.dumps(pipeline_obj),
+                        )
+                        log.info(
+                            "Seeded workflow '%s' from filesystem (%d steps)",
+                            f.stem,
+                            len(pipeline_obj.get("steps") or []),
+                        )
+                    else:
+                        await conn.execute(
+                            "INSERT INTO workflow_definitions (name, content) VALUES ($1, $2)",
+                            f.stem, content,
+                        )
+                        log.info("Seeded workflow '%s' from filesystem", f.stem)
 
 
 # ---------------------------------------------------------------------------

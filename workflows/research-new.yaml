@@ -1,0 +1,13 @@
+# Seed for empty DBs: testing harnesses expect workflow "research-new" with pipeline steps.
+# DB/UI wins after first edit; this is never overwritten once a row exists.
+content: |
+  # research-new
+
+  Reference multi-step research pipeline (web search → researcher → report writer).
+  Configure models and prompts in Agent Studio or via testing tool PUTs.
+pipeline_json:
+  description: Web gather, research synthesis, final report.
+  steps:
+    - agent: web-search
+    - agent: researcher
+    - agent: report-writer
