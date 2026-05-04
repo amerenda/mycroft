@@ -847,6 +847,14 @@ def _observe_task_terminal_metrics(task: Any | None, status: str, source: str) -
         task_queue_wait_seconds.labels(agent_type=agent_type).observe(queue_sec)
 
 
+def _task_id_from_results_scope(scope: str) -> str:
+    """UUID at end of /agents/<type>/results/<task_id> — canonical for NOTIFY routing."""
+    if "/results/" not in scope:
+        return ""
+    tail = scope.split("/results/", 1)[-1].strip("/")
+    return tail
+
+
 async def _on_agent_event(event: dict[str, Any]) -> None:
     """Handle PG NOTIFY from agent completion (reports, logging)."""
     scope = event.get("scope", "")
@@ -860,9 +868,13 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
 
         is_researcher = "researcher" in source
 
+        # Prefer task id from scope (always matches KB row); NOTIFY `source` is best-effort.
+        task_id_scope = _task_id_from_results_scope(scope)
+        task_id_src = source.split("/")[-1] if "/" in source else ""
+        tid = task_id_scope or task_id_src
+        task_hint = await task_manager.get_task(tid) if tid else None
+
         # Dynamic pipeline: route final step to report handler regardless of agent type
-        task_id_hint = source.split("/")[-1] if "/" in source else ""
-        task_hint = await task_manager.get_task(task_id_hint) if task_id_hint else None
         if task_hint and task_hint.config.get("is_last_step"):
             await _handle_researcher_result(record, source)
             return
@@ -870,6 +882,17 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
         # Researcher results → save locally, optionally post to Sazed
         if is_researcher:
             await _handle_researcher_result(record, source)
+            return
+
+        # Last-step routing missed (missing task row / metadata) — log for Reports-tab debugging
+        if "/agents/" in scope and "/results/" in scope:
+            log.debug(
+                "KB result notify not routed to reports: scope=%s tid=%s task_found=%s is_last=%s",
+                scope[:80],
+                (tid or "")[:8],
+                bool(task_hint),
+                bool(task_hint and task_hint.config.get("is_last_step")),
+            )
 
     # Notifications — log only
     elif scope.startswith("/notifications/alex/"):
@@ -913,7 +936,9 @@ async def _handle_researcher_result(record, source: str) -> None:
     from coordinator.reports import create_report
 
     content = record.content or ""
-    task_id = source.split("/")[-1] if "/" in source else ""
+    task_id = _task_id_from_results_scope(record.scope) or (
+        source.split("/")[-1] if "/" in source else ""
+    )
 
     # Skip non-final pipeline steps — only final step (or standalone) creates a report
     task = await task_manager.get_task(task_id) if task_id else None
