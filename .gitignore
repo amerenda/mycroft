@@ -22,3 +22,5 @@ workflows/testing/*
 !workflows/testing/README.md
 !workflows/testing/tools/
 !workflows/testing/tools/**
+workflows/testing/tools/**/__pycache__/
+workflows/testing/tools/**/__pycache__/**
