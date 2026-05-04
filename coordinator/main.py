@@ -29,6 +29,7 @@ from common.metrics import (
 from common.models import TaskConfig, TaskStatus
 from coordinator.argo_submitter import ArgoSubmitter
 from coordinator.db import CoordinatorDB
+from coordinator.report_metadata import extract_title_summary
 from coordinator.task_manager import TaskManager
 from coordinator.trigger_router import TriggerRouter
 
@@ -908,36 +909,6 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
             log.info("Agent notification: %s", record.content[:200])
 
 
-def _extract_title_summary(content: str) -> tuple[str, str]:
-    """Extract title and summary from markdown report content."""
-    title = "Research Report"
-    for line in content.split("\n"):
-        line = line.strip()
-        if line.startswith("# "):
-            title = line.removeprefix("# ").strip().strip("*").strip()
-            break
-        elif line and not line.startswith("#"):
-            title = line.strip("*").strip()[:80]
-            break
-
-    summary = ""
-    lines = content.split("\n")
-    for i, line in enumerate(lines):
-        if line.strip().lower().startswith("## summary"):
-            summary_lines = []
-            for sl in lines[i + 1:]:
-                if sl.startswith("## "):
-                    break
-                if sl.strip():
-                    summary_lines.append(sl.strip())
-            summary = " ".join(summary_lines)[:500]
-            break
-    if not summary:
-        summary = content[:300]
-
-    return title, summary
-
-
 async def _handle_researcher_result(record, source: str) -> None:
     """Save researcher result to local DB and optionally post to Sazed."""
     from coordinator.reports import create_report
@@ -959,7 +930,7 @@ async def _handle_researcher_result(record, source: str) -> None:
             log.debug("Skipping report for intermediate pipeline step task %s (phase=%s)", task_id[:8], phase)
             return
 
-    title, summary = _extract_title_summary(content)
+    title, summary = extract_title_summary(content)
 
     # Build report metadata
     workflow = (task.config.get("workflow", "") if task else "") or ""
