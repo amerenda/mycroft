@@ -884,7 +884,14 @@ async def _on_agent_event(event: dict[str, Any]) -> None:
             await _handle_researcher_result(record, source)
             return
 
-        # Last-step routing missed (missing task row / metadata) — log for Reports-tab debugging
+        # Report-writer KB path: always hand to the report handler. _handle_researcher_result
+        # drops intermediate pipeline-step rows (phase + is_last_step). This covers NOTIFY
+        # arriving when get_task fails briefly, or when is_last_step was not persisted on the row.
+        if "/agents/report-writer/results/" in scope and tid:
+            await _handle_researcher_result(record, source or f"report-writer/{tid}")
+            return
+
+        # Other agent results — no local report row
         if "/agents/" in scope and "/results/" in scope:
             log.debug(
                 "KB result notify not routed to reports: scope=%s tid=%s task_found=%s is_last=%s",
