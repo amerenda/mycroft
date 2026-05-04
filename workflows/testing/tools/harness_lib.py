@@ -122,14 +122,20 @@ def wait_run_id(
 ) -> str | None:
     t0 = time.time()
     while time.time() - t0 < run_id_wait_sec:
-        td = http_json(
-            "GET",
-            mycroft_base,
-            f"/api/tasks/{first_task_id}",
-            None,
-            timeout=60.0,
-            bearer_token=bearer_token,
-        )
+        try:
+            td = http_json(
+                "GET",
+                mycroft_base,
+                f"/api/tasks/{first_task_id}",
+                None,
+                timeout=60.0,
+                bearer_token=bearer_token,
+            )
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 502, 503, 504):
+                time.sleep(min(30.0, poll_sec * 5))
+                continue
+            raise
         if isinstance(td, dict):
             rid = (td.get("config") or {}).get("run_id")
             if rid:
@@ -153,7 +159,13 @@ def wait_until_agent_terminal(
     t0 = time.time()
     path = f"/api/workflows/{workflow_name}/runs?limit={runs_limit}"
     while time.time() - t0 < per_run_timeout_sec:
-        rr = http_json("GET", mycroft_base, path, None, timeout=120.0, bearer_token=bearer_token)
+        try:
+            rr = http_json("GET", mycroft_base, path, None, timeout=120.0, bearer_token=bearer_token)
+        except urllib.error.HTTPError as e:
+            if e.code in (429, 502, 503, 504):
+                time.sleep(15)
+                continue
+            raise
         if not isinstance(rr, list):
             time.sleep(15)
             continue

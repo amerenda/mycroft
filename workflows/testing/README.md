@@ -52,7 +52,11 @@ python workflows/testing/tools/golden_model_matrix.py
 python workflows/testing/tools/golden_model_matrix.py --dry-scan   # catalog only
 ```
 
-Optional: `--workflow-dir` (default `research-new`), `--source-workflow` (default `research-new`), `--terminal-agent` (default `report-writer`), `--max-models`, `--max-prompts`, `--stagger-sec`, and env `GOLDEN_MATRIX_TIMEOUT` (seconds per pipeline).
+Optional: `--workflow-dir` (default `research-new`), `--source-workflow` (default `research-new`), `--terminal-agent` (default `report-writer`), `--max-models`, `--max-prompts`, `--stagger-sec`, `--max-running N` (concurrent pipelines via asyncio; default `1` = sequential; when `N>1`, `--stagger-sec` is ignored for faster / load-test runs), `--instruction "…"` (override the default QUIC task text; use a separate `--workflow-dir` if you change the instruction on the same calendar day so `model-scan.json` does not collide), `--report-writer-model M` (keep web-search + researcher on the matrix model but pin **report-writer** to `M` — avoids coder-tuned matrix models emitting fenced JSON / tool-call shaped text as the final report), env `GOLDEN_MATRIX_REPORT_WRITER_MODEL` (same as the flag), and env `GOLDEN_MATRIX_TIMEOUT` (seconds per pipeline).
+
+## Report-writer sweep (same prompt, vary final model)
+
+`tools/report_writer_sweep.py` runs `golden_model_matrix.py` once per **`SWEEP_REPORT_WRITERS`** (comma list) with a fixed **`SWEEP_MATRIX_MODEL`** for web+researcher, **`--max-prompts 1`**, then picks the best `summary_preview` via a small heuristic (penalizes fenced JSON / tool-call shapes; rewards markdown headings and URLs). It then runs a **confirmation** pass: same matrix model, **four** golden researcher prompts, **`--max-running 2`**, with the winning report-writer.
 
 ## Per-agent model compare (one query, five API runs)
 
@@ -64,4 +68,4 @@ export MYCROFT_URL=http://127.0.0.1:<coordinator-port-forward>
 python workflows/testing/tools/run_per_agent_model_compare.py
 ```
 
-Same optional flags as the golden matrix: `--workflow-dir`, `--source-workflow`, `--terminal-agent`.
+Same optional flags as the golden matrix: `--workflow-dir`, `--source-workflow`, `--terminal-agent`, `--max-running` (e.g. `5` to launch all compare rows at once).

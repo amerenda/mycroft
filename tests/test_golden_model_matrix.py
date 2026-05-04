@@ -80,6 +80,27 @@ def test_build_pipeline_sets_model_everywhere_and_researcher_prompt_override():
     assert "golden_matrix model=llama3.1:8b prompt=8261cadd26" in pj["description"]
 
 
+def test_build_pipeline_pins_report_writer_when_requested():
+    base = {
+        "pipeline_json": {
+            "description": "seed",
+            "steps": [
+                {"agent": "web-search"},
+                {"agent": "researcher"},
+                {"agent": "report-writer"},
+            ],
+        }
+    }
+    pj = gm.build_pipeline(
+        base, "qwen2.5-coder:7b", "8261cadd26", report_writer_model="mistral-small3.2:24b"
+    )
+    st = pj["steps"]
+    assert st[0]["model"] == "qwen2.5-coder:7b"
+    assert st[1]["model"] == "qwen2.5-coder:7b" and "prompt_override" in st[1]
+    assert st[2]["model"] == "mistral-small3.2:24b" and "prompt_override" not in st[2]
+    assert "report_writer=mistral-small3.2:24b" in pj["description"]
+
+
 def test_golden_prompt_catalog_matches_research_findings():
     """Top-scoring QUIC variants from 2026-05-01 sweep must remain addressable."""
     assert "8261cadd26" in gm.GOLDEN_PROMPTS

@@ -14,10 +14,12 @@ Environment:
 
 Example:
   MYCROFT_URL=http://127.0.0.1:18088 python workflows/testing/tools/run_per_agent_model_compare.py
+  MYCROFT_URL=... python .../run_per_agent_model_compare.py --max-running 5   # all five in parallel
 """
 from __future__ import annotations
 
 import argparse
+import asyncio
 import importlib.util
 import json
 import os
@@ -119,6 +121,165 @@ def wf_name(run_id: int) -> str:
     return f"rn-cmp{run_id}"
 
 
+def _compare_row_sync(
+    row: dict[str, Any],
+    base_wf: dict[str, Any],
+    catalog: set[str],
+    terminal_agent: str,
+    dry_run: bool,
+    *,
+    put_post_delay_sec: float,
+    stagger_after_sec: float,
+) -> dict[str, Any]:
+    wn = wf_name(row["id"])
+    models = (row["web_search"], row["researcher"], row["report_writer"])
+    missing = [m for m in models if catalog and m not in catalog]
+    if missing:
+        print(f"WARN {wn}: model(s) not in catalog {missing} — continuing anyway", flush=True)
+
+    pj = gm.build_pipeline_per_agent(
+        base_wf,
+        web_search=row["web_search"],
+        researcher=row["researcher"],
+        report_writer=row["report_writer"],
+        prompt_hash=row["researcher_prompt_hash"],
+        description_tag=row.get("note") or "",
+    )
+    try:
+        hl.put_workflow(
+            MYCROFT_URL,
+            wn,
+            content=base_wf.get("content") or "",
+            pipeline_json=pj,
+            bearer_token=MYCROFT_API_KEY,
+        )
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        if stagger_after_sec > 0:
+            time.sleep(stagger_after_sec)
+        return {
+            "workflow": wn,
+            "id": row["id"],
+            "status": "put_failed",
+            "detail": f"{e.code} {body[:400]}",
+        }
+
+    rec: dict[str, Any] = {
+        "workflow": wn,
+        "id": row["id"],
+        "web_search": row["web_search"],
+        "researcher": row["researcher"],
+        "report_writer": row["report_writer"],
+        "researcher_prompt_hash": row["researcher_prompt_hash"],
+        "note": row.get("note"),
+        "query": gm.COMMON_QUERY,
+    }
+    if dry_run:
+        rec["status"] = "dry_run_put_only"
+        if stagger_after_sec > 0:
+            time.sleep(stagger_after_sec)
+        return rec
+
+    if put_post_delay_sec > 0:
+        time.sleep(put_post_delay_sec)
+
+    try:
+        task = hl.post_task_workflow(MYCROFT_URL, wn, gm.COMMON_QUERY, bearer_token=MYCROFT_API_KEY)
+    except urllib.error.HTTPError as e:
+        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+        rec["status"] = "post_failed"
+        rec["detail"] = f"{e.code} {body[:400]}"
+        if stagger_after_sec > 0:
+            time.sleep(stagger_after_sec)
+        return rec
+
+    tid = (task or {}).get("task_id")
+    rid = (
+        hl.wait_run_id(
+            MYCROFT_URL,
+            tid,
+            bearer_token=MYCROFT_API_KEY,
+            run_id_wait_sec=float(RUN_ID_WAIT),
+        )
+        if tid
+        else None
+    )
+    rec["first_task_id"] = tid
+    rec["run_id"] = rid
+    if not rid:
+        rec["status"] = "no_run_id"
+    else:
+        rw = hl.wait_until_agent_terminal(
+            MYCROFT_URL,
+            wn,
+            rid,
+            terminal_agent,
+            bearer_token=MYCROFT_API_KEY,
+            per_run_timeout_sec=float(PER_RUN_TIMEOUT),
+        )
+        if rw is None:
+            rec["status"] = "timeout"
+            rec["final_task_id"] = None
+        else:
+            rec["final_task_id"] = rw["id"]
+            rec["status"] = rw["status"]
+            td = hl.http_json(
+                "GET",
+                MYCROFT_URL,
+                f"/api/tasks/{rw['id']}",
+                None,
+                timeout=60.0,
+                bearer_token=MYCROFT_API_KEY,
+            )
+            res = (td.get("result") or {}) if isinstance(td, dict) else {}
+            summ = (res.get("summary") or "") if isinstance(res, dict) else ""
+            rec["summary_chars"] = len(summ)
+            rec["summary_preview"] = summ[:700]
+            rec["error"] = res.get("error")
+
+    print(f"{wn} -> {rec.get('status')}", flush=True)
+    if stagger_after_sec > 0:
+        time.sleep(stagger_after_sec)
+    return rec
+
+
+async def _run_compare_async(
+    base_wf: dict[str, Any],
+    catalog: set[str],
+    terminal_agent: str,
+    dry_run: bool,
+    max_running: int,
+    stagger_sec: float,
+) -> list[dict[str, Any]]:
+    sequential = max_running <= 1
+    put_delay = 2.0 if sequential and not dry_run else 0.0
+    stagger_after = stagger_sec if sequential else 0.0
+    sem = asyncio.Semaphore(max(1, max_running))
+
+    async def one(row: dict[str, Any]) -> dict[str, Any]:
+        async with sem:
+            try:
+                return await asyncio.to_thread(
+                    _compare_row_sync,
+                    row,
+                    base_wf,
+                    catalog,
+                    terminal_agent,
+                    dry_run,
+                    put_post_delay_sec=put_delay,
+                    stagger_after_sec=stagger_after,
+                )
+            except Exception as e:
+                return {
+                    "workflow": wf_name(row["id"]),
+                    "id": row["id"],
+                    "status": "exception",
+                    "detail": repr(e),
+                }
+
+    return await asyncio.gather(*[one(row) for row in COMPARE_RUNS])
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workflow-dir", default="research-new", help="Subfolder under workflows/testing/")
@@ -130,7 +291,17 @@ def main() -> int:
     )
     ap.add_argument("--dry-run", action="store_true", help="PUT workflows only, no POST /api/tasks")
     ap.add_argument("--stagger-sec", type=float, default=20.0)
+    ap.add_argument(
+        "--max-running",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Max concurrent compare runs (default 1). >1 uses async; --stagger-sec ignored.",
+    )
     args = ap.parse_args()
+    if args.max_running < 1:
+        print("ERROR: --max-running must be >= 1", file=sys.stderr)
+        return 1
 
     today = str(date.today())
     out_dir = Path(hl.testing_output_dir(str(Path(__file__).resolve().parent), args.workflow_dir, today))
@@ -157,109 +328,17 @@ def main() -> int:
         print("ERROR: GET workflow returned unexpected body", file=sys.stderr)
         return 1
 
-    runs: list[dict[str, Any]] = []
-    for row in COMPARE_RUNS:
-        wn = wf_name(row["id"])
-        models = (row["web_search"], row["researcher"], row["report_writer"])
-        missing = [m for m in models if catalog and m not in catalog]
-        if missing:
-            print(f"WARN {wn}: model(s) not in catalog {missing} — continuing anyway", flush=True)
-
-        pj = gm.build_pipeline_per_agent(
+    print(f"--max-running={args.max_running}", flush=True)
+    runs = asyncio.run(
+        _run_compare_async(
             base_wf,
-            web_search=row["web_search"],
-            researcher=row["researcher"],
-            report_writer=row["report_writer"],
-            prompt_hash=row["researcher_prompt_hash"],
-            description_tag=row.get("note") or "",
+            catalog,
+            args.terminal_agent,
+            args.dry_run,
+            args.max_running,
+            args.stagger_sec,
         )
-        try:
-            hl.put_workflow(
-                MYCROFT_URL,
-                wn,
-                content=base_wf.get("content") or "",
-                pipeline_json=pj,
-                bearer_token=MYCROFT_API_KEY,
-            )
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-            runs.append({"workflow": wn, "status": "put_failed", "detail": f"{e.code} {body[:400]}"})
-            continue
-
-        rec: dict[str, Any] = {
-            "workflow": wn,
-            "id": row["id"],
-            "web_search": row["web_search"],
-            "researcher": row["researcher"],
-            "report_writer": row["report_writer"],
-            "researcher_prompt_hash": row["researcher_prompt_hash"],
-            "note": row.get("note"),
-            "query": gm.COMMON_QUERY,
-        }
-        if args.dry_run:
-            rec["status"] = "dry_run_put_only"
-            runs.append(rec)
-            continue
-
-        time.sleep(2)
-        try:
-            task = hl.post_task_workflow(
-                MYCROFT_URL, wn, gm.COMMON_QUERY, bearer_token=MYCROFT_API_KEY
-            )
-        except urllib.error.HTTPError as e:
-            body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-            rec["status"] = "post_failed"
-            rec["detail"] = f"{e.code} {body[:400]}"
-            runs.append(rec)
-            time.sleep(args.stagger_sec)
-            continue
-
-        tid = (task or {}).get("task_id")
-        rid = (
-            hl.wait_run_id(
-                MYCROFT_URL,
-                tid,
-                bearer_token=MYCROFT_API_KEY,
-                run_id_wait_sec=float(RUN_ID_WAIT),
-            )
-            if tid
-            else None
-        )
-        rec["first_task_id"] = tid
-        rec["run_id"] = rid
-        if not rid:
-            rec["status"] = "no_run_id"
-        else:
-            rw = hl.wait_until_agent_terminal(
-                MYCROFT_URL,
-                wn,
-                rid,
-                args.terminal_agent,
-                bearer_token=MYCROFT_API_KEY,
-                per_run_timeout_sec=float(PER_RUN_TIMEOUT),
-            )
-            if rw is None:
-                rec["status"] = "timeout"
-                rec["final_task_id"] = None
-            else:
-                rec["final_task_id"] = rw["id"]
-                rec["status"] = rw["status"]
-                td = hl.http_json(
-                    "GET",
-                    MYCROFT_URL,
-                    f"/api/tasks/{rw['id']}",
-                    None,
-                    timeout=60.0,
-                    bearer_token=MYCROFT_API_KEY,
-                )
-                res = (td.get("result") or {}) if isinstance(td, dict) else {}
-                summ = (res.get("summary") or "") if isinstance(res, dict) else ""
-                rec["summary_chars"] = len(summ)
-                rec["summary_preview"] = summ[:700]
-                rec["error"] = res.get("error")
-        runs.append(rec)
-        print(f"{wn} -> {rec.get('status')}", flush=True)
-        time.sleep(args.stagger_sec)
+    )
 
     raw_path = out_dir / "per-agent-model-compare-raw.json"
     with open(raw_path, "w") as f:
@@ -270,6 +349,7 @@ def main() -> int:
                 "common_query": gm.COMMON_QUERY,
                 "source_workflow": args.source_workflow,
                 "terminal_agent": args.terminal_agent,
+                "max_running": args.max_running,
                 "runs": runs,
             },
             f,
