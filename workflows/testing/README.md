@@ -44,6 +44,8 @@ Use one section per prompt hash and include full prompt text used for that varia
 
 `tools/golden_model_matrix.py` calls llm-manager `GET /api/models` (no auth), writes `<workflow-dir>/<date>/model-scan.json`, picks a few non-baseline chat models that report `fits`, clones the source workflow per `(model, prompt_hash)` with the same model on every pipeline step and `prompt_override` on the researcher step, submits the standard QUIC query from prior runs, and writes `golden-model-matrix-raw.json` plus `golden-model-matrix-results.md`.
 
+**Model per agent:** set both `--web-search-model` and `--researcher-model` and a report-writer model via `--report-writer-model` (or `GOLDEN_MATRIX_REPORT_WRITER_MODEL`). That runs one fixed triple × each selected golden prompt (no matrix of new models from llm-manager; `--matrix-model` is not allowed). Raw JSON includes `matrix_mode: "per_agent"` and `per_agent_models`.
+
 ```bash
 export LLM_MANAGER_URL=https://<llm-manager-host>
 export MYCROFT_URL=http://127.0.0.1:<coordinator-port-forward>

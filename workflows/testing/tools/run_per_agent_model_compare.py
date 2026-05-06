@@ -39,8 +39,6 @@ MYCROFT_URL = os.environ.get("MYCROFT_URL", "http://127.0.0.1:8080").rstrip("/")
 LLM_MANAGER_URL = os.environ.get("LLM_MANAGER_URL", "").rstrip("/")
 MYCROFT_API_KEY = os.environ.get("MYCROFT_API_KEY", "").strip()
 SOURCE_WORKFLOW = "research-new"
-RUN_ID_WAIT = 180
-PER_RUN_TIMEOUT = int(os.environ.get("GOLDEN_MATRIX_TIMEOUT", "7200"))
 
 
 def _load_golden():
@@ -145,25 +143,6 @@ def _compare_row_sync(
         prompt_hash=row["researcher_prompt_hash"],
         description_tag=row.get("note") or "",
     )
-    try:
-        hl.put_workflow(
-            MYCROFT_URL,
-            wn,
-            content=base_wf.get("content") or "",
-            pipeline_json=pj,
-            bearer_token=MYCROFT_API_KEY,
-        )
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        if stagger_after_sec > 0:
-            time.sleep(stagger_after_sec)
-        return {
-            "workflow": wn,
-            "id": row["id"],
-            "status": "put_failed",
-            "detail": f"{e.code} {body[:400]}",
-        }
-
     rec: dict[str, Any] = {
         "workflow": wn,
         "id": row["id"],
@@ -175,71 +154,43 @@ def _compare_row_sync(
         "query": gm.COMMON_QUERY,
     }
     if dry_run:
+        try:
+            hl.put_workflow(
+                MYCROFT_URL,
+                wn,
+                content=base_wf.get("content") or "",
+                pipeline_json=pj,
+                bearer_token=MYCROFT_API_KEY,
+            )
+        except urllib.error.HTTPError as e:
+            body = e.read().decode("utf-8", errors="replace") if e.fp else ""
+            if stagger_after_sec > 0:
+                time.sleep(stagger_after_sec)
+            return {
+                **rec,
+                "status": "put_failed",
+                "detail": f"{e.code} {body[:400]}",
+            }
         rec["status"] = "dry_run_put_only"
         if stagger_after_sec > 0:
             time.sleep(stagger_after_sec)
         return rec
 
-    if put_post_delay_sec > 0:
-        time.sleep(put_post_delay_sec)
-
-    try:
-        task = hl.post_task_workflow(MYCROFT_URL, wn, gm.COMMON_QUERY, bearer_token=MYCROFT_API_KEY)
-    except urllib.error.HTTPError as e:
-        body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        rec["status"] = "post_failed"
-        rec["detail"] = f"{e.code} {body[:400]}"
-        if stagger_after_sec > 0:
-            time.sleep(stagger_after_sec)
-        return rec
-
-    tid = (task or {}).get("task_id")
-    rid = (
-        hl.wait_run_id(
-            MYCROFT_URL,
-            tid,
-            bearer_token=MYCROFT_API_KEY,
-            run_id_wait_sec=float(RUN_ID_WAIT),
-        )
-        if tid
-        else None
+    tail = gm.execute_workflow_run_sync(
+        base_wf,
+        wn,
+        pj,
+        terminal_agent,
+        gm.COMMON_QUERY,
+        put_post_delay_sec=put_post_delay_sec,
+        stagger_after_sec=stagger_after_sec,
     )
-    rec["first_task_id"] = tid
-    rec["run_id"] = rid
-    if not rid:
-        rec["status"] = "no_run_id"
-    else:
-        rw = hl.wait_until_agent_terminal(
-            MYCROFT_URL,
-            wn,
-            rid,
-            terminal_agent,
-            bearer_token=MYCROFT_API_KEY,
-            per_run_timeout_sec=float(PER_RUN_TIMEOUT),
-        )
-        if rw is None:
-            rec["status"] = "timeout"
-            rec["final_task_id"] = None
-        else:
-            rec["final_task_id"] = rw["id"]
-            rec["status"] = rw["status"]
-            td = hl.http_json(
-                "GET",
-                MYCROFT_URL,
-                f"/api/tasks/{rw['id']}",
-                None,
-                timeout=60.0,
-                bearer_token=MYCROFT_API_KEY,
-            )
-            res = (td.get("result") or {}) if isinstance(td, dict) else {}
-            summ = (res.get("summary") or "") if isinstance(res, dict) else ""
-            rec["summary_chars"] = len(summ)
-            rec["summary_preview"] = summ[:700]
-            rec["error"] = res.get("error")
-
-    print(f"{wn} -> {rec.get('status')}", flush=True)
-    if stagger_after_sec > 0:
-        time.sleep(stagger_after_sec)
+    for k in ("status", "detail", "first_task_id", "run_id", "final_task_id", "summary_preview", "error"):
+        if k in tail:
+            rec[k] = tail[k]
+    sp = str(rec.get("summary_preview") or "")
+    rec["summary_preview"] = sp[:700]
+    rec["summary_chars"] = len(sp)
     return rec
 
 

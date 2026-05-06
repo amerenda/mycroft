@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """
 Scan llm-manager GET /api/models (no auth) and run research-new E2E variants
-with golden researcher prompt_override + one model across all pipeline steps.
+with golden researcher prompt_override: either one model on every step, or (when
+--web-search-model and --researcher-model are set) a distinct model per agent.
 
 Environment:
   LLM_MANAGER_URL   Base URL for llm-manager (default: http://127.0.0.1:8081)
@@ -28,11 +29,15 @@ Options:
   --report-writer-model M   Use model M only on the report-writer step (web-search + researcher still use the matrix model).
                     Avoids coder-tuned matrix models emitting ```json``` tool junk as the final report. Env: GOLDEN_MATRIX_REPORT_WRITER_MODEL.
   --matrix-model M          Pin web-search + researcher to M (skip auto model pick). Use with --max-prompts for prompt sweeps at fixed research capacity.
+  --web-search-model W   With --researcher-model and --report-writer-model: per-agent mode (one triple × prompts).
+  --researcher-model R   Required with web + report for per-agent; incompatible with --matrix-model.
+  --report-writer-model M   Unified mode: optional pin for report-writer only. Per-agent mode: model on the report-writer step (required with web + researcher).
 """
 from __future__ import annotations
 
 import argparse
 import asyncio
+import hashlib
 import json
 import os
 import sys
@@ -130,6 +135,12 @@ def wf_slug(model: str, h: str) -> str:
     return hl.wf_slug_prefix("rn-g", model, h)
 
 
+def wf_slug_per_agent(web_search: str, researcher: str, report_writer: str, prompt_hash: str) -> str:
+    """Stable short workflow name for a per-agent triple + prompt (coordinator-safe, bounded)."""
+    sig = hashlib.sha256(f"{web_search}|{researcher}|{report_writer}".encode()).hexdigest()[:6]
+    return f"rn-pa{prompt_hash[:6]}-{sig}"
+
+
 def build_pipeline(
     base_wf: dict[str, Any],
     model: str,
@@ -200,54 +211,53 @@ def build_pipeline_per_agent(
     return pj
 
 
-def _matrix_combo_sync(
+def _execute_clone_and_task_sync(
     base_wf: dict[str, Any],
-    model: str,
-    ph: str,
+    workflow_name: str,
+    pipeline_json: dict[str, Any],
     terminal_agent: str,
     instruction: str,
-    report_writer_model: str | None,
     *,
     put_post_delay_sec: float,
     stagger_after_sec: float,
 ) -> dict[str, Any]:
-    """One full matrix cell: PUT clone, POST task, poll to terminal. Runs in a worker thread when async."""
-    name = wf_slug(model, ph)
-    pj = build_pipeline(base_wf, model, ph, report_writer_model=report_writer_model)
+    """PUT workflow clone, POST task, poll to terminal agent. Returns run outcome fields (no matrix metadata)."""
     try:
         hl.put_workflow(
             MYCROFT_URL,
-            name,
+            workflow_name,
             content=base_wf.get("content") or "",
-            pipeline_json=pj,
+            pipeline_json=pipeline_json,
             bearer_token=MYCROFT_API_KEY,
         )
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace") if e.fp else ""
-        print(f"PUT workflow {name} failed: {e.code} {body[:500]}", file=sys.stderr, flush=True)
+        print(f"PUT workflow {workflow_name} failed: {e.code} {body[:500]}", file=sys.stderr, flush=True)
         if stagger_after_sec > 0:
             time.sleep(stagger_after_sec)
         return {
-            "workflow": name,
-            "model": model,
-            "prompt_hash": ph,
+            "workflow": workflow_name,
             "status": "put_failed",
             "detail": str(e),
+            "first_task_id": None,
+            "run_id": None,
+            "final_task_id": None,
         }
 
     if put_post_delay_sec > 0:
         time.sleep(put_post_delay_sec)
 
     try:
-        task = hl.post_task_workflow(MYCROFT_URL, name, instruction, bearer_token=MYCROFT_API_KEY)
+        task = hl.post_task_workflow(MYCROFT_URL, workflow_name, instruction, bearer_token=MYCROFT_API_KEY)
     except urllib.error.HTTPError as e:
         body = e.read().decode("utf-8", errors="replace") if e.fp else ""
         rec = {
-            "workflow": name,
-            "model": model,
-            "prompt_hash": ph,
+            "workflow": workflow_name,
             "status": "post_failed",
             "detail": f"{e.code} {body[:400]}",
+            "first_task_id": None,
+            "run_id": None,
+            "final_task_id": None,
         }
         if stagger_after_sec > 0:
             time.sleep(stagger_after_sec)
@@ -265,22 +275,18 @@ def _matrix_combo_sync(
         else None
     )
     rec: dict[str, Any] = {
-        "workflow": name,
-        "model": model,
-        "prompt_hash": ph,
+        "workflow": workflow_name,
         "query": instruction,
         "first_task_id": tid,
         "run_id": rid,
     }
-    if report_writer_model:
-        rec["report_writer_model"] = report_writer_model
     if not rid:
         rec["status"] = "no_run_id"
         rec["final_task_id"] = None
     else:
         rw = hl.wait_until_agent_terminal(
             MYCROFT_URL,
-            name,
+            workflow_name,
             rid,
             terminal_agent,
             bearer_token=MYCROFT_API_KEY,
@@ -301,22 +307,141 @@ def _matrix_combo_sync(
                 bearer_token=MYCROFT_API_KEY,
             )
             res = (td.get("result") or {}) if isinstance(td, dict) else {}
-            rec["summary_preview"] = (res.get("summary") or "")[:600]
+            rec["summary_preview"] = (res.get("summary") or "")[:800]
             rec["error"] = res.get("error")
 
-    print(f"{name} -> {rec.get('status')}", flush=True)
+    print(f"{workflow_name} -> {rec.get('status')}", flush=True)
     if stagger_after_sec > 0:
         time.sleep(stagger_after_sec)
     return rec
 
 
-async def _run_matrix_async(
+def execute_workflow_run_sync(
     base_wf: dict[str, Any],
-    chosen: list[str],
-    prompt_hashes: list[str],
+    workflow_name: str,
+    pipeline_json: dict[str, Any],
     terminal_agent: str,
     instruction: str,
-    report_writer_model: str | None,
+    *,
+    put_post_delay_sec: float,
+    stagger_after_sec: float,
+) -> dict[str, Any]:
+    """PUT + POST + poll; shared by per-agent compare script and internal matrix runs."""
+    return _execute_clone_and_task_sync(
+        base_wf,
+        workflow_name,
+        pipeline_json,
+        terminal_agent,
+        instruction,
+        put_post_delay_sec=put_post_delay_sec,
+        stagger_after_sec=stagger_after_sec,
+    )
+
+
+def _matrix_combo_sync(
+    base_wf: dict[str, Any],
+    terminal_agent: str,
+    instruction: str,
+    *,
+    prompt_hash: str,
+    unified_model: str | None,
+    report_writer_pin: str | None,
+    per_agent: tuple[str, str, str] | None,
+    description_tag: str,
+    put_post_delay_sec: float,
+    stagger_after_sec: float,
+) -> dict[str, Any]:
+    """One matrix cell: unified (one model + optional RW pin) or per-agent triple. Runs in a worker thread when async."""
+    if (unified_model is None) == (per_agent is None):
+        return {
+            "workflow": "-",
+            "status": "invalid_job",
+            "detail": "internal: set exactly one of unified_model or per_agent",
+            "prompt_hash": prompt_hash,
+        }
+
+    if per_agent is not None:
+        w, r, rw = per_agent
+        name = wf_slug_per_agent(w, r, rw, prompt_hash)
+        pj = build_pipeline_per_agent(
+            base_wf,
+            web_search=w,
+            researcher=r,
+            report_writer=rw,
+            prompt_hash=prompt_hash,
+            description_tag=description_tag,
+        )
+        tail = _execute_clone_and_task_sync(
+            base_wf,
+            name,
+            pj,
+            terminal_agent,
+            instruction,
+            put_post_delay_sec=put_post_delay_sec,
+            stagger_after_sec=stagger_after_sec,
+        )
+        rec: dict[str, Any] = {
+            "mode": "per_agent",
+            "workflow": tail.get("workflow", name),
+            "web_search": w,
+            "researcher": r,
+            "report_writer": rw,
+            "prompt_hash": prompt_hash,
+            "query": instruction,
+            "first_task_id": tail.get("first_task_id"),
+            "run_id": tail.get("run_id"),
+            "status": tail.get("status"),
+            "final_task_id": tail.get("final_task_id"),
+        }
+        if "summary_preview" in tail:
+            rec["summary_preview"] = tail["summary_preview"]
+        if "error" in tail:
+            rec["error"] = tail.get("error")
+        if "detail" in tail:
+            rec["detail"] = tail["detail"]
+        return rec
+
+    assert unified_model is not None
+    model = unified_model
+    name = wf_slug(model, prompt_hash)
+    pj = build_pipeline(base_wf, model, prompt_hash, report_writer_model=report_writer_pin)
+    tail = _execute_clone_and_task_sync(
+        base_wf,
+        name,
+        pj,
+        terminal_agent,
+        instruction,
+        put_post_delay_sec=put_post_delay_sec,
+        stagger_after_sec=stagger_after_sec,
+    )
+    rec = {
+        "mode": "unified",
+        "workflow": tail.get("workflow", name),
+        "model": model,
+        "prompt_hash": prompt_hash,
+        "query": instruction,
+        "first_task_id": tail.get("first_task_id"),
+        "run_id": tail.get("run_id"),
+        "status": tail.get("status"),
+        "final_task_id": tail.get("final_task_id"),
+    }
+    if report_writer_pin:
+        rec["report_writer_model"] = report_writer_pin
+    if "summary_preview" in tail:
+        rec["summary_preview"] = tail["summary_preview"]
+    if "error" in tail:
+        rec["error"] = tail.get("error")
+    if "detail" in tail:
+        rec["detail"] = tail["detail"]
+    return rec
+
+
+async def _run_matrix_async(
+    base_wf: dict[str, Any],
+    jobs: list[dict[str, Any]],
+    terminal_agent: str,
+    instruction: str,
+    report_writer_pin: str | None,
     max_running: int,
     stagger_sec: float,
 ) -> list[dict[str, Any]]:
@@ -324,32 +449,61 @@ async def _run_matrix_async(
     put_delay = 2.0 if sequential else 0.0
     stagger_after = stagger_sec if sequential else 0.0
     sem = asyncio.Semaphore(max(1, max_running))
-    jobs = [(m, ph) for m in chosen for ph in prompt_hashes]
 
-    async def one(model: str, ph: str) -> dict[str, Any]:
+    async def one(job: dict[str, Any]) -> dict[str, Any]:
         async with sem:
             try:
+                if job["k"] == "unified":
+                    return await asyncio.to_thread(
+                        _matrix_combo_sync,
+                        base_wf,
+                        terminal_agent,
+                        instruction,
+                        prompt_hash=job["ph"],
+                        unified_model=job["model"],
+                        report_writer_pin=report_writer_pin,
+                        per_agent=None,
+                        description_tag="",
+                        put_post_delay_sec=put_delay,
+                        stagger_after_sec=stagger_after,
+                    )
                 return await asyncio.to_thread(
                     _matrix_combo_sync,
                     base_wf,
-                    model,
-                    ph,
                     terminal_agent,
                     instruction,
-                    report_writer_model,
+                    prompt_hash=job["ph"],
+                    unified_model=None,
+                    report_writer_pin=None,
+                    per_agent=(job["web"], job["researcher"], job["report_writer"]),
+                    description_tag=str(job.get("description_tag") or ""),
                     put_post_delay_sec=put_delay,
                     stagger_after_sec=stagger_after,
                 )
             except Exception as e:
+                wf = "-"
+                if job["k"] == "unified":
+                    wf = wf_slug(job["model"], job["ph"])
+                elif job["k"] == "per_agent":
+                    wf = wf_slug_per_agent(job["web"], job["researcher"], job["report_writer"], job["ph"])
                 return {
-                    "workflow": wf_slug(model, ph),
-                    "model": model,
-                    "prompt_hash": ph,
+                    "workflow": wf,
                     "status": "exception",
                     "detail": repr(e),
+                    **(
+                        {"model": job["model"], "prompt_hash": job["ph"], "mode": "unified"}
+                        if job["k"] == "unified"
+                        else {
+                            "web_search": job["web"],
+                            "researcher": job["researcher"],
+                            "report_writer": job["report_writer"],
+                            "prompt_hash": job["ph"],
+                            "mode": "per_agent",
+                        }
+                    ),
                 }
 
-    return await asyncio.gather(*[one(m, ph) for m, ph in jobs])
+    return await asyncio.gather(*[one(j) for j in jobs])
 
 
 def main() -> int:
@@ -390,9 +544,33 @@ def main() -> int:
         metavar="M",
         help="Use M for web-search and researcher (single row in the matrix). Skips auto model selection.",
     )
+    ap.add_argument("--web-search-model", default=None, metavar="W", help="Per-agent: web-search step model")
+    ap.add_argument("--researcher-model", default=None, metavar="R", help="Per-agent: researcher step model")
     args = ap.parse_args()
     if args.max_running < 1:
         print("ERROR: --max-running must be >= 1", file=sys.stderr)
+        return 1
+
+    cli_rw = (args.report_writer_model or "").strip()
+    env_rw = (os.environ.get("GOLDEN_MATRIX_REPORT_WRITER_MODEL") or "").strip()
+    rw_pin_or_report = cli_rw or env_rw or None
+    web = (args.web_search_model or "").strip()
+    res_m = (args.researcher_model or "").strip()
+    if bool(web) ^ bool(res_m):
+        print(
+            "ERROR: set both --web-search-model and --researcher-model for per-agent mode, or neither for unified.",
+            file=sys.stderr,
+        )
+        return 1
+    per_agent_mode = bool(web and res_m)
+    if per_agent_mode and args.matrix_model:
+        print("ERROR: --matrix-model cannot be combined with per-agent (--web-search-model + --researcher-model).", file=sys.stderr)
+        return 1
+    if per_agent_mode and not rw_pin_or_report:
+        print(
+            "ERROR: per-agent mode requires a report-writer model (--report-writer-model or GOLDEN_MATRIX_REPORT_WRITER_MODEL).",
+            file=sys.stderr,
+        )
         return 1
 
     today = str(date.today())
@@ -421,7 +599,13 @@ def main() -> int:
         )
     print(f"Wrote {scan_path} ({len(models)} entries)", flush=True)
 
-    if args.matrix_model:
+    if per_agent_mode:
+        chosen: list[str] = []
+        print(
+            f"Per-agent mode: web={web!r} researcher={res_m!r} report-writer={rw_pin_or_report!r} (ignores --max-models / llm-manager picks)",
+            flush=True,
+        )
+    elif args.matrix_model:
         cm = args.matrix_model.strip()
         if not cm:
             print("ERROR: --matrix-model must be non-empty", file=sys.stderr)
@@ -435,21 +619,20 @@ def main() -> int:
     if args.dry_scan:
         return 0
 
-    if not chosen:
+    if not per_agent_mode and not chosen:
         print("No models to run; exiting.", file=sys.stderr)
         return 1
 
     prompt_hashes = [h for h in DEFAULT_PROMPT_ORDER if h in GOLDEN_PROMPTS][: args.max_prompts]
     instruction = (args.instruction or "").strip() or COMMON_QUERY
-    report_writer_model = (
-        (args.report_writer_model or os.environ.get("GOLDEN_MATRIX_REPORT_WRITER_MODEL") or "").strip()
-        or None
-    )
+    report_writer_model = None if per_agent_mode else rw_pin_or_report
     print(f"MYCROFT_URL={MYCROFT_URL}", flush=True)
     print("Prompt hashes:", prompt_hashes, flush=True)
     print(f"--max-running={args.max_running}", flush=True)
     print("Instruction:", instruction[:200] + ("…" if len(instruction) > 200 else ""), flush=True)
-    if report_writer_model:
+    if per_agent_mode:
+        pass
+    elif report_writer_model:
         print(f"report-writer model (pinned): {report_writer_model}", flush=True)
 
     try:
@@ -470,11 +653,26 @@ def main() -> int:
         print("ERROR: unexpected GET workflow response", file=sys.stderr)
         return 1
 
+    if per_agent_mode:
+        assert rw_pin_or_report is not None
+        jobs: list[dict[str, Any]] = [
+            {
+                "k": "per_agent",
+                "web": web,
+                "researcher": res_m,
+                "report_writer": rw_pin_or_report,
+                "ph": ph,
+                "description_tag": "",
+            }
+            for ph in prompt_hashes
+        ]
+    else:
+        jobs = [{"k": "unified", "model": m, "ph": ph} for m in chosen for ph in prompt_hashes]
+
     runs = asyncio.run(
         _run_matrix_async(
             base_wf,
-            chosen,
-            prompt_hashes,
+            jobs,
             args.terminal_agent,
             instruction,
             report_writer_model,
@@ -487,6 +685,7 @@ def main() -> int:
     with open(raw_path, "w") as f:
         raw_meta: dict[str, Any] = {
             "generated_at": datetime.now(timezone.utc).isoformat(),
+            "matrix_mode": "per_agent" if per_agent_mode else "unified",
             "instruction": instruction,
             "default_benchmark_query": COMMON_QUERY,
             "baseline_excluded": sorted(BASELINE_MODELS),
@@ -495,6 +694,12 @@ def main() -> int:
             "max_running": args.max_running,
             "runs": runs,
         }
+        if per_agent_mode and rw_pin_or_report:
+            raw_meta["per_agent_models"] = {
+                "web_search": web,
+                "researcher": res_m,
+                "report_writer": rw_pin_or_report,
+            }
         if report_writer_model:
             raw_meta["report_writer_model"] = report_writer_model
         if args.matrix_model:
@@ -507,24 +712,53 @@ def main() -> int:
     print(f"Wrote {raw_path}", flush=True)
 
     agent_col = args.terminal_agent.replace("-", " ")
+    title = (
+        f"# Golden prompt × per-agent triple ({today})"
+        if per_agent_mode
+        else f"# Golden prompt × new model matrix ({today})"
+    )
     lines = [
-        f"# Golden prompt × new model matrix ({today})",
+        title,
         "",
         f"Task instruction: *{instruction}*",
         "",
-        f"| workflow | model | prompt hash | status | {agent_col} task |",
-        "|---|---|---|---|---|",
     ]
-    for r in runs:
-        lines.append(
-            "| {wf} | `{m}` | `{h}` | {st} | {ft} |".format(
-                wf=r.get("workflow", "-"),
-                m=r.get("model", "-"),
-                h=r.get("prompt_hash", "-"),
-                st=r.get("status", "-"),
-                ft=r.get("final_task_id") or "-",
-            )
+    if per_agent_mode:
+        lines.extend(
+            [
+                f"| workflow | web | researcher | report | prompt hash | status | {agent_col} task |",
+                "|---|---|---|---|---|---|---|",
+            ]
         )
+        for r in runs:
+            lines.append(
+                "| {wf} | `{w}` | `{res}` | `{rep}` | `{h}` | {st} | {ft} |".format(
+                    wf=r.get("workflow", "-"),
+                    w=r.get("web_search", "-"),
+                    res=r.get("researcher", "-"),
+                    rep=r.get("report_writer", "-"),
+                    h=r.get("prompt_hash", "-"),
+                    st=r.get("status", "-"),
+                    ft=r.get("final_task_id") or "-",
+                )
+            )
+    else:
+        lines.extend(
+            [
+                f"| workflow | model | prompt hash | status | {agent_col} task |",
+                "|---|---|---|---|---|",
+            ]
+        )
+        for r in runs:
+            lines.append(
+                "| {wf} | `{m}` | `{h}` | {st} | {ft} |".format(
+                    wf=r.get("workflow", "-"),
+                    m=r.get("model", "-"),
+                    h=r.get("prompt_hash", "-"),
+                    st=r.get("status", "-"),
+                    ft=r.get("final_task_id") or "-",
+                )
+            )
     lines.append("")
     lines.append(f"Scan: `{scan_path}`")
     lines.append(f"Raw: `{raw_path}`")

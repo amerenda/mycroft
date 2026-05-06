@@ -31,6 +31,13 @@ def test_wf_slug_is_safe_name_and_bounded():
     assert slug.startswith("rn-g8261ca")
 
 
+def test_wf_slug_per_agent_is_safe_name_and_bounded():
+    slug = gm.wf_slug_per_agent("a/b:1", "c:d", "e-f:3", "8261cadd26")
+    assert re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", slug)
+    assert len(slug) <= 64
+    assert slug.startswith("rn-pa8261ca")
+
+
 def test_select_new_models_excludes_baseline_and_prefers_fits():
     models = [
         {"name": "ministral-3:14b", "fits": True, "is_alias": False},

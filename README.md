@@ -23,6 +23,12 @@ Coordinator (FastAPI)
                                          └── KB writes ─► agent-kb (pgvector)
 ```
 
+### Scheduling and execution
+
+Mycroft does **not** include a GPU or inference scheduler. The coordinator **submits** workflow CRDs to **Argo Workflows** (`coordinator/argo_submitter.py`); Argo schedules agent pods on k3s. Queue time before a pod runs is observable as task queue-wait metrics in the coordinator.
+
+**LLM** queuing, model load/evict, and VRAM placement happen in **llm-manager** (see that repo’s *Scheduler* / *Queue system* sections). Agent runtimes call llm-manager; they do not manage GPU fleets themselves.
+
 ### Components
 
 | Directory | Purpose |
@@ -32,7 +38,7 @@ Coordinator (FastAPI)
 | `agents/` | Seed `manifest.yaml` per agent (fallback if no DB row); prompts live in the UI |
 | `common/` | Shared libraries: KB client, LLM client, config, models |
 | `frontend/` | Single-page web UI |
-| `workflows/` | Argo WorkflowTemplate YAMLs (legacy; dynamic workflows now live in DB) |
+| `workflows/` | Dev samples + testing harness (`workflows/testing/`); production `WorkflowTemplate` manifests live in GitOps (`k3s-dean-gitops/apps/mycroft/workflows/`). Multi-step pipelines in the UI are stored in the DB. |
 
 ### Agents
 
@@ -144,8 +150,10 @@ Agents declare `read`/`write` path prefix lists in `manifest.yaml`. The KB clien
 ## Running Locally
 
 ```bash
-# Install dependencies
+# Install dependencies (coordinator + shared libs)
 pip install -r requirements.txt
+
+# Agent loop only (bare `python -m runtime`): use requirements-agent.txt instead
 
 # Start coordinator (needs a running agent-kb PostgreSQL)
 KB_DSN=postgresql://user:pass@host/agent-kb \
