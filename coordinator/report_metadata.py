@@ -43,18 +43,19 @@ def unwrap_report_markdown_body(raw: str) -> str:
                 c = obj.get("content")
                 if isinstance(c, str) and c.strip():
                     return c.strip()
-                args = obj.get("arguments")
-                if isinstance(args, dict):
-                    ac = args.get("content")
-                    if isinstance(ac, str) and ac.strip():
-                        return ac.strip()
+                for key in ("arguments", "parameters"):
+                    nested = obj.get(key)
+                    if isinstance(nested, dict):
+                        nc = nested.get("content")
+                        if isinstance(nc, str) and nc.strip():
+                            return nc.strip()
         except json.JSONDecodeError:
             if inner.lstrip().startswith("#") or inner.lstrip().startswith("##"):
                 return inner
         t = inner
 
     low = t[:800].lower()
-    if "submit_report" in low or ('"content"' in t and "{" in t):
+    if "submit_report" in low or "scratch_write" in low or ('"content"' in t and "{" in t):
         brace = t.find("{")
         if brace >= 0:
             try:
@@ -63,11 +64,12 @@ def unwrap_report_markdown_body(raw: str) -> str:
                     c = obj.get("content")
                     if isinstance(c, str) and c.strip():
                         return c.strip()
-                    args = obj.get("arguments")
-                    if isinstance(args, dict):
-                        ac = args.get("content")
-                        if isinstance(ac, str) and ac.strip():
-                            return ac.strip()
+                    for key in ("arguments", "parameters"):
+                        nested = obj.get(key)
+                        if isinstance(nested, dict):
+                            nc = nested.get("content")
+                            if isinstance(nc, str) and nc.strip():
+                                return nc.strip()
             except json.JSONDecodeError:
                 pass
 
