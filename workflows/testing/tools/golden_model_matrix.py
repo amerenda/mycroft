@@ -56,8 +56,8 @@ LLM_MANAGER_URL = os.environ.get("LLM_MANAGER_URL", "http://127.0.0.1:8081").rst
 MYCROFT_URL = os.environ.get("MYCROFT_URL", "http://127.0.0.1:8080").rstrip("/")
 MYCROFT_API_KEY = os.environ.get("MYCROFT_API_KEY", "").strip()
 
-# Models heavily used in the 2026-05-01 QUIC sweep — skip when picking "new"
-BASELINE_MODELS = frozenset({"ministral-3:14b", "qwen3.5:9b"})
+# Models heavily used in prior sweeps — skip when picking "new"
+BASELINE_MODELS = frozenset({"ministral-3:14b", "qwen3.5:9b", "mistral-small3.2:24b", "magistral:24b"})
 
 # Full golden set from workflows/testing/research-new/2026-05-01/prompts.md
 GOLDEN_PROMPTS: dict[str, str] = {
@@ -182,10 +182,14 @@ def build_pipeline_per_agent(
     description_tag: str = "",
     web_prompt_override: str = "",
     report_prompt_override: str = "",
+    web_max_iterations: int | None = None,
+    researcher_max_iterations: int | None = None,
+    report_writer_max_iterations: int | None = None,
 ) -> dict[str, Any]:
     """Set a distinct model per pipeline step; researcher gets golden prompt_override.
 
     Optional web_prompt_override / report_prompt_override replace that step's prompt when non-empty.
+    Optional *_max_iterations override the manifest defaults per step.
     """
     pj = json.loads(json.dumps(base_wf.get("pipeline_json") or {}))
     steps = pj.get("steps") or []
@@ -194,6 +198,13 @@ def build_pipeline_per_agent(
         "researcher": researcher,
         "report-writer": report_writer,
     }
+    max_iter_by_agent: dict[str, int] = {}
+    if web_max_iterations is not None:
+        max_iter_by_agent["web-search"] = web_max_iterations
+    if researcher_max_iterations is not None:
+        max_iter_by_agent["researcher"] = researcher_max_iterations
+    if report_writer_max_iterations is not None:
+        max_iter_by_agent["report-writer"] = report_writer_max_iterations
     suffix = GOLDEN_PROMPTS[prompt_hash]
     web_po = (web_prompt_override or "").strip()
     report_po = (report_prompt_override or "").strip()
@@ -203,6 +214,8 @@ def build_pipeline_per_agent(
         agent = (s2.get("agent") or "").strip()
         if agent in by_agent:
             s2["model"] = by_agent[agent]
+        if agent in max_iter_by_agent:
+            s2["max_iterations"] = max_iter_by_agent[agent]
         if agent == "researcher":
             s2["prompt_override"] = suffix
         elif agent == "web-search" and web_po:

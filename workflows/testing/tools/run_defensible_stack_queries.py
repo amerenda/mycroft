@@ -43,7 +43,8 @@ SCENARIOS: list[dict[str, Any]] = [
             "and cite primary sources (government releases, central banks, regulators, or major wire "
             "reports with named officials)."
         ),
-        "researcher_prompt_hash": "3132728a72",
+        "researcher_prompt_hash": "8261cadd26",
+        "web_max_iterations": 30,
         "web_prompt": (
             "Prioritize sources from roughly the last 14 days. Prefer primary documents (Fed/ECB/BIS, "
             "Treasury, statistical agencies, regulatory filings). Use several independent outlets; "
@@ -145,6 +146,7 @@ def main() -> int:
             description_tag=sc["title"],
             web_prompt_override=sc["web_prompt"],
             report_prompt_override=sc["report_prompt"],
+            web_max_iterations=sc.get("web_max_iterations"),
         )
         tail = gm.execute_workflow_run_sync(
             base_wf,

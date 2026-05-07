@@ -164,3 +164,29 @@ def test_build_pipeline_per_agent_sets_web_and_report_prompt_overrides():
     assert st[0]["prompt_override"] == "prefer RFCs"
     assert gm.GOLDEN_PROMPTS["8261cadd26"] in st[1]["prompt_override"]
     assert st[2]["prompt_override"] == "markdown only"
+
+
+def test_build_pipeline_per_agent_max_iterations_override():
+    base = {
+        "pipeline_json": {
+            "description": "x",
+            "steps": [
+                {"agent": "web-search"},
+                {"agent": "researcher"},
+                {"agent": "report-writer"},
+            ],
+        }
+    }
+    pj = gm.build_pipeline_per_agent(
+        base,
+        web_search="qwen3.5:9b",
+        researcher="mistral-small3.2:24b",
+        report_writer="llama3.1:8b",
+        prompt_hash="8261cadd26",
+        web_max_iterations=30,
+        researcher_max_iterations=8,
+    )
+    st = pj["steps"]
+    assert st[0]["max_iterations"] == 30
+    assert st[1]["max_iterations"] == 8
+    assert "max_iterations" not in st[2]
