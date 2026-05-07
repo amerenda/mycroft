@@ -20,9 +20,6 @@ from typing import Any
 
 log = logging.getLogger(__name__)
 
-_DEFAULT_MAX_WEB_READ_CHARS: int | None = None  # no limit by default
-
-
 # ── Raw content fetching (internal, not a tool) ─────────────────────────────
 
 async def _fetch_content(url: str) -> str:

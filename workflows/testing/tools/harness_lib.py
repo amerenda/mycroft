@@ -162,7 +162,7 @@ def wait_until_agent_terminal(
         try:
             rr = http_json("GET", mycroft_base, path, None, timeout=120.0, bearer_token=bearer_token)
         except urllib.error.HTTPError as e:
-            if e.code in (429, 502, 503, 504):
+            if e.code in (429, 500, 502, 503, 504):
                 time.sleep(15)
                 continue
             raise

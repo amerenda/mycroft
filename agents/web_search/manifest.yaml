@@ -9,6 +9,7 @@ resources:
   memory: 2Gi  # increased from 1000Mi — OOMKilled on long web-search runs (2026-05-07)
   cpu: "1"
   scratch: 256Mi
+web_read_max_chars: 100000
 tools:
   - web
 permissions:
