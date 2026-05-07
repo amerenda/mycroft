@@ -218,6 +218,11 @@ class LLMClient:
         try:
             while elapsed < JOB_TIMEOUT:
                 resp = await self._client.get(f"/api/queue/jobs/{job_id}")
+                if resp.status_code >= 500:
+                    log.warning("Queue job %s: poll returned %s, retrying", job_id, resp.status_code)
+                    await asyncio.sleep(JOB_POLL_INTERVAL)
+                    elapsed += JOB_POLL_INTERVAL
+                    continue
                 resp.raise_for_status()
                 job = resp.json()
                 status = job["status"]
