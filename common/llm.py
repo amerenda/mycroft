@@ -252,9 +252,12 @@ class LLMClient:
                     inference = t_done - (t_running or t_start)
                     return job["result"], queue_wait, inference
                 elif status == "failed":
-                    raise RuntimeError(f"LLM job {job_id} failed: {job.get('error') or 'unknown'}")
+                    ctx = self._job_context(job)
+                    err = job.get("error") or "unknown"
+                    raise RuntimeError(f"LLM job {job_id} failed: {err}{ctx}")
                 elif status == "cancelled":
-                    raise RuntimeError(f"LLM job {job_id} was cancelled")
+                    ctx = self._job_context(job)
+                    raise RuntimeError(f"LLM job {job_id} was cancelled{ctx}")
 
                 await asyncio.sleep(JOB_POLL_INTERVAL)
                 elapsed += JOB_POLL_INTERVAL
@@ -277,6 +280,18 @@ class LLMClient:
             "running": " (inference started)",
         }
         return details.get(status, "")
+
+    @staticmethod
+    def _job_context(job: dict[str, Any]) -> str:
+        """Compact queue metadata for debugging failed/cancelled jobs."""
+        meta = job.get("metadata")
+        if not isinstance(meta, dict):
+            return ""
+        parts: list[str] = []
+        for key in ("source", "slot", "runner_id", "host", "allowed_runner_ids"):
+            if key in meta and meta[key] not in (None, "", []):
+                parts.append(f"{key}={meta[key]}")
+        return f" [{', '.join(parts)}]" if parts else ""
 
     def _parse_result(self, result: dict[str, Any]) -> ChatResponse:
         """Parse OpenAI-compatible result from queue job."""

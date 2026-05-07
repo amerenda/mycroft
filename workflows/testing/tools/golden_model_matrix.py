@@ -180,8 +180,13 @@ def build_pipeline_per_agent(
     report_writer: str,
     prompt_hash: str,
     description_tag: str = "",
+    web_prompt_override: str = "",
+    report_prompt_override: str = "",
 ) -> dict[str, Any]:
-    """Set a distinct model per pipeline step; researcher gets golden prompt_override."""
+    """Set a distinct model per pipeline step; researcher gets golden prompt_override.
+
+    Optional web_prompt_override / report_prompt_override replace that step's prompt when non-empty.
+    """
     pj = json.loads(json.dumps(base_wf.get("pipeline_json") or {}))
     steps = pj.get("steps") or []
     by_agent = {
@@ -190,6 +195,8 @@ def build_pipeline_per_agent(
         "report-writer": report_writer,
     }
     suffix = GOLDEN_PROMPTS[prompt_hash]
+    web_po = (web_prompt_override or "").strip()
+    report_po = (report_prompt_override or "").strip()
     new_steps: list[dict[str, Any]] = []
     for s in steps:
         s2 = dict(s)
@@ -198,6 +205,10 @@ def build_pipeline_per_agent(
             s2["model"] = by_agent[agent]
         if agent == "researcher":
             s2["prompt_override"] = suffix
+        elif agent == "web-search" and web_po:
+            s2["prompt_override"] = web_po
+        elif agent == "report-writer" and report_po:
+            s2["prompt_override"] = report_po
         new_steps.append(s2)
     pj["steps"] = new_steps
     desc = (pj.get("description") or "").strip()

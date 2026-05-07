@@ -138,3 +138,29 @@ def test_build_pipeline_per_agent_assigns_distinct_models():
     assert st[0]["model"] == "qwen3.5:9b" and "prompt_override" not in st[0]
     assert st[1]["model"] == "ministral-3:14b" and "prompt_override" in st[1]
     assert st[2]["model"] == "llama3.1:8b" and "prompt_override" not in st[2]
+
+
+def test_build_pipeline_per_agent_sets_web_and_report_prompt_overrides():
+    base = {
+        "pipeline_json": {
+            "description": "x",
+            "steps": [
+                {"agent": "web-search", "prompt_override": "old-web"},
+                {"agent": "researcher"},
+                {"agent": "report-writer"},
+            ],
+        }
+    }
+    pj = gm.build_pipeline_per_agent(
+        base,
+        web_search="qwen3.5:9b",
+        researcher="ministral-3:14b",
+        report_writer="llama3.1:8b",
+        prompt_hash="8261cadd26",
+        web_prompt_override="  prefer RFCs  ",
+        report_prompt_override="markdown only",
+    )
+    st = pj["steps"]
+    assert st[0]["prompt_override"] == "prefer RFCs"
+    assert gm.GOLDEN_PROMPTS["8261cadd26"] in st[1]["prompt_override"]
+    assert st[2]["prompt_override"] == "markdown only"

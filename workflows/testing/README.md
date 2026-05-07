@@ -60,6 +60,16 @@ Optional: `--workflow-dir` (default `research-new`), `--source-workflow` (defaul
 
 `tools/report_writer_sweep.py` runs `golden_model_matrix.py` once per **`SWEEP_REPORT_WRITERS`** (comma list) with a fixed **`SWEEP_MATRIX_MODEL`** for web+researcher, **`--max-prompts 1`**, then picks the best `summary_preview` via a small heuristic (penalizes fenced JSON / tool-call shapes; rewards markdown headings and URLs). It then runs a **confirmation** pass: same matrix model, **four** golden researcher prompts, **`--max-running 2`**, with the winning report-writer.
 
+## Defensible stack — three benchmark queries (script)
+
+`tools/run_defensible_stack_queries.py` runs **web-search `qwen3.5:9b`**, **researcher `mistral-small3.2:24b`**, **report-writer `llama3.1:8b`** on three instructions (current events, technical Ingress/TLS, AI productivity evidence). Each scenario uses a tailored **researcher** golden hash plus **web** and **report** `prompt_override` text. Outputs: `workflows/testing/defensible-stack-queries/<date>/defensible-stack-queries-raw.json` and `defensible-stack-queries-summary.md`.
+
+```bash
+export MYCROFT_URL=https://mycroft.example.com
+# export MYCROFT_API_KEY=...
+uv run python -u workflows/testing/tools/run_defensible_stack_queries.py
+```
+
 ## Per-agent model compare (one query, five API runs)
 
 `tools/run_per_agent_model_compare.py` registers `rn-cmp1` … `rn-cmp5` with **different models per agent** (web / researcher / report-writer), runs the **same QUIC instruction** on each, polls `report-writer`, and writes `research-new/<date>/per-agent-model-compare-raw.json` and `per-agent-model-compare.md`. Set `LLM_MANAGER_URL` to warn if a model name is missing from `/api/models`. `--dry-run` only PUTs workflows.
