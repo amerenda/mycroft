@@ -86,7 +86,9 @@ class KBClient:
             kb_operation_errors_total.labels(operation=name).inc()
 
     async def connect(self) -> None:
-        self._pool = await asyncpg.create_pool(self.dsn, min_size=1, max_size=5)
+        self._pool = await asyncpg.create_pool(
+            self.dsn, min_size=1, max_size=5, max_inactive_connection_lifetime=300.0
+        )
         log.info("KB connected to %s", self.dsn.split("@")[-1])
 
     async def close(self) -> None:
