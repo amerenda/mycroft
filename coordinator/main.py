@@ -371,11 +371,24 @@ async def _submit_pipeline_agent(
     params: dict = {"instruction": instruction}
     if model:
         params["model_override"] = model
+
+    argo_manifest = step_manifest
+    _step_res = step.get("resources")
+    if _step_res and isinstance(_step_res, dict) and step_manifest is not None:
+        from common.models import AgentResources
+        cur = step_manifest.resources
+        overridden = AgentResources(
+            memory=str(_step_res.get("memory") or cur.memory),
+            cpu=str(_step_res.get("cpu") or cur.cpu),
+            scratch=str(_step_res.get("scratch") or cur.scratch),
+        )
+        argo_manifest = step_manifest.model_copy(update={"resources": overridden})
+
     t_submit = time.monotonic()
     try:
         wf_name = await argo.submit(
             agent_type=agent_type, task_id=task_id, params=params,
-            manifest=step_manifest,
+            manifest=argo_manifest,
             on_update=_on_workflow_update,
         )
         argo_submissions_total.labels(agent_type=agent_type, result="success").inc()

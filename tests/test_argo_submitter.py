@@ -104,6 +104,68 @@ class TestBuildWorkflowWithManifest:
         assert limits["cpu"] == "1"
 
 
+# ── per-step resource override (coordinator logic test) ───────────────────────
+
+class TestStepResourceOverride:
+    """Verify the coordinator pattern for per-step resource overrides.
+
+    The coordinator reads step.get('resources') and calls model_copy to produce
+    a modified manifest before passing it to argo.submit.  These tests exercise
+    the AgentManifest / AgentResources model directly (no async coordinator needed).
+    """
+
+    def _base_manifest(self) -> AgentManifest:
+        return AgentManifest(
+            name="researcher",
+            resources=AgentResources(memory="2Gi", cpu="2", scratch="5Gi"),
+        )
+
+    def _apply(self, manifest: AgentManifest, step_res: dict) -> AgentManifest:
+        cur = manifest.resources
+        overridden = AgentResources(
+            memory=str(step_res.get("memory") or cur.memory),
+            cpu=str(step_res.get("cpu") or cur.cpu),
+            scratch=str(step_res.get("scratch") or cur.scratch),
+        )
+        return manifest.model_copy(update={"resources": overridden})
+
+    def test_memory_override_replaces_only_memory(self):
+        m = self._apply(self._base_manifest(), {"memory": "4Gi"})
+        assert m.resources.memory == "4Gi"
+        assert m.resources.cpu == "2"
+        assert m.resources.scratch == "5Gi"
+
+    def test_cpu_override_replaces_only_cpu(self):
+        m = self._apply(self._base_manifest(), {"cpu": "4"})
+        assert m.resources.cpu == "4"
+        assert m.resources.memory == "2Gi"
+
+    def test_full_override_sets_all_fields(self):
+        m = self._apply(self._base_manifest(), {"memory": "8Gi", "cpu": "8", "scratch": "20Gi"})
+        assert m.resources.memory == "8Gi"
+        assert m.resources.cpu == "8"
+        assert m.resources.scratch == "20Gi"
+
+    def test_empty_dict_keeps_original(self):
+        original = self._base_manifest()
+        m = self._apply(original, {})
+        assert m.resources.memory == original.resources.memory
+        assert m.resources.cpu == original.resources.cpu
+
+    def test_original_manifest_is_not_mutated(self):
+        original = self._base_manifest()
+        self._apply(original, {"memory": "16Gi"})
+        assert original.resources.memory == "2Gi"
+
+    def test_overridden_manifest_flows_to_argo_spec(self):
+        base = self._base_manifest()
+        overridden = self._apply(base, {"memory": "6Gi", "cpu": "3"})
+        wf = _submitter()._build_workflow("researcher", "t1", manifest=overridden)
+        limits = wf["spec"]["templates"][0]["container"]["resources"]["limits"]
+        assert limits["memory"] == "6Gi"
+        assert limits["cpu"] == "3"
+
+
 # ── terminate_task ────────────────────────────────────────────────────────────
 
 async def test_terminate_task_with_no_mapping_returns_false():
