@@ -190,3 +190,28 @@ def test_build_pipeline_per_agent_max_iterations_override():
     assert st[0]["max_iterations"] == 30
     assert st[1]["max_iterations"] == 8
     assert "max_iterations" not in st[2]
+
+
+def test_build_pipeline_per_agent_resources_override():
+    base = {
+        "pipeline_json": {
+            "description": "x",
+            "steps": [
+                {"agent": "web-search"},
+                {"agent": "researcher"},
+                {"agent": "report-writer"},
+            ],
+        }
+    }
+    pj = gm.build_pipeline_per_agent(
+        base,
+        web_search="qwen3.5:9b",
+        researcher="mistral-small3.2:24b",
+        report_writer="llama3.1:8b",
+        prompt_hash="8261cadd26",
+        researcher_resources={"memory": "4Gi", "cpu": "4"},
+    )
+    st = pj["steps"]
+    assert "resources" not in st[0]
+    assert st[1]["resources"] == {"memory": "4Gi", "cpu": "4"}
+    assert "resources" not in st[2]

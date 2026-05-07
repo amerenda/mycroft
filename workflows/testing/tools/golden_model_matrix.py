@@ -185,11 +185,16 @@ def build_pipeline_per_agent(
     web_max_iterations: int | None = None,
     researcher_max_iterations: int | None = None,
     report_writer_max_iterations: int | None = None,
+    web_resources: dict[str, str] | None = None,
+    researcher_resources: dict[str, str] | None = None,
+    report_writer_resources: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     """Set a distinct model per pipeline step; researcher gets golden prompt_override.
 
     Optional web_prompt_override / report_prompt_override replace that step's prompt when non-empty.
     Optional *_max_iterations override the manifest defaults per step.
+    Optional *_resources dicts (keys: memory, cpu, scratch) override pod sizing per step via
+    the coordinator's per-step resource override without modifying the agent manifest.
     """
     pj = json.loads(json.dumps(base_wf.get("pipeline_json") or {}))
     steps = pj.get("steps") or []
@@ -205,6 +210,13 @@ def build_pipeline_per_agent(
         max_iter_by_agent["researcher"] = researcher_max_iterations
     if report_writer_max_iterations is not None:
         max_iter_by_agent["report-writer"] = report_writer_max_iterations
+    res_by_agent: dict[str, dict[str, str]] = {}
+    if web_resources:
+        res_by_agent["web-search"] = web_resources
+    if researcher_resources:
+        res_by_agent["researcher"] = researcher_resources
+    if report_writer_resources:
+        res_by_agent["report-writer"] = report_writer_resources
     suffix = GOLDEN_PROMPTS[prompt_hash]
     web_po = (web_prompt_override or "").strip()
     report_po = (report_prompt_override or "").strip()
@@ -216,6 +228,8 @@ def build_pipeline_per_agent(
             s2["model"] = by_agent[agent]
         if agent in max_iter_by_agent:
             s2["max_iterations"] = max_iter_by_agent[agent]
+        if agent in res_by_agent:
+            s2["resources"] = res_by_agent[agent]
         if agent == "researcher":
             s2["prompt_override"] = suffix
         elif agent == "web-search" and web_po:
