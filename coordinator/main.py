@@ -235,6 +235,12 @@ async def _wait_for_pipeline_task(task_id: str, timeout: int = 3600) -> str:
             result = task.result or {}
             return result.get("content", "") if isinstance(result, dict) else str(result)
         if task and task.status == TaskStatus.failed:
+            # A pod may have died mid-run while Argo is still retrying — don't abort yet.
+            wf_name = task.argo_workflow_name
+            if wf_name and await asyncio.to_thread(argo.is_workflow_running, wf_name):
+                log.debug("Task %s failed but Argo workflow %s still running — waiting for retry", task_id[:8], wf_name)
+                await asyncio.sleep(5)
+                continue
             err = (task.result or {}).get("error", "unknown") if isinstance(task.result, dict) else str(task.result)
             raise _PipelineTaskFailed(f"Task {task_id[:8]} failed: {err}")
         await asyncio.sleep(5)

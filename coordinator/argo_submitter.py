@@ -49,6 +49,17 @@ class ArgoSubmitter:
             self._api = client.CustomObjectsApi()
         return self._api
 
+    def is_workflow_running(self, wf_name: str) -> bool:
+        """Return True if the Argo Workflow exists and is still Running (i.e. retrying)."""
+        try:
+            wf = self._get_api().get_namespaced_custom_object(
+                group="argoproj.io", version="v1alpha1",
+                namespace=self.namespace, plural="workflows", name=wf_name,
+            )
+            return (wf.get("status") or {}).get("phase", "") == "Running"
+        except Exception:
+            return False
+
     def _build_workflow(
         self,
         agent_type: str,
@@ -128,7 +139,7 @@ class ArgoSubmitter:
                                 "cpu": res.cpu,
                                 "ephemeral-storage": res.scratch,
                             },
-                            "requests": {"memory": "256Mi", "cpu": "500m"},
+                            "requests": {"memory": res.memory, "cpu": res.cpu},
                         },
                         "volumeMounts": [{"name": "scratch", "mountPath": "/workspace"}],
                     },

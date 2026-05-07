@@ -6,7 +6,7 @@ backend: k8s
 max_concurrent: 4
 max_iterations: 8
 resources:
-  memory: 1000Mi
+  memory: 2Gi  # increased from 1000Mi — OOMKilled on long web-search runs (2026-05-07)
   cpu: "1"
   scratch: 256Mi
 tools:
