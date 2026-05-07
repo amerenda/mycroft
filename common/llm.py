@@ -217,7 +217,13 @@ class LLMClient:
 
         try:
             while elapsed < JOB_TIMEOUT:
-                resp = await self._client.get(f"/api/queue/jobs/{job_id}")
+                try:
+                    resp = await self._client.get(f"/api/queue/jobs/{job_id}")
+                except (httpx.TimeoutException, httpx.NetworkError) as exc:
+                    log.warning("Queue job %s: poll error %s, retrying", job_id, exc)
+                    await asyncio.sleep(JOB_POLL_INTERVAL)
+                    elapsed += JOB_POLL_INTERVAL
+                    continue
                 if resp.status_code >= 500:
                     log.warning("Queue job %s: poll returned %s, retrying", job_id, resp.status_code)
                     await asyncio.sleep(JOB_POLL_INTERVAL)
