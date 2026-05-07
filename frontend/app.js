@@ -1703,17 +1703,35 @@ async function loadWorkflowRunHistory(name) {
         ? Math.round((new Date(r.completed_at) - new Date(r.created_at)) / 1000) + 's'
         : '…';
       const phase = r.config?.phase || '';
+      const isFailed = r.status === 'failed';
       return `
         <div class="wf-run-row" onclick="viewRightConversation('${r.id}');switchTab('runner');setRightTab('tasks')">
           <span class="wf-run-date">${date}</span>
           <span class="wf-run-agent">${esc(r.agent_type)}</span>
           ${phase ? `<span class="wf-run-phase">${esc(phase)}</span>` : ''}
           <span class="status-badge status-${r.status}">${r.status}</span>
+          ${isFailed ? `<span class="wf-run-phase"><a href="#" onclick="event.preventDefault();event.stopPropagation();showWorkflowRunError('${r.id}')">View error</a></span>` : ''}
           <span class="wf-run-phase">${dur}</span>
         </div>`;
     }).join('');
   } catch (e) {
     el.innerHTML = `<p class="empty">Error: ${esc(e.message)}</p>`;
+  }
+}
+
+async function showWorkflowRunError(taskId) {
+  try {
+    const t = await api('/api/tasks/' + taskId);
+    const res = t?.result || {};
+    const err = res?.error || '(No error message recorded)';
+    const meta = [];
+    if (res?.job_id) meta.push(`job_id=${res.job_id}`);
+    if (res?.model) meta.push(`model=${res.model}`);
+    if (res?.status) meta.push(`status=${res.status}`);
+    const header = meta.length ? `${meta.join(' | ')}\n\n` : '';
+    alert(`Task ${taskId.slice(0, 8)} failed\n\n${header}${String(err)}`);
+  } catch (e) {
+    alert('Failed to load task error: ' + (e?.message || e));
   }
 }
 
