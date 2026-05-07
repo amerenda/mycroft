@@ -25,7 +25,7 @@ class TestAgentManifest:
         assert m.max_concurrent == 2
         assert m.tools == []
         assert m.permissions.read == []
-        assert m.web_read_max_chars is None
+        assert m.web_read_max_chars == 100_000
         assert m.max_tokens is None
 
     def test_max_tokens(self):
