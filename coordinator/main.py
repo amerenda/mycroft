@@ -844,8 +844,29 @@ async def _on_workflow_update(task_id: str, status: str, message: str):
                 workflow_runs_total.labels(
                     workflow=task.config.get("workflow"), result="completed"
                 ).inc()
+                # Fallback: save report via Argo in case the KB NOTIFY was missed
+                asyncio.create_task(_argo_fallback_report_save(task))
         await _broadcast_sse("task_update", {"task_id": task_id, "status": "completed",
                                              "agent_type": task.agent_type if task else ""})
+
+
+async def _argo_fallback_report_save(task: Any) -> None:
+    """Save report when Argo confirms success but KB NOTIFY may have been missed."""
+    # Small delay so an in-flight NOTIFY can arrive first and beat us to the save
+    await asyncio.sleep(5)
+    task_id = task.id
+    from coordinator.reports import list_reports as _list_reports
+    existing = await _list_reports(db.kb.pool, source_task_id=task_id)
+    if existing:
+        log.debug("Report already saved for task %s (NOTIFY beat Argo fallback)", task_id[:8])
+        return
+    scope = f"/agents/{task.agent_type}/results/{task_id}"
+    record = await db.kb.get(scope)
+    if not record or not record.content:
+        log.debug("No KB result at %s for Argo fallback report save", scope)
+        return
+    log.info("Argo fallback: saving report for task %s (NOTIFY missed)", task_id[:8])
+    await _handle_researcher_result(record, f"{task.agent_type}/{task_id}")
 
 
 def _observe_task_terminal_metrics(task: Any | None, status: str, source: str) -> None:
