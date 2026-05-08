@@ -90,12 +90,12 @@ class TestLoadTools:
         assert registry.schemas() == []
 
     def test_at_prefix_expands_group(self):
-        registry = load_tools(["@shell"])
+        registry = load_tools(["@shell"], extra_groups={"shell": ["run_command"]})
         names = {s["function"]["name"] for s in registry.schemas()}
         assert "run_command" in names
 
     def test_bare_group_name_expands(self):
-        registry = load_tools(["shell"])
+        registry = load_tools(["shell"], extra_groups={"shell": ["run_command"]})
         names = {s["function"]["name"] for s in registry.schemas()}
         assert "run_command" in names
 
@@ -105,7 +105,8 @@ class TestLoadTools:
         assert "submit_report" in names
 
     def test_web_group_loads_web_tools(self):
-        registry = load_tools(["web"])
+        extra = {"web": ["web_search", "web_read", "wiki_read"]}
+        registry = load_tools(["web"], extra_groups=extra)
         names = {s["function"]["name"] for s in registry.schemas()}
         assert "web_search" in names
         assert "web_read" in names
