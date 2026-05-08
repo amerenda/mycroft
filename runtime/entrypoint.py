@@ -192,7 +192,7 @@ async def _fetch_tool_groups(kb_dsn: str) -> dict:
         finally:
             await conn.close()
     except Exception as e:
-        log.warning("Could not fetch tool groups from DB: %s", e)
+        log.warning("Could not fetch tool groups from DB: %s — group resolution will fail", e)
         return {}
 
 

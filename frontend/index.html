@@ -368,10 +368,11 @@
         <div class="editor-pane-header">
           <input id="workflowName" class="editor-name-input" type="text" placeholder="workflow-name">
           <div class="editor-pane-actions">
+            <span id="workflowSaveStatus" style="font-size:0.8em;color:#8b949e;min-width:140px;text-align:right"></span>
             <button class="btn-secondary" onclick="runWorkflowFromEditor(false)" title="Switch to runner with this workflow selected">Run</button>
             <button class="btn-tool-ctrl" onclick="runWorkflowFromEditor(true)" title="Run with max_iterations=2 per step for quick iteration">Test</button>
             <button class="btn-tool-ctrl" onclick="cloneWorkflow()" title="Duplicate this workflow with a new name">Clone</button>
-            <button class="btn-primary" onclick="saveWorkflow()">Save</button>
+            <button class="btn-primary" id="workflowSaveBtn" onclick="saveWorkflow()">Save</button>
             <button class="btn-danger" onclick="deleteWorkflow()">Delete</button>
           </div>
         </div>
@@ -435,7 +436,8 @@
         <div class="editor-pane-header">
           <input id="schemaEditorName" class="editor-name-input" type="text" placeholder="tool-name">
           <div class="editor-pane-actions">
-            <button class="btn-primary" onclick="saveSchema()">Save</button>
+            <span id="schemaSaveStatus" style="font-size:0.8em;color:#8b949e;min-width:140px;text-align:right"></span>
+            <button class="btn-primary" id="schemaSaveBtn" onclick="saveSchema()">Save</button>
             <button class="btn-danger" onclick="deleteSchemaSelected()">Delete</button>
           </div>
         </div>

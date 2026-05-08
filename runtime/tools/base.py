@@ -136,14 +136,7 @@ class ToolRegistry:
             return f"Error executing {name}: {e}"
 
 
-_BUILTIN_GROUPS = {
-    "files": ["read_file", "write_file", "patch_file", "search_files", "list_files"],
-    "web": ["web_read", "web_search", "wiki_read"],
-    "git": ["git_clone", "git_checkout_branch", "git_add", "git_commit", "git_push", "git_diff"],
-    "github": ["gh_create_pr", "gh_comment"],
-    "shell": ["run_command"],
-    "todo": ["todo_list_projects", "todo_get_tasks", "todo_create_task", "todo_update_task"],
-}
+_BUILTIN_GROUPS: dict[str, list[str]] = {}  # DB is sole authority; groups come from tool_schemas table
 
 
 def load_tools(

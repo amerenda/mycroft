@@ -957,7 +957,6 @@ function _setResources(yaml, memory, cpu, scratch) {
 }
 
 // Known built-in group names — used to auto-prefix when loading old manifests
-const _BUILTIN_GROUPS = new Set(['web', 'files', 'git', 'github', 'shell', 'todo']);
 let _dbGroups = {};  // group -> [tool names], from /api/tools/groups
 
 async function loadToolGroups() {
@@ -971,7 +970,7 @@ async function loadToolGroups() {
 }
 
 function _allGroupNames() {
-  return new Set([..._BUILTIN_GROUPS, ...Object.keys(_dbGroups)]);
+  return new Set(Object.keys(_dbGroups));
 }
 
 function _extractTools(yaml) {
@@ -1588,6 +1587,7 @@ async function selectWorkflow(name) {
       decompose_prompt: s.decompose_prompt || '',
     }));
     _renderPipelineSteps();
+    _setSaveStatus('workflowSaveStatus', 'workflowSaveBtn', '', '');
     document.getElementById('workflowEditor').style.display = '';
     document.getElementById('workflowEmpty').style.display = 'none';
     loadWorkflows();
@@ -1605,6 +1605,7 @@ function newWorkflow() {
   document.getElementById('workflowDescription').value = '';
   document.getElementById('workflowContent').value = '';
   _renderPipelineSteps();
+  _setSaveStatus('workflowSaveStatus', 'workflowSaveBtn', '', '');
   document.getElementById('workflowEditor').style.display = '';
   document.getElementById('workflowEmpty').style.display = 'none';
   document.getElementById('workflowName').focus();
@@ -1636,6 +1637,7 @@ async function saveWorkflow() {
   };
   const content = document.getElementById('workflowContent').value;
 
+  _setSaveStatus('workflowSaveStatus', 'workflowSaveBtn', 'saving', 'Saving...');
   try {
     await api('/api/workflows/' + name, {
       method: 'PUT',
@@ -1643,9 +1645,11 @@ async function saveWorkflow() {
       body: JSON.stringify({ content, pipeline_json }),
     });
     _currentWorkflow = name;
+    _setSaveStatus('workflowSaveStatus', 'workflowSaveBtn', 'saved', `Saved ${_formatSavedAt(new Date().toISOString())}`);
     loadWorkflows();
     loadWorkflowDropdown();
   } catch (e) {
+    _setSaveStatus('workflowSaveStatus', 'workflowSaveBtn', 'error', 'Save failed');
     alert('Save failed: ' + e.message);
   }
 }
@@ -1778,6 +1782,16 @@ async function deleteWorkflow() {
 
 let _currentSchema = null;
 
+function _setSaveStatus(elId, btnId, state, msg) {
+  const el = document.getElementById(elId);
+  const btn = document.getElementById(btnId);
+  if (!el) return;
+  if (btn) btn.disabled = state === 'saving';
+  const colors = { saving: '#58a6ff', saved: '#3fb950', error: '#f85149' };
+  el.textContent = msg;
+  el.style.color = colors[state] || '#8b949e';
+}
+
 function _schemaListItem(s) {
   const badge = s.group ? `<span class="schema-group-badge">@${esc(s.group)}</span>` : '';
   return `<div class="editor-list-item${_currentSchema === s.name ? ' active' : ''}"
@@ -1829,6 +1843,7 @@ const SCHEMA_TEMPLATE = {
         input: { type: 'string', description: 'The input value' },
       },
       required: ['input'],
+      additionalProperties: false,
     },
   },
 };
@@ -1844,6 +1859,7 @@ function newSchema() {
   document.getElementById('schemaGroup').value = '';
   document.getElementById('schemaContent').value = JSON.stringify(SCHEMA_TEMPLATE, null, 2);
   document.getElementById('schemaHistory').innerHTML = '';
+  _setSaveStatus('schemaSaveStatus', 'schemaSaveBtn', '', '');
   document.getElementById('schemaEditor').style.display = '';
   document.getElementById('schemaEmpty').style.display = 'none';
   nameEl.focus();
@@ -1862,6 +1878,7 @@ async function selectSchema(name) {
     document.getElementById('schemaChangelog').value = '';
     document.getElementById('schemaGroup').value = s.group || '';
     document.getElementById('schemaContent').value = JSON.stringify(s.schema, null, 2);
+    _setSaveStatus('schemaSaveStatus', 'schemaSaveBtn', '', '');
     document.getElementById('schemaEditor').style.display = '';
     document.getElementById('schemaEmpty').style.display = 'none';
     loadSchemas();
@@ -1902,6 +1919,7 @@ async function saveSchema() {
   }
   const schema_version = document.getElementById('schemaVersion').value.trim() || '1.0.0';
   const changelog = document.getElementById('schemaChangelog').value.trim();
+  _setSaveStatus('schemaSaveStatus', 'schemaSaveBtn', 'saving', 'Saving...');
   try {
     const r = await api('/api/tools/schemas/' + name, {
       method: 'PUT',
@@ -1912,10 +1930,12 @@ async function saveSchema() {
     document.getElementById('schemaEditorName').readOnly = true;
     document.getElementById('schemaDbVersion').value = 'v' + r.version;
     document.getElementById('schemaChangelog').value = '';
+    _setSaveStatus('schemaSaveStatus', 'schemaSaveBtn', 'saved', `Saved ${_formatSavedAt(new Date().toISOString())}`);
     loadToolGroups();
     loadSchemas();
     loadSchemaHistory(name);
   } catch (e) {
+    _setSaveStatus('schemaSaveStatus', 'schemaSaveBtn', 'error', 'Save failed');
     alert('Save failed: ' + e.message);
   }
 }
