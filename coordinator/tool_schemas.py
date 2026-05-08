@@ -195,8 +195,16 @@ async def seed_default_schemas(pool: asyncpg.Pool) -> None:
         log.info("Tool schemas already seeded (%d entries), skipping", count)
         return
 
+    # Build extra_groups from _SEED_GROUPS so load_tools can resolve them
+    # without relying on _BUILTIN_GROUPS (which is intentionally empty).
+    extra_groups: dict[str, list[str]] = {}
+    for tool_name, grp in _SEED_GROUPS.items():
+        if grp != "pipeline":
+            extra_groups.setdefault(grp, []).append(tool_name)
+
     from runtime.tools.base import load_tools
-    registry = load_tools(["files", "git", "github", "shell", "web", "todo"])
+    non_pipeline = [t for t, g in _SEED_GROUPS.items() if g != "pipeline"]
+    registry = load_tools(non_pipeline, extra_groups=extra_groups)
 
     for tool_def in registry.schemas():
         fn = tool_def["function"]
@@ -211,6 +219,28 @@ async def seed_default_schemas(pool: asyncpg.Pool) -> None:
         )
 
     log.info("Seeded %d tool schemas", len(registry.schemas()))
+
+
+async def ensure_tool_groups(pool: asyncpg.Pool) -> None:
+    """Backfill tool_group for any tools that were seeded before group tracking existed."""
+    async with pool.acquire() as conn:
+        ungrouped = await conn.fetch(
+            "SELECT DISTINCT name FROM tool_schemas WHERE tool_group = ''"
+        )
+    if not ungrouped:
+        return
+    updated = 0
+    async with pool.acquire() as conn:
+        for row in ungrouped:
+            grp = _SEED_GROUPS.get(row["name"], "")
+            if grp:
+                await conn.execute(
+                    "UPDATE tool_schemas SET tool_group = $1 WHERE name = $2 AND tool_group = ''",
+                    grp, row["name"],
+                )
+                updated += 1
+    if updated:
+        log.info("Backfilled tool_group for %d tools", updated)
 
 
 async def ensure_builtin_schemas(pool: asyncpg.Pool) -> None:
