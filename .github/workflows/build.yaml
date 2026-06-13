@@ -25,7 +25,7 @@ jobs:
 
   set-tag:
     if: github.event_name != 'pull_request'
-    runs-on: arc-runner-set
+    runs-on: arc-runner-mycroft
     outputs:
       tag: ${{ steps.tag.outputs.tag }}
       pr_prefix: ${{ steps.tag.outputs.pr_prefix }}
@@ -45,7 +45,7 @@ jobs:
   # Always rebuilds everything on workflow_dispatch or tag push.
   changes:
     if: github.event_name != 'pull_request'
-    runs-on: arc-runner-set
+    runs-on: arc-runner-mycroft
     outputs:
       agent: ${{ steps.detect.outputs.agent }}
     steps:
@@ -78,7 +78,7 @@ jobs:
   build-base-amd64:
     needs: [test, set-tag, changes]
     if: github.event_name != 'pull_request' && needs.changes.outputs.agent == 'true'
-    runs-on: arc-runner-set
+    runs-on: arc-runner-mycroft
     steps:
       - uses: actions/checkout@v6
       - name: Login to Docker Hub
@@ -106,7 +106,7 @@ jobs:
   manifest-base:
     needs: [set-tag, changes, build-base-amd64, build-base-arm64]
     if: github.event_name != 'pull_request' && needs.changes.outputs.agent == 'true'
-    runs-on: arc-runner-set
+    runs-on: arc-runner-mycroft
     steps:
       - name: Login to Docker Hub
         run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
@@ -126,7 +126,7 @@ jobs:
   build-amd64:
     needs: [test, set-tag]
     if: github.event_name != 'pull_request'
-    runs-on: arc-runner-set
+    runs-on: arc-runner-mycroft
     strategy:
       fail-fast: false
       matrix:
@@ -173,7 +173,7 @@ jobs:
   build-agents-amd64:
     needs: [set-tag, changes, manifest-base]
     if: github.event_name != 'pull_request' && needs.changes.outputs.agent == 'true'
-    runs-on: arc-runner-set
+    runs-on: arc-runner-mycroft
     env:
       TAG: ${{ needs.set-tag.outputs.tag }}
     steps:
@@ -227,7 +227,7 @@ jobs:
       needs.build-arm64.result == 'success' &&
       (needs.build-agents-amd64.result == 'success' || needs.build-agents-amd64.result == 'skipped') &&
       (needs.build-agents-arm64.result == 'success' || needs.build-agents-arm64.result == 'skipped')
-    runs-on: arc-runner-set
+    runs-on: arc-runner-mycroft
     steps:
       - name: Login to Docker Hub
         run: echo "${DOCKERHUB_TOKEN}" | docker login -u "${DOCKERHUB_USERNAME}" --password-stdin
@@ -267,7 +267,7 @@ jobs:
       needs.build-amd64.result == 'success' &&
       needs.build-arm64.result == 'success' &&
       needs.manifest.result == 'success'
-    runs-on: arc-runner-set
+    runs-on: arc-runner-mycroft
     steps:
       - uses: actions/checkout@v6
 
